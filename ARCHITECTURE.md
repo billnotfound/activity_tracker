@@ -2,10 +2,12 @@
 
 ## Overview
 
-A Windows activity tracker that records which applications you use and for how long. Three-layer architecture:
+A Windows activity tracker with native system tray and Web UI. Records which applications you use and for how long.
 
 ```
 Win32 API  →  Trackers (BackgroundService)  →  SQLite  →  REST API (:5200)  →  Vue SPA (:5000)
+                                                    ↕
+                                           WinForms Tray + StatusWindow
 ```
 
 ## Project Layout
@@ -13,10 +15,31 @@ Win32 API  →  Trackers (BackgroundService)  →  SQLite  →  REST API (:5200)
 | Project | SDK | Role |
 |---------|-----|------|
 | `WinActivityTracker.Core/` | `Microsoft.NET.Sdk` (classlib) | Shared library: models, Win32 interop, trackers, settings |
-| `WinActivityTracker.Service/` | `Microsoft.NET.Sdk.Web` | Backend process: hosts trackers + REST API |
+| `WinActivityTracker.Service/` | `Microsoft.NET.Sdk.Web` + WinForms | Backend process: hosts trackers + REST API + native tray icon |
 | `WinActivityTracker.Web/` | `Microsoft.NET.Sdk.Web` + Vite | Frontend: Vue 3 SPA, production static file server |
 
 Target: `net10.0-windows10.0.19041.0` — required for WinRT MediaSession and Win32 P/Invoke.
+
+## Process Architecture
+
+The Service project runs two threads sharing one DI container:
+
+```
+Main Thread (STA, WinForms)         Background Thread (ASP.NET Core)
+┌───────────────────────────┐       ┌───────────────────────────┐
+│ Application.Run()         │       │ WebApplication.RunAsync() │
+│  ├ TrayApplicationContext  │◄─DI──►  ├ REST API endpoints      │
+│  │   ├ NotifyIcon          │ share  │  ├ WindowTracker          │
+│  │   ├ ContextMenuStrip    │       │  ├ ProcessTracker         │
+│  │   └ StatusWindow        │       │  ├ MediaSessionTracker    │
+│  └─────────────────────────│       │  └ AppDbContext           │
+└───────────────────────────┘       └───────────────────────────┘
+```
+
+- **Main thread**: STA apartment, blocked by `Application.Run()`. Hosts the tray icon and any native windows. Must be STA for WinForms clipboard/COM interop.
+- **Background thread**: Runs the ASP.NET Core host with all trackers and API endpoints.
+- **Sharing**: the `IServiceProvider` from the web host is stored in a static field so the native UI can resolve `SettingsService` and other singletons.
+- **Service mode**: when `!Environment.UserInteractive` (Windows Service), WinForms is skipped entirely.
 
 ## Data Flow
 

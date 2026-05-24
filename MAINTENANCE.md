@@ -3,15 +3,52 @@
 ## Quick Start
 
 ```bash
-# 1. Start backend (monitoring + API)
+# 1. Start backend (monitoring + API + native tray icon)
 dotnet run --project WinActivityTracker.Service
 
-# 2. Start frontend (dev mode with HMR)
+# 2. Start frontend (dev mode with HMR) — optional, tray menu opens Web UI
 cd WinActivityTracker.Web && pnpm dev
 
-# 3. Open browser
-# http://localhost:5000
+# 3. Use the tray icon or open:
+# http://localhost:5000   (Vue dev server)
+# http://localhost:5200   (API + embedded Web UI in tray mode)
 ```
+
+## System Tray
+
+The Service now starts with a **notification area icon** (the icon is a generic application icon):
+
+| Action | Result |
+|--------|--------|
+| 双击托盘图标 | 在浏览器中打开仪表盘 |
+| 右键 → 打开仪表盘 | 浏览器打开 `http://localhost:5200` |
+| 右键 → 打开设置 | 浏览器打开 Web 设置页 |
+| 右键 → 显示状态窗口 | 原生 WinForms 状态窗口 (当前焦点 + Top 5) |
+| 右键 → 暂停/恢复追踪 | 切换 `trackingEnabled` |
+| 右键 → 退出 | 停止服务并关闭托盘 |
+
+Tray mode is automatically **disabled** when running as a Windows Service (no GUI available).
+
+### Settings JSON with Comments
+
+`settings.json` is written with `//` comment lines for hand-editing:
+
+```jsonc
+{
+  // ===== 追踪控制 =====
+  // 主开关 — false 时所有追踪器暂停，API 照常运行。相当于"暂停"功能。
+  "TrackingEnabled": true,
+
+  // ===== 轮询间隔 (秒) =====
+  // 窗口/焦点追踪轮询间隔。影响焦点切换检测精度。最小 1。
+  "WindowPollSeconds": 3,
+  ...
+}
+```
+
+- **Save**: API calls and Settings page write through `SettingsService.Save()` which adds comments
+- **Load**: Comment lines (starting with `//`) are stripped before JSON parsing
+- **Manual edit**: edit `%LOCALAPPDATA%\WinActivityTracker\settings.json` in Notepad, restart service
 
 ## Production Deployment
 

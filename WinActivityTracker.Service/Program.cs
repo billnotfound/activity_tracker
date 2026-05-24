@@ -1,18 +1,17 @@
-// WinActivityTracker.Service — the backend monitoring process.
+// WinActivityTracker.Service — the backend monitoring process with native system tray.
 //
-// Hosts:
-//   1. Three background trackers (WindowTracker, ProcessTracker, MediaSessionTracker)
-//   2. A REST API on http://localhost:5200 for querying data and configuring settings
-//   3. Windows Service support (install via sc.exe or PowerShell)
+// Dual-thread architecture:
+//   Main thread (STA):  WinForms Application.Run() — system tray icon + status window
+//   Background thread:  ASP.NET Core WebApplication — REST API + trackers
 //
-// Architecture:
-//   - Uses ASP.NET Core minimal API (WebApplication) — trackers run as IHostedService
-//     within the same process, sharing the DI container.
-//   - SQLite database at %LOCALAPPDATA%\WinActivityTracker\activity.db
-//   - Settings at %LOCALAPPDATA%\WinActivityTracker\settings.json
+// Both threads share the same DI container (IServiceProvider), so the tray/status UI
+// can access SettingsService, and the API can access tracker data.
+//
+// When running as a Windows Service (detected via !Environment.UserInteractive),
+// the WinForms UI is skipped entirely — only the web host runs.
 //
 // API endpoints:
-//   GET  /api/status              — health check
+//   GET  /api/status              — health check (+ trackingEnabled)
 //   GET  /api/settings            — read current configuration
 //   PUT  /api/settings            — update configuration (body: TrackerSettings JSON)
 //   GET  /api/summary/today       — today's focus time per process (?date=yyyy-MM-dd)
@@ -23,16 +22,16 @@
 //   GET  /api/media/history       — recent media playback records (?limit=)
 //   GET  /api/db/stats            — database row counts and age
 //   POST /api/db/cleanup          — delete old records and VACUUM (?days=)
-//
-// Usage:
-//   dotnet run                         — console mode (dev)
-//   dotnet run -- --console            — explicit console mode
-//   sc create WinActivityTracker ...   — install as Windows Service
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Core.Trackers;
+using WinActivityTracker.Service.Native;
+
+// STA thread is required for WinForms clipboard, drag-drop, and COM interop.
+// Must be set before any WinForms controls are created.
+Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -60,7 +59,8 @@ builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
 
-// Windows Service support — enables sc.exe / PowerShell service management
+// Windows Service support — enables sc.exe / PowerShell service management.
+// When running as a service (detected automatically), the WinForms tray is skipped.
 builder.Services.AddWindowsService(options =>
 {
     options.ServiceName = "WinActivityTracker";
@@ -148,7 +148,7 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
 });
 
 // Returns the LIVE list of visible windows — does not query the database.
-// Useful for the Timeline page's real-time panel.
+// Useful for the Timeline page's real-time panel and the native StatusWindow.
 app.MapGet("/api/windows/current", () =>
 {
     var windows = WindowTracker.EnumerateVisibleWindows();
@@ -274,5 +274,29 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
 var apiPort = config.GetValue("ApiPort", 5200);
 app.Urls.Add($"http://localhost:{apiPort}");
 
+// ===== Startup: dual-thread or service mode =====
+
+if (!Environment.UserInteractive)
+{
+    // Running as a Windows Service — no GUI, web host on main thread.
+    Console.WriteLine($"WinActivityTracker starting as Windows Service on http://localhost:{apiPort}");
+    await app.RunAsync();
+    return;
+}
+
+// Interactive mode: web host on background thread, WinForms tray on main thread.
+// Application.Run() blocks until Application.Exit() is called (from tray "退出" menu).
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
-await app.RunAsync();
+
+var webTask = Task.Run(() => app.RunAsync());
+
+// Ensure the web host has started before showing the tray
+await Task.Delay(500);
+
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new TrayApplicationContext(app.Services, apiPort));
+
+// When Application.Run returns (user clicked Exit), signal the web host to stop.
+await app.StopAsync();
+try { await webTask; } catch (OperationCanceledException) { }
