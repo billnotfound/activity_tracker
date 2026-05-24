@@ -1,0 +1,35 @@
+// Runtime configuration persisted to %LOCALAPPDATA%\WinActivityTracker\settings.json.
+// Trackers read from SettingsService.Settings on each poll cycle, so changes via
+// PUT /api/settings take effect immediately without restart.
+// Minimum values are enforced by SettingsService.Update() to prevent accidental 0-interval loops.
+using System.Text.Json.Serialization;
+
+namespace WinActivityTracker.Core.Models;
+
+public class TrackerSettings
+{
+    // When false, all trackers skip their polling logic. API still works.
+    // Use this to pause tracking without stopping the service.
+    public bool TrackingEnabled { get; set; } = true;
+
+    // How often WindowTracker enumerates visible windows and checks focus (seconds). Min: 1.
+    public int WindowPollSeconds { get; set; } = 3;
+
+    // How often ProcessTracker snapshots background processes (seconds). Min: 5.
+    public int ProcessPollSeconds { get; set; } = 30;
+
+    // How often MediaSessionTracker polls Windows Media Control (seconds). Min: 1.
+    public int MediaPollSeconds { get; set; } = 5;
+
+    // User must be inactive this many minutes before tracking is paused. Min: 1.
+    public int IdleThresholdMinutes { get; set; } = 2;
+
+    // Process names (case-insensitive) to exclude from ALL tracking — focus, visible windows, background, and media.
+    public List<string> ExcludedProcesses { get; set; } = [];
+
+    // /api/db/cleanup deletes records older than this (days). Also used as default for the ?days= parameter.
+    public int DataRetentionDays { get; set; } = 90;
+
+    // Reserved: when true, cleanup runs automatically on a daily schedule. Not yet wired.
+    public bool AutoCleanup { get; set; } = true;
+}
