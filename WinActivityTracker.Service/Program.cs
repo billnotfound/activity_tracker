@@ -74,6 +74,23 @@ var app = builder.Build();
 
 app.UseCors();
 
+// --- Serve Vue SPA static files (production mode) ---
+// In development, the Vue dev server runs separately on port 5000 with HMR.
+// In production (or when tray icon opens :5200), the Service serves the built files.
+// The CopyVueDist MSBuild target in the .csproj copies Web/wwwroot → output/wwwroot.
+// wwwroot is copied to the output directory by the CopyVueDist MSBuild target.
+// During dotnet run, ContentRootPath = project dir, but wwwroot is in the bin output dir.
+// We configure a PhysicalFileProvider so UseStaticFiles uses the correct path.
+var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var serveSpa = Directory.Exists(webRoot);
+Microsoft.Extensions.FileProviders.PhysicalFileProvider? fp = null;
+if (serveSpa)
+{
+    fp = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webRoot);
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fp });
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = fp });
+}
+
 // EnsureCreatedAsync is safe for SQLite — creates tables if they don't exist.
 // Does NOT handle migrations (this app uses EnsureCreated, not Migrate).
 using (var scope = app.Services.CreateScope())
@@ -270,6 +287,33 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
         deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, processSnapshots = deletedProcesses, mediaRecords = deletedMedia }
     });
 });
+
+// Nuclear option: deletes ALL records from all tables and VACUUMs.
+// Requires ?confirm=true as a safety check — prevents accidental data loss.
+// The database schema is preserved; only rows are deleted.
+app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
+{
+    if (confirm != true)
+        return Results.BadRequest(new { error = "Set ?confirm=true to delete all data. This cannot be undone." });
+
+    var deletedFocus = await db.FocusChanges.ExecuteDeleteAsync();
+    var deletedWindows = await db.WindowSnapshots.ExecuteDeleteAsync();
+    var deletedProcesses = await db.ProcessSnapshots.ExecuteDeleteAsync();
+    var deletedMedia = await db.MediaSessionRecords.ExecuteDeleteAsync();
+
+    await db.Database.ExecuteSqlRawAsync("VACUUM");
+
+    return Results.Ok(new
+    {
+        message = "All data deleted. Database schema preserved.",
+        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, processSnapshots = deletedProcesses, mediaRecords = deletedMedia }
+    });
+});
+
+// SPA fallback — must be AFTER all API routes so it only catches unmatched requests.
+// Returns index.html for routes like /history, /timeline, /settings so Vue Router handles them.
+if (serveSpa && fp != null)
+    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });
 
 var apiPort = config.GetValue("ApiPort", 5200);
 app.Urls.Add($"http://localhost:{apiPort}");

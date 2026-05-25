@@ -14,4 +14,14 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.8" />
   </ItemGroup>
 
+  <!-- Copy Vue SPA build output (wwwroot) from Web project into Service output.
+       This lets the tray icon's "打开仪表盘" serve the full UI from port 5200.
+       The Vue project must be built first: cd WinActivityTracker.Web && pnpm build -->
+  <Target Name="CopyVueDist" AfterTargets="Build" Condition="Exists('..\WinActivityTracker.Web\wwwroot\index.html')">
+    <ItemGroup>
+      <VueFiles Include="..\WinActivityTracker.Web\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VueFiles)" DestinationFolder="$(OutputPath)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>

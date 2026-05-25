@@ -15,7 +15,7 @@ namespace WinActivityTracker.Service.Native;
 
 public class TrayApplicationContext : ApplicationContext
 {
-    private readonly NotifyIcon _trayIcon;
+    private readonly NotifyIcon _trayIcon = null!;  // Assigned in constructor before use
     private readonly IServiceProvider _services;
     private readonly int _apiPort;
 

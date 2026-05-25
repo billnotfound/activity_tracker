@@ -83,6 +83,15 @@
               <button class="btn btn-outline-danger btn-sm me-2" @click="runCleanup" :disabled="cleaning">
                 {{ cleaning ? '清理中...' : '立即清理旧数据' }}
               </button>
+              <button v-if="!resetConfirm" class="btn btn-outline-danger btn-sm" @click="resetConfirm = true">
+                删除全部数据...
+              </button>
+              <span v-else>
+                <button class="btn btn-danger btn-sm me-1" @click="runReset" :disabled="resetting">
+                  {{ resetting ? '删除中...' : '确认删除全部' }}
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" @click="resetConfirm = false">取消</button>
+              </span>
             </div>
             <div v-if="dbStats" class="small">
               <table class="table table-sm">
@@ -98,6 +107,12 @@
               {{ cleanupResult.deleted.windowSnapshots }} 条窗口快照、
               {{ cleanupResult.deleted.processSnapshots }} 条进程快照、
               {{ cleanupResult.deleted.mediaRecords }} 条媒体记录。
+            </div>
+            <div v-if="resetResult" class="alert alert-warning small mt-2">
+              {{ resetResult.message }}：删除 {{ resetResult.deleted.focusChanges }} 条焦点变化、
+              {{ resetResult.deleted.windowSnapshots }} 条窗口快照、
+              {{ resetResult.deleted.processSnapshots }} 条进程快照、
+              {{ resetResult.deleted.mediaRecords }} 条媒体记录。
             </div>
           </div>
         </div>
@@ -128,6 +143,9 @@ const saving = ref(false)
 const cleaning = ref(false)
 const dbStats = ref(null)
 const cleanupResult = ref(null)
+const resetConfirm = ref(false)
+const resetting = ref(false)
+const resetResult = ref(null)
 const statusOk = ref(false)
 
 const statusClass = computed(() => statusOk.value ? 'alert-success' : 'alert-warning')
@@ -201,6 +219,18 @@ async function runCleanup() {
     if (r.ok) cleanupResult.value = await r.json()
   } catch {}
   cleaning.value = false
+  await loadDbStats()
+}
+
+async function runReset() {
+  resetting.value = true
+  resetResult.value = null
+  try {
+    const r = await fetch(`${apiBase}/api/db/reset?confirm=true`, { method: 'POST' })
+    if (r.ok) resetResult.value = await r.json()
+  } catch {}
+  resetting.value = false
+  resetConfirm.value = false
   await loadDbStats()
 }
 
