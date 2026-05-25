@@ -81,7 +81,7 @@ public partial class SettingsWindow : Form
         {
             var y = 6 + row * 38;
             var lbl = new Label { Text = label, AutoSize = true, Location = new Point(0, y) };
-            nud = new NumericUpDown { Minimum = min, Maximum = max, Value = def, Width = 80, Location = new Point(0, y - 1) };
+            nud = new NumericUpDown { Minimum = min, Maximum = max, Value = def, Width = 100, Location = new Point(0, y - 1) };
             nud.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             parent.Controls.Add(lbl);
             parent.Controls.Add(nud);

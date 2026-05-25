@@ -56,7 +56,15 @@ if (File.Exists(settingsPath))
     catch { }
 }
 
+// --- Redirect Console.Out BEFORE builder builds ---
+// The ASP.NET Core console logger captures the TextWriter during Build().
+// By swapping it now, ALL log output (trackers, API, EF Core) will flow
+// through our ConsoleMirror, which the ConsoleWindow can display.
+var mirror = new ConsoleMirror(Console.Out);
+Console.SetOut(mirror);
+
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton(mirror);
 
 // --- Database path: defaults to %LOCALAPPDATA% ---
 var dbPath = Path.Combine(trackerDir, "activity.db");

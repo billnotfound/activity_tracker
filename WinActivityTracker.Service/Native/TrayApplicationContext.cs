@@ -21,7 +21,7 @@
 //
 // Double-clicking the tray icon opens the dashboard.
 using System.Diagnostics;
-using System.Runtime.InteropServices;
+
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
 using WinActivityTracker.Core.Services;
@@ -90,26 +90,24 @@ public class TrayApplicationContext : ApplicationContext
 
         menu.Items.Add(new ToolStripSeparator());
 
-        // --- Console toggle ---
+        // --- Console toggle (in-app window, not system console) ---
         var consoleItem = new ToolStripMenuItem("显示控制台");
         consoleItem.Click += (_, _) =>
         {
-            if (_consoleVisible)
+            if (_consoleWindow != null && !_consoleWindow.IsDisposed && _consoleWindow.Visible)
             {
-                FreeConsole();
-                _consoleVisible = false;
+                _consoleWindow.Hide();
                 consoleItem.Text = "显示控制台";
             }
             else
             {
-                AllocConsole();
-                Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
-                Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
-                Console.WriteLine("=== WinActivityTracker Console ===");
-                Console.WriteLine($"API: http://localhost:{_apiPort}");
-                Console.WriteLine("关闭此窗口不会退出程序。");
-                Console.WriteLine("===================================");
-                _consoleVisible = true;
+                if (_consoleWindow == null || _consoleWindow.IsDisposed)
+                {
+                    _consoleWindow = new ConsoleWindow(_apiPort, _services.GetRequiredService<ConsoleMirror>());
+                    _consoleWindow.FormClosed += (_, _) => consoleItem.Text = "显示控制台";
+                }
+                _consoleWindow.Show();
+                _consoleWindow.Activate();
                 consoleItem.Text = "隐藏控制台";
             }
         };
@@ -186,19 +184,11 @@ public class TrayApplicationContext : ApplicationContext
     private SettingsWindow? _settingsWindow;
     private StatusWindow? _statusWindow;
 
-    // ===== Console management =====
-    // WinExe output type means no console on startup.
-    // AllocConsole creates one; FreeConsole detaches it.
-    // Closing the console window (X button) also calls FreeConsole internally;
-    // we detect this on the next menu click (operations on freed console fail silently).
-
-    private bool _consoleVisible;
-
-    [DllImport("kernel32.dll")]
-    private static extern bool AllocConsole();
-
-    [DllImport("kernel32.dll")]
-    private static extern bool FreeConsole();
+    // ===== In-app console (WinForms window, not the system console) =====
+    // Avoids AllocConsole issues: encoding, Ctrl handler conflicts with .NET runtime,
+    // and process termination when the user closes the console window.
+    // Console.Out is redirected to the ConsoleWindow's TextBox on first show.
+    private ConsoleWindow? _consoleWindow;
 
     // ===== Auto-start via Registry =====
 

@@ -63,12 +63,12 @@
             <table class="table table-sm">
               <thead><tr><th>时间</th><th>歌曲</th><th>艺术家</th></tr></thead>
               <tbody>
-                <tr v-for="m in media" :key="m.id">
+                <tr v-for="m in mergedMedia" :key="m.key">
                   <td>{{ toLocal(m.timestamp) }}</td>
                   <td>{{ m.title }}</td>
                   <td>{{ m.artist }}</td>
                 </tr>
-                <tr v-if="!media.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
+                <tr v-if="!mergedMedia.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
               </tbody>
             </table>
           </div>
@@ -79,19 +79,56 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted } from 'vue'
+import { ref, inject, onMounted, computed } from 'vue'
 import { Chart, registerables } from 'chart.js'
 
-// Register all Chart.js component types (bar, pie, line, etc.)
 Chart.register(...registerables)
 
-// Injected from main.js — see the provide('apiBase') call
 const apiBase = inject('apiBase')
 
-// Date picker defaults to today (local date)
 const date = ref(new Date().toISOString().slice(0, 10))
 const summary = ref([])
 const media = ref([])
+
+// Merge consecutive non-playing media entries into single "paused" rows.
+// The API returns records in time-desc order; we reverse for chronological processing
+// then reverse back so newest entries appear first.
+const mergedMedia = computed(() => {
+  const raw = [...media.value].reverse()  // chronological order
+  const merged = []
+  let pauseStart = null
+  let pauseEnd = null
+
+  for (const m of raw) {
+    const isPlaying = m.playbackStatus === 'Playing'
+    if (isPlaying) {
+      if (pauseStart) {
+        merged.push({
+          key: `pause-${pauseStart}`, timestamp: pauseStart,
+          title: '— 未播放 —', artist: `${fmtRange(pauseStart, pauseEnd || pauseStart)}`,
+        })
+        pauseStart = null; pauseEnd = null
+      }
+      merged.push({ ...m, key: `m-${m.id || m.timestamp}` })
+    } else {
+      if (!pauseStart) pauseStart = m.timestamp
+      pauseEnd = m.timestamp
+    }
+  }
+  // trailing pause period
+  if (pauseStart) {
+    merged.push({
+      key: `pause-${pauseStart}`, timestamp: pauseStart,
+      title: '— 未播放 —', artist: `${fmtRange(pauseStart, pauseEnd || pauseStart)}`,
+    })
+  }
+  return merged.reverse()  // back to newest-first
+})
+
+function fmtRange(a, b) {
+  if (a === b) return new Date(a + 'Z').toLocaleTimeString()
+  return `${new Date(b + 'Z').toLocaleTimeString()} ~ ${new Date(a + 'Z').toLocaleTimeString()}`
+}
 
 // Template refs for the two canvas elements
 const focusChart = ref(null)
