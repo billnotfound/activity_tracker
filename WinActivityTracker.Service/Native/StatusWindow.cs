@@ -36,10 +36,12 @@ public partial class StatusWindow : Form
         _apiBase = $"http://localhost:{apiPort}";
 
         Text = "WinActivityTracker — 状态";
-        Size = new Size(420, 440);
+        Size = new Size(440, 460);
+        MinimumSize = new Size(380, 380);
         FormBorderStyle = FormBorderStyle.Sizable;
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.CenterScreen;
+        AutoScroll = true;
 
         BuildUI();
 
