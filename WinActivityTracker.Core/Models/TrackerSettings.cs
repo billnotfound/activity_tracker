@@ -12,6 +12,10 @@ public class TrackerSettings
     // Use this to pause tracking without stopping the service.
     public bool TrackingEnabled { get; set; } = true;
 
+    // When true, fullscreen/maximized windows bypass idle detection.
+    // Prevents AFK timeout during gaming, video, or presentations.
+    public bool FullscreenBypassIdle { get; set; } = true;
+
     // How often WindowTracker enumerates visible windows and checks focus (seconds). Min: 1.
     public int WindowPollSeconds { get; set; } = 3;
 

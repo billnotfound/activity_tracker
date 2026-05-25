@@ -1,6 +1,5 @@
-// Periodic snapshot of background processes — those WITHOUT any visible window.
-// Taken every ProcessPollSeconds (default 30s). ProcessId is stored for deduplication
-// by the /api/processes/snapshot endpoint, which returns only the latest batch.
+// DEPRECATED — replaced by ProcessSession (session-based process tracking).
+// Kept for backward compatibility. No longer written to.
 namespace WinActivityTracker.Core.Models;
 
 public class ProcessSnapshot

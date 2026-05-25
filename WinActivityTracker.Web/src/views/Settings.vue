@@ -56,6 +56,13 @@
               <input type="number" class="form-control w-auto" v-model.number="form.idleThresholdMinutes" min="1" />
               <div class="form-text">超过此时长无键鼠操作即判定为空闲，暂停焦点追踪。默认 2 分钟。</div>
             </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="fullscreenBypass" v-model="form.fullscreenBypassIdle" />
+              <label class="form-check-label" for="fullscreenBypass">
+                全屏时绕过空闲检测
+              </label>
+              <div class="form-text">启用后，全屏/最大化窗口（游戏、视频）不会因无操作而暂停追踪。</div>
+            </div>
           </div>
         </div>
 
@@ -107,7 +114,8 @@
             <div v-if="dbStats" class="small">
               <table class="table table-sm">
                 <tr><td>焦点变化记录</td><td>{{ dbStats.focusChanges?.toLocaleString() }}</td></tr>
-                <tr><td>窗口快照</td><td>{{ dbStats.windowSnapshots?.toLocaleString() }}</td></tr>
+                <tr><td>窗口快照 (旧)</td><td>{{ dbStats.windowSnapshots?.toLocaleString() }}</td></tr>
+                <tr><td>窗口会话 (新)</td><td>{{ dbStats.windowSessions?.toLocaleString() }}</td></tr>
                 <tr><td>后台进程快照</td><td>{{ dbStats.processSnapshots?.toLocaleString() }}</td></tr>
                 <tr><td>媒体记录</td><td>{{ dbStats.mediaRecords }}</td></tr>
                 <tr><td>最早记录</td><td>{{ fmtLocal(dbStats.oldestRecord) }}</td></tr>
@@ -143,6 +151,7 @@ const apiBase = inject('apiBase')
 
 const form = reactive({
   trackingEnabled: true,
+  fullscreenBypassIdle: true,
   windowPollSeconds: 3,
   processPollSeconds: 30,
   mediaPollSeconds: 5,
@@ -182,6 +191,7 @@ async function loadSettings() {
     if (!r.ok) return
     const s = await r.json()
     form.trackingEnabled = s.trackingEnabled
+    form.fullscreenBypassIdle = s.fullscreenBypassIdle ?? true
     form.windowPollSeconds = s.windowPollSeconds
     form.processPollSeconds = s.processPollSeconds
     form.mediaPollSeconds = s.mediaPollSeconds
@@ -212,8 +222,15 @@ async function saveSettings() {
       const s = await r.json()
       excludeText.value = (s.excludedProcesses || []).join(', ')
       statusOk.value = true
+    } else {
+      const err = await r.text()
+      console.error('Save failed:', r.status, err)
+      alert(`保存失败 (${r.status}): ${err}`)
     }
-  } catch {}
+  } catch (e) {
+    console.error('Save error:', e)
+    alert(`无法连接后端: ${e.message}`)
+  }
   saving.value = false
 }
 

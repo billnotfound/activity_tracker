@@ -172,6 +172,7 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
     var end = localEnd.ToUniversalTime();
 
     var data = await db.FocusChanges
+        .Where(f => f.ProcessName != "__SystemSleep")
         .Where(f => f.Timestamp >= start && f.Timestamp <= end)
         .GroupBy(f => f.ProcessName)
         .Select(g => new
@@ -189,6 +190,7 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
 app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext db) =>
 {
     var data = await db.FocusChanges
+        .Where(f => f.ProcessName != "__SystemSleep")
         .Where(f => f.Timestamp >= from && f.Timestamp <= to)
         .GroupBy(f => f.ProcessName)
         .Select(g => new
@@ -238,20 +240,11 @@ app.MapGet("/api/windows/timeline", async (DateTime? from, DateTime? to, AppDbCo
     return Results.Ok(data);
 });
 
-// Returns the LATEST batch of background process snapshots.
-// Each poll cycle creates many rows with the same timestamp; DISTINCT deduplicates PIDs.
+// Returns currently-running background processes (sessions with no EndTime).
 app.MapGet("/api/processes/snapshot", async (AppDbContext db) =>
 {
-    var latest = await db.ProcessSnapshots
-        .OrderByDescending(p => p.Timestamp)
-        .Select(p => p.Timestamp)
-        .FirstOrDefaultAsync();
-
-    if (latest == default)
-        return Results.Ok(Array.Empty<object>());
-
-    var data = await db.ProcessSnapshots
-        .Where(p => p.Timestamp == latest)
+    var data = await db.ProcessSessions
+        .Where(p => p.EndTime == null)
         .Select(p => new { p.ProcessName, p.ProcessId })
         .Distinct()
         .ToListAsync();
@@ -285,7 +278,9 @@ app.MapGet("/api/db/stats", async (AppDbContext db) =>
 
     var focusCount = await db.FocusChanges.CountAsync();
     var windowCount = await db.WindowSnapshots.CountAsync();
+    var sessionCount = await db.WindowSessions.CountAsync();
     var processCount = await db.ProcessSnapshots.CountAsync();
+    var processSessionCount = await db.ProcessSessions.CountAsync();
     var mediaCount = await db.MediaSessionRecords.CountAsync();
 
     var oldest = await db.FocusChanges
@@ -297,7 +292,9 @@ app.MapGet("/api/db/stats", async (AppDbContext db) =>
     {
         focusChanges = focusCount,
         windowSnapshots = windowCount,
+        windowSessions = sessionCount,
         processSnapshots = processCount,
+        processSessions = processSessionCount,
         mediaRecords = mediaCount,
         oldestRecord = oldest,
         newRecordsPerDay = Math.Round(focusCount / Math.Max(1, (now - (oldest ?? now)).TotalDays), 1)
@@ -314,7 +311,9 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
 
     var deletedFocus = await db.FocusChanges.Where(f => f.Timestamp < cutoff).ExecuteDeleteAsync();
     var deletedWindows = await db.WindowSnapshots.Where(w => w.Timestamp < cutoff).ExecuteDeleteAsync();
+    var deletedSessions = await db.WindowSessions.Where(w => w.OpenTime < cutoff).ExecuteDeleteAsync();
     var deletedProcesses = await db.ProcessSnapshots.Where(p => p.Timestamp < cutoff).ExecuteDeleteAsync();
+    var deletedProcSessions = await db.ProcessSessions.Where(p => p.StartTime < cutoff).ExecuteDeleteAsync();
     var deletedMedia = await db.MediaSessionRecords.Where(m => m.Timestamp < cutoff).ExecuteDeleteAsync();
 
     await db.Database.ExecuteSqlRawAsync("VACUUM");
@@ -323,7 +322,7 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
     {
         retentionDays = retention,
         cutoff = cutoff,
-        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, processSnapshots = deletedProcesses, mediaRecords = deletedMedia }
+        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia }
     });
 });
 
@@ -337,7 +336,9 @@ app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
 
     var deletedFocus = await db.FocusChanges.ExecuteDeleteAsync();
     var deletedWindows = await db.WindowSnapshots.ExecuteDeleteAsync();
+    var deletedSessions = await db.WindowSessions.ExecuteDeleteAsync();
     var deletedProcesses = await db.ProcessSnapshots.ExecuteDeleteAsync();
+    var deletedProcSessions = await db.ProcessSessions.ExecuteDeleteAsync();
     var deletedMedia = await db.MediaSessionRecords.ExecuteDeleteAsync();
 
     await db.Database.ExecuteSqlRawAsync("VACUUM");
@@ -345,7 +346,7 @@ app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
     return Results.Ok(new
     {
         message = "All data deleted. Database schema preserved.",
-        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, processSnapshots = deletedProcesses, mediaRecords = deletedMedia }
+        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia }
     });
 });
 

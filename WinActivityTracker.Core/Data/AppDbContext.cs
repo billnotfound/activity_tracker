@@ -11,11 +11,11 @@ namespace WinActivityTracker.Core.Data;
 public class AppDbContext : DbContext
 {
     public DbSet<FocusChange> FocusChanges => Set<FocusChange>();
-    public DbSet<WindowSnapshot> WindowSnapshots => Set<WindowSnapshot>();
-    public DbSet<ProcessSnapshot> ProcessSnapshots => Set<ProcessSnapshot>();
+    public DbSet<WindowSnapshot> WindowSnapshots => Set<WindowSnapshot>();  // deprecated, kept for old data
+    public DbSet<WindowSession> WindowSessions => Set<WindowSession>();     // replaces WindowSnapshots
+    public DbSet<ProcessSnapshot> ProcessSnapshots => Set<ProcessSnapshot>();  // deprecated
+    public DbSet<ProcessSession> ProcessSessions => Set<ProcessSession>();     // replaces ProcessSnapshots
     public DbSet<MediaSessionRecord> MediaSessionRecords => Set<MediaSessionRecord>();
-
-    // Reserved for future scheduled daily rollups — not currently populated by trackers.
     public DbSet<DailySummary> DailySummaries => Set<DailySummary>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
@@ -35,6 +35,12 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.Timestamp);      // "latest snapshot" subquery
         });
 
+        modelBuilder.Entity<ProcessSession>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.StartTime);
+        });
+
         modelBuilder.Entity<ProcessSnapshot>(e =>
         {
             e.HasKey(x => x.Id);
@@ -45,6 +51,12 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.Timestamp);      // ORDER BY Timestamp DESC
+        });
+
+        modelBuilder.Entity<WindowSession>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.OpenTime);       // query open windows: WHERE CloseTime IS NULL
         });
 
         modelBuilder.Entity<DailySummary>(e =>

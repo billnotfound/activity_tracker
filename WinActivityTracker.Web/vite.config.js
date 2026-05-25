@@ -1,29 +1,28 @@
 // Vite configuration for Vue 3 SPA.
 //
 // Development (pnpm dev):
-//   - Dev server on port 5000
-//   - /api/* requests are proxied to the backend on port 5200
-//   - HMR enabled for instant component reload
+//   - Dev server on port 5000 with HMR
+//   - /api/* proxied to the backend; set VITE_API_PORT env var if not 5200.
+//     e.g.: VITE_API_PORT=54431 pnpm dev
 //
 // Production (pnpm build):
-//   - Output goes to wwwroot/ (served by the .NET Web project)
-//   - Empty outDir ensures clean builds (stale files removed)
+//   - Output → wwwroot/ (copied into Service publish dir)
+//   - API calls go to same origin (apiBase = '')
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
+
+const apiPort = process.env.VITE_API_PORT || '5200'
 
 export default defineConfig({
   plugins: [vue()],
   server: {
     port: 5000,
     proxy: {
-      // Proxy API calls to the .NET backend during development.
-      // In production, the API_BASE is set to the backend host directly
-      // (see src/main.js for the logic).
-      '/api': 'http://localhost:5200'
+      '/api': `http://localhost:${apiPort}`
     }
   },
   build: {
-    outDir: 'wwwroot',      // Matches .NET's default web root
-    emptyOutDir: true       // Remove old hashed assets on rebuild
+    outDir: 'wwwroot',
+    emptyOutDir: true
   }
 })

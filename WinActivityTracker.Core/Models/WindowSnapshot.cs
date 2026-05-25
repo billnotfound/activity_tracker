@@ -1,7 +1,5 @@
-// Point-in-time snapshot of all visible top-level windows, taken every WindowPollSeconds.
-// Unlike FocusChange which tracks transitions, this table records what was open.
-// IsFocused identifies which single window had keyboard focus at snapshot time.
-// This table grows fast (one row per visible window per poll) — use /api/db/cleanup regularly.
+// DEPRECATED — replaced by WindowSession (session-based window tracking).
+// Kept for backward compatibility with existing databases. No longer written to.
 namespace WinActivityTracker.Core.Models;
 
 public class WindowSnapshot

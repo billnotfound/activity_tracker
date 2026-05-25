@@ -1,15 +1,15 @@
-// Tracks background processes — those WITHOUT a visible window.
+// Session-based background process tracking.
 //
-// Classification (single GetProcesses() call for efficiency):
-//   1. Get all running processes once, store in local array.
-//   2. Pass 1: build HashSet of PIDs with MainWindowHandle != IntPtr.Zero.
-//   3. Pass 2: collect PIDs without windows and not in the exclusion list.
-//   4. Dispose all Process objects in a finally block to release native handles immediately.
+// SyncProcessSessions():
+//   1. Single GetProcesses() → filter to background PIDs (no MainWindowHandle).
+//   2. Compare with _runningProcesses dictionary (PID → session).
+//   3. New PID → INSERT ProcessSession (StartTime=now, EndTime=null).
+//   4. Gone PID → UPDATE EndTime=now, remove from dictionary.
+//   5. Dispose all Process objects in finally.
 //
-// Heuristic: some GUI apps set MainWindowHandle late; some console apps set it
-// for hidden windows. In practice it reliably separates user-facing from background.
+// On shutdown: close all remaining sessions via CloseAllProcessSessions().
 //
-// Starts 10s after the host to let WindowTracker's first poll complete.
+// Starts 10s after host to let WindowTracker's first poll complete.
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -26,6 +26,9 @@ public class ProcessTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly ILogger<ProcessTracker> _logger;
 
+    // PID → (dbId, processName) for session-based tracking.
+    private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
+
     public ProcessTracker(IServiceScopeFactory scopeFactory, SettingsService settings, ILogger<ProcessTracker> logger)
     {
         _scopeFactory = scopeFactory;
@@ -36,8 +39,6 @@ public class ProcessTracker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ProcessTracker started, interval: {Interval}s", _settings.Settings.ProcessPollSeconds);
-
-        // Delay initial enumeration to avoid racing with the WindowTracker's first poll
         await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -50,9 +51,7 @@ public class ProcessTracker : BackgroundService
                     continue;
                 }
 
-                var backgroundProcs = GetBackgroundProcesses();
-                await SaveSnapshot(backgroundProcs);
-                _logger.LogDebug("Background processes: {Count}", backgroundProcs.Count);
+                await SyncProcessSessions();
             }
             catch (Exception ex)
             {
@@ -61,68 +60,95 @@ public class ProcessTracker : BackgroundService
 
             await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.ProcessPollSeconds), stoppingToken);
         }
+
+        await CloseAllProcessSessions();
     }
 
-    private List<(string Name, int Id)> GetBackgroundProcesses()
+    // Session-based process tracking — same pattern as WindowTracker.SyncWindowSessions.
+    // Detects process start/stop transitions instead of writing full snapshots.
+    private async Task SyncProcessSessions()
     {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
-        var procsWithWindows = new HashSet<int>();
 
-        // Single call to GetProcesses() — was two calls before, allocating ~800 Process objects/cycle.
+        // Get current background processes (no visible windows, not excluded)
+        var current = GetBackgroundProcesses();
+        var currentPids = new HashSet<int>();
+
+        foreach (var (name, pid) in current)
+        {
+            currentPids.Add(pid);
+
+            if (_runningProcesses.TryGetValue(pid, out var existing))
+            {
+                // Still running — nothing to do (process name rarely changes for same PID)
+            }
+            else
+            {
+                // New process started
+                var s = new Models.ProcessSession { ProcessName = name, ProcessId = pid, StartTime = now };
+                db.ProcessSessions.Add(s);
+                await db.SaveChangesAsync();
+                _runningProcesses[pid] = (s.Id, name);
+            }
+        }
+
+        // End processes that disappeared
+        var gone = new List<int>();
+        foreach (var (pid, entry) in _runningProcesses)
+        {
+            if (!currentPids.Contains(pid))
+            {
+                var ended = await db.ProcessSessions.FindAsync(entry.DbId);
+                if (ended != null) ended.EndTime = now;
+                gone.Add(pid);
+            }
+        }
+        foreach (var pid in gone) _runningProcesses.Remove(pid);
+        if (gone.Count > 0) await db.SaveChangesAsync();
+    }
+
+    private async Task CloseAllProcessSessions()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var now = DateTime.UtcNow;
+        foreach (var (_, entry) in _runningProcesses)
+        {
+            var s = await db.ProcessSessions.FindAsync(entry.DbId);
+            if (s != null) s.EndTime = now;
+        }
+        _runningProcesses.Clear();
+        await db.SaveChangesAsync();
+    }
+
+    private static List<(string Name, int Id)> GetBackgroundProcesses()
+    {
+        var procsWithWindows = new HashSet<int>();
         var allProcs = Process.GetProcesses();
         try
         {
             foreach (var proc in allProcs)
             {
-                try
-                {
-                    if (proc.MainWindowHandle != IntPtr.Zero)
-                        procsWithWindows.Add(proc.Id);
-                }
-                catch { }
+                try { if (proc.MainWindowHandle != IntPtr.Zero) procsWithWindows.Add(proc.Id); } catch { }
             }
-
-            var background = new List<(string, int)>(allProcs.Length / 2);
+            var bg = new List<(string, int)>(allProcs.Length / 2);
             foreach (var proc in allProcs)
             {
                 try
                 {
-                    if (excluded.Contains(proc.ProcessName, StringComparer.OrdinalIgnoreCase))
-                        continue;
                     if (!procsWithWindows.Contains(proc.Id))
-                        background.Add((proc.ProcessName, proc.Id));
+                        bg.Add((proc.ProcessName, proc.Id));
                 }
                 catch { }
             }
-            return background;
+            return bg;
         }
         finally
         {
-            // Dispose all Process objects to release native handles immediately.
-            // Without this, GC collects them eventually but memory stays high.
-            foreach (var proc in allProcs)
-            {
-                try { proc.Dispose(); } catch { }
-            }
+            foreach (var proc in allProcs) { try { proc.Dispose(); } catch { } }
         }
-    }
-
-    private async Task SaveSnapshot(List<(string Name, int Id)> procs)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var now = DateTime.UtcNow;
-
-        foreach (var (name, id) in procs)
-        {
-            db.ProcessSnapshots.Add(new ProcessSnapshot
-            {
-                Timestamp = now,
-                ProcessName = name,
-                ProcessId = id
-            });
-        }
-
-        await db.SaveChangesAsync();
     }
 }
