@@ -26,6 +26,11 @@
       <div class="col-md-2 d-flex align-items-end">
         <button class="btn btn-primary" @click="loadTimeline">查询</button>
       </div>
+      <div class="col-md-2 d-flex align-items-end">
+        <button class="btn btn-sm btn-outline-secondary" @click="toggleSort">
+          {{ sortAsc ? '↑ 时间升序' : '↓ 时间降序' }}
+        </button>
+      </div>
     </div>
 
     <div class="row">
@@ -38,7 +43,7 @@
                 <tr><th>时间</th><th>程序</th><th>窗口标题</th><th>持续</th></tr>
               </thead>
               <tbody>
-                <tr v-for="d in timeline" :key="d.timestamp">
+                <tr v-for="d in sortedTimeline" :key="d.timestamp">
                   <td>{{ toLocal(d.timestamp) }}</td>
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ d.windowTitle }}</td>
@@ -73,7 +78,7 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted, onUnmounted } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
 
 const apiBase = inject('apiBase')
 
@@ -82,18 +87,29 @@ const fromTime = ref(new Date(Date.now() - 3600000).toISOString().slice(0, 16))
 const toTime = ref(new Date().toISOString().slice(0, 16))
 const timeline = ref([])
 const windows = ref([])
+const sortAsc = ref(true)  // true = oldest first, false = newest first
 
 let timer = null
 
 onMounted(() => {
   loadTimeline()
   loadWindows()
-  // Live refresh the current-windows panel every 3s
   timer = setInterval(loadWindows, 3000)
 })
 
-// Clean up the interval to prevent memory leaks when navigating away
 onUnmounted(() => clearInterval(timer))
+
+const sortedTimeline = computed(() => {
+  const arr = [...timeline.value]
+  arr.sort((a, b) => sortAsc.value
+    ? new Date(a.timestamp + 'Z') - new Date(b.timestamp + 'Z')
+    : new Date(b.timestamp + 'Z') - new Date(a.timestamp + 'Z'))
+  return arr
+})
+
+function toggleSort() {
+  sortAsc.value = !sortAsc.value
+}
 
 async function loadTimeline() {
   try {
