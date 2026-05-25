@@ -35,16 +35,26 @@ public class TrayApplicationContext : ApplicationContext
     private readonly int _apiPort;
 
     private const string AutoStartKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AutoStartValue = "WinActivityTracker";
+    private const string AutoStartValue = "taskmonitor114";
 
     // Set by Program.cs before Application.Run() so native windows can access DI.
     public static IServiceProvider ServiceProvider { get; set; } = null!;
 
-    public TrayApplicationContext(IServiceProvider services, int apiPort)
+    // autoShowStatus: when true, opens the StatusWindow shortly after startup
+    // (first-launch behavior — user clicked the exe and expects to see something).
+    public TrayApplicationContext(IServiceProvider services, int apiPort, bool autoShowStatus = false)
     {
         _services = services;
         _apiPort = apiPort;
         ServiceProvider = services;
+
+        if (autoShowStatus)
+        {
+            // Delay to let the web host fully start before the StatusWindow queries the API
+            var timer = new System.Windows.Forms.Timer { Interval = 1000 };
+            timer.Tick += (_, _) => { timer.Stop(); timer.Dispose(); ShowStatusWindow(); };
+            timer.Start();
+        }
 
         var menu = new ContextMenuStrip();
 
@@ -127,7 +137,7 @@ public class TrayApplicationContext : ApplicationContext
         _trayIcon = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "WinActivityTracker",
+            Text = "taskmonitor114",
             ContextMenuStrip = menu,
             Visible = true
         };
@@ -145,7 +155,7 @@ public class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"无法打开浏览器: {ex.Message}", "WinActivityTracker",
+            MessageBox.Show($"无法打开浏览器: {ex.Message}", "taskmonitor114",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }

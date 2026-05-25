@@ -8,6 +8,7 @@
     <Nullable>enable</Nullable>
     <!-- Required for NotifyIcon, ContextMenuStrip, and StatusWindow -->
     <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>taskmonitor114</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

@@ -30,7 +30,6 @@ using WinActivityTracker.Core.Trackers;
 using WinActivityTracker.Service.Native;
 
 // STA thread is required for WinForms clipboard, drag-drop, and COM interop.
-// Must be set before any WinForms controls are created.
 Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 
 // --- Read port from settings.json early (before DI builds) ---
@@ -39,6 +38,17 @@ Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 var trackerDir = Path.Combine(localAppData, "WinActivityTracker");
 Directory.CreateDirectory(trackerDir);
+
+// --- Single-instance guard ---
+// Check for an existing taskmonitor114 process (excluding our own PID).
+var myPid = Environment.ProcessId;
+var existing = System.Diagnostics.Process.GetProcessesByName("taskmonitor114");
+if (existing.Any(p => p.Id != myPid))
+{
+    MessageBox.Show("taskmonitor114 已在运行中。\n请查看系统通知区域的托盘图标。",
+        "taskmonitor114", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    return;
+}
 var settingsPath = Path.Combine(trackerDir, "settings.json");
 int apiPort = 5200;
 if (File.Exists(settingsPath))
@@ -87,7 +97,7 @@ builder.Services.AddHostedService<MediaSessionTracker>();
 // When running as a service (detected automatically), the WinForms tray is skipped.
 builder.Services.AddWindowsService(options =>
 {
-    options.ServiceName = "WinActivityTracker";
+    options.ServiceName = "taskmonitor114";
 });
 
 // CORS: allow all origins in development. The Vue dev server runs on port 5000.
@@ -365,7 +375,7 @@ await Task.Delay(500);
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
-Application.Run(new TrayApplicationContext(app.Services, apiPort));
+Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: true));
 
 // When Application.Run returns (user clicked Exit), signal the web host to stop.
 await app.StopAsync();

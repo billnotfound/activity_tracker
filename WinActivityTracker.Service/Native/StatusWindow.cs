@@ -18,7 +18,7 @@ public partial class StatusWindow : Form
     {
         _apiBase = $"http://localhost:{apiPort}";
 
-        Text = "WinActivityTracker — 状态";
+        Text = "状态";
         Size = new Size(560, 680);
         MinimumSize = new Size(440, 440);
         FormBorderStyle = FormBorderStyle.Sizable;
