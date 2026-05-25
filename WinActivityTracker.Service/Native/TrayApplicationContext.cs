@@ -1,25 +1,23 @@
 // Manages the system tray icon and its context menu.
 //
 // Runs on the WinForms STA thread via Application.Run().
-// Receives the IServiceProvider from Program.cs to access SettingsService and API data.
-//
 // OutputType is WinExe — no console window on startup.
-// Console can be shown/hidden via the tray menu using AllocConsole/FreeConsole.
-// When the user closes the console window (X button), only the console is freed —
-// the tray and all background services continue running.
+// Console is an in-app WinForms window (ConsoleWindow), not the system console —
+// closing it never exits the application.
 //
 // Menu structure:
-//   打开仪表盘        → browser opens Vue SPA on localhost:apiPort
+//   打开仪表盘        → browser opens SPA on localhost:apiPort
 //   设置...           → native SettingsWindow
-//   显示状态窗口       → native StatusWindow (current focus + top 5)
+//   显示状态窗口       → native StatusWindow
 //   ─────────────────
 //   暂停/恢复追踪      → toggle trackingEnabled
 //   开机自启           → toggle HKCU\...\Run registry entry
-//   显示/隐藏控制台     → AllocConsole / FreeConsole
+//   显示/隐藏控制台     → show/hide ConsoleWindow (ConsoleMirror subscriber)
 //   ─────────────────
 //   退出              → stop web host + close tray
 //
 // Double-clicking the tray icon opens the dashboard.
+// On first launch, the StatusWindow opens automatically after a 1-second delay.
 using System.Diagnostics;
 
 using Microsoft.Extensions.DependencyInjection;

@@ -1,15 +1,15 @@
 // Tracks background processes — those WITHOUT a visible window.
 //
-// Classification logic:
-//   1. Enumerate ALL running processes via System.Diagnostics.Process.GetProcesses()
-//   2. Build a HashSet of PIDs that HAVE a MainWindowHandle != IntPtr.Zero
-//   3. Background = all processes MINUS those with windows MINUS excluded processes
+// Classification (single GetProcesses() call for efficiency):
+//   1. Get all running processes once, store in local array.
+//   2. Pass 1: build HashSet of PIDs with MainWindowHandle != IntPtr.Zero.
+//   3. Pass 2: collect PIDs without windows and not in the exclusion list.
+//   4. Dispose all Process objects in a finally block to release native handles immediately.
 //
-// This is a coarse heuristic: some GUI apps set MainWindowHandle after the window opens,
-// and some console apps set MainWindowHandle for hidden windows. In practice, it reliably
-// separates user-facing apps from services/daemons/background utilities.
+// Heuristic: some GUI apps set MainWindowHandle late; some console apps set it
+// for hidden windows. In practice it reliably separates user-facing from background.
 //
-// Special delay: starts 10s after the host to let WindowTracker populate first.
+// Starts 10s after the host to let WindowTracker's first poll complete.
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -68,32 +68,43 @@ public class ProcessTracker : BackgroundService
         var excluded = _settings.Settings.ExcludedProcesses;
         var procsWithWindows = new HashSet<int>();
 
-        // Pass 1: find all PIDs that have a main window
-        foreach (var proc in Process.GetProcesses())
+        // Single call to GetProcesses() — was two calls before, allocating ~800 Process objects/cycle.
+        var allProcs = Process.GetProcesses();
+        try
         {
-            try
+            foreach (var proc in allProcs)
             {
-                if (proc.MainWindowHandle != IntPtr.Zero)
-                    procsWithWindows.Add(proc.Id);
+                try
+                {
+                    if (proc.MainWindowHandle != IntPtr.Zero)
+                        procsWithWindows.Add(proc.Id);
+                }
+                catch { }
             }
-            catch { }  // Process exited or access denied — skip
-        }
 
-        // Pass 2: collect background PIDs, excluding those with windows or on the deny-list
-        var background = new List<(string, int)>();
-        foreach (var proc in Process.GetProcesses())
+            var background = new List<(string, int)>(allProcs.Length / 2);
+            foreach (var proc in allProcs)
+            {
+                try
+                {
+                    if (excluded.Contains(proc.ProcessName, StringComparer.OrdinalIgnoreCase))
+                        continue;
+                    if (!procsWithWindows.Contains(proc.Id))
+                        background.Add((proc.ProcessName, proc.Id));
+                }
+                catch { }
+            }
+            return background;
+        }
+        finally
         {
-            try
+            // Dispose all Process objects to release native handles immediately.
+            // Without this, GC collects them eventually but memory stays high.
+            foreach (var proc in allProcs)
             {
-                if (excluded.Contains(proc.ProcessName, StringComparer.OrdinalIgnoreCase))
-                    continue;
-                if (!procsWithWindows.Contains(proc.Id))
-                    background.Add((proc.ProcessName, proc.Id));
+                try { proc.Dispose(); } catch { }
             }
-            catch { }
         }
-
-        return background;
     }
 
     private async Task SaveSnapshot(List<(string Name, int Id)> procs)

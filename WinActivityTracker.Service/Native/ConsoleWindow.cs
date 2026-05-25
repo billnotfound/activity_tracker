@@ -1,8 +1,9 @@
 // In-app console window — displays Console output captured by ConsoleMirror.
-// ConsoleMirror batches updates every ~50ms, so we just re-read GetHistory()
-// and update the TextBox — no per-character BeginInvoke flood.
+// ConsoleMirror batches updates every ~200ms; we re-read GetHistory() on each
+// tick and only touch the TextBox if content changed.
 //
-// Closing this window does NOT exit the application.
+// Closing this window does NOT exit the application (it's just a Form).
+// All output is also tee'd to the original stdout for terminal visibility.
 namespace WinActivityTracker.Service.Native;
 
 public class ConsoleWindow : Form

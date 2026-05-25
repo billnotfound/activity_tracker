@@ -1,14 +1,18 @@
-// WinActivityTracker.Service — the backend monitoring process with native system tray.
+// taskmonitor114 — backend monitoring process with native system tray.
 //
 // Dual-thread architecture:
-//   Main thread (STA):  WinForms Application.Run() — system tray icon + status window
+//   Main thread (STA):  WinForms Application.Run() — tray + native windows
 //   Background thread:  ASP.NET Core WebApplication — REST API + trackers
+//   Shared: DI container via static IServiceProvider reference
 //
-// Both threads share the same DI container (IServiceProvider), so the tray/status UI
-// can access SettingsService, and the API can access tracker data.
+// When !Environment.UserInteractive (Windows Service), WinForms is skipped.
 //
-// When running as a Windows Service (detected via !Environment.UserInteractive),
-// the WinForms UI is skipped entirely — only the web host runs.
+// Startup order:
+//   1. Single-instance guard: check for existing taskmonitor114 process by name
+//   2. Read port from settings.json (comment-stripped)
+//   3. Install ConsoleMirror BEFORE Build() so ASP.NET logger pipes through it
+//   4. Build web host, ensure DB, start background thread
+//   5. On first launch, StatusWindow auto-opens after 1s delay
 //
 // API endpoints:
 //   GET  /api/status              — health check (+ trackingEnabled)
@@ -16,12 +20,13 @@
 //   PUT  /api/settings            — update configuration (body: TrackerSettings JSON)
 //   GET  /api/summary/today       — today's focus time per process (?date=yyyy-MM-dd)
 //   GET  /api/summary/range       — focus time over a date range (?from=&to=)
-//   GET  /api/windows/current     — live list of visible windows (real-time, not from DB)
+//   GET  /api/windows/current     — live visible windows (real-time, not from DB)
 //   GET  /api/windows/timeline    — focus change history (?from=&to=)
 //   GET  /api/processes/snapshot  — latest background process snapshot
 //   GET  /api/media/history       — recent media playback records (?limit=)
 //   GET  /api/db/stats            — database row counts and age
 //   POST /api/db/cleanup          — delete old records and VACUUM (?days=)
+//   POST /api/db/reset            — delete ALL data (?confirm=true)
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;

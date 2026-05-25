@@ -1,11 +1,13 @@
-// Singleton TextWriter that captures Console output into a capped string buffer.
-// Registered BEFORE WebApplication.Build() so the ASP.NET console logger pipes through here.
+// Singleton TextWriter that captures all Console output into a capped buffer.
+// Registered BEFORE WebApplication.Build() so the ASP.NET console logger
+// writes through this, not the original stdout.
 //
 // Memory model:
-//   - Lines are stored in a List<char> with a running total length.
-//   - When total exceeds MaxChars (250KB), the oldest content is trimmed.
-//   - Subscribers are notified at most once per ~200ms.
-//   - GetHistory() returns a cached string; rebuilt only when dirty.
+//   - StringBuilder with 250KB cap; oldest content trimmed when exceeded.
+//   - Trimming aligns to newline boundaries for clean cuts.
+//   - Subscribers notified at most once per 200ms (not per-write).
+//   - GetHistory() returns a cached string rebuilt only when dirty.
+//   - Writes are tee'd to the original stdout (visible in dotnet run terminal).
 using System.Text;
 
 namespace WinActivityTracker.Service.Native;
