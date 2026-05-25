@@ -33,18 +33,34 @@ using WinActivityTracker.Service.Native;
 // Must be set before any WinForms controls are created.
 Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 
+// --- Read port from settings.json early (before DI builds) ---
+// The port must be known before WebApplication starts, but SettingsService is
+// constructed inside builder.Build(). We read the file directly here.
+var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+var trackerDir = Path.Combine(localAppData, "WinActivityTracker");
+Directory.CreateDirectory(trackerDir);
+var settingsPath = Path.Combine(trackerDir, "settings.json");
+int apiPort = 5200;
+if (File.Exists(settingsPath))
+{
+    try
+    {
+        var raw = File.ReadAllText(settingsPath);
+        var clean = string.Join("\n", raw.Split('\n')
+            .Select(l => l.TrimStart())
+            .Where(l => !l.StartsWith("//")));
+        using var doc = System.Text.Json.JsonDocument.Parse(clean);
+        if (doc.RootElement.TryGetProperty("ApiPort", out var p) && p.TryGetInt32(out var v))
+            apiPort = Math.Clamp(v, 1024, 65535);
+    }
+    catch { }
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
-// --- Database path: configurable via appsettings.json or defaults to %LOCALAPPDATA% ---
-var config = builder.Configuration.GetSection("ActivityTracker");
-var dbPath = config["DatabasePath"];
-if (string.IsNullOrEmpty(dbPath))
-{
-    var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-    dbPath = Path.Combine(localAppData, "WinActivityTracker", "activity.db");
-}
-var dbDir = Path.GetDirectoryName(dbPath)!;
-Directory.CreateDirectory(dbDir);
+// --- Database path: defaults to %LOCALAPPDATA% ---
+var dbPath = Path.Combine(trackerDir, "activity.db");
+Directory.CreateDirectory(trackerDir);
 
 // Register BEFORE trackers — they depend on it via constructor injection
 builder.Services.AddSingleton<SettingsService>();
@@ -315,7 +331,6 @@ app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
 if (serveSpa && fp != null)
     app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });
 
-var apiPort = config.GetValue("ApiPort", 5200);
 app.Urls.Add($"http://localhost:{apiPort}");
 
 // ===== Startup: dual-thread or service mode =====
@@ -337,6 +352,9 @@ var webTask = Task.Run(() => app.RunAsync());
 // Ensure the web host has started before showing the tray
 await Task.Delay(500);
 
+// PerMonitorV2 enables per-monitor DPI scaling — prevents blurry text on high-DPI displays.
+// Must be called before any WinForms controls are created (before EnableVisualStyles).
+Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
 Application.Run(new TrayApplicationContext(app.Services, apiPort));

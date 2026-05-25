@@ -95,7 +95,11 @@ public class SettingsService
         sb.AppendLine("  // POST /api/db/cleanup 的默认保留天数。最小 1。");
         sb.AppendLine($"  \"DataRetentionDays\": {JsonSerializer.Serialize(s.DataRetentionDays)},");
         sb.AppendLine("  // 是否启用自动清理 (目前为预留字段，尚未实现自动调度)。");
-        sb.AppendLine($"  \"AutoCleanup\": {JsonSerializer.Serialize(s.AutoCleanup)}");
+        sb.AppendLine($"  \"AutoCleanup\": {JsonSerializer.Serialize(s.AutoCleanup)},");
+        sb.AppendLine();
+        sb.AppendLine("  // ===== 服务器 =====");
+        sb.AppendLine("  // API 和 Web UI 的监听端口。修改后需重启生效。范围: 1024-65535，默认 5200。");
+        sb.AppendLine($"  \"ApiPort\": {JsonSerializer.Serialize(s.ApiPort)}");
         sb.AppendLine("}");
 
         File.WriteAllText(_filePath, sb.ToString());
@@ -108,6 +112,7 @@ public class SettingsService
     // - Media poll min 1s
     // - Idle threshold min 1 minute
     // - Retention min 1 day (0 would delete everything)
+    // - ApiPort clamped to 1024-65535 range (well-known ports excluded)
     public void Update(TrackerSettings newSettings)
     {
         _settings.TrackingEnabled = newSettings.TrackingEnabled;
@@ -118,6 +123,7 @@ public class SettingsService
         _settings.ExcludedProcesses = newSettings.ExcludedProcesses ?? [];
         _settings.DataRetentionDays = Math.Max(1, newSettings.DataRetentionDays);
         _settings.AutoCleanup = newSettings.AutoCleanup;
+        _settings.ApiPort = Math.Clamp(newSettings.ApiPort, 1024, 65535);
         Save();
     }
 }

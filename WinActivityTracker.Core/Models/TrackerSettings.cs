@@ -32,4 +32,8 @@ public class TrackerSettings
 
     // Reserved: when true, cleanup runs automatically on a daily schedule. Not yet wired.
     public bool AutoCleanup { get; set; } = true;
+
+    // API server port. Requires restart to take effect (not hot-reloadable).
+    // Min: 1024, Max: 65535, Default: 5200.
+    public int ApiPort { get; set; } = 5200;
 }

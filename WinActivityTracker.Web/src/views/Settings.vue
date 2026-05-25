@@ -69,6 +69,17 @@
         </div>
 
         <div class="card mb-3">
+          <div class="card-header">服务器</div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">API 端口 <span class="text-muted">(重启后生效)</span></label>
+              <input type="number" class="form-control w-auto" v-model.number="form.apiPort" min="1024" max="65535" />
+              <div class="form-text">默认 5200。修改后需重启 Service 才能生效。</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
           <div class="card-header">数据库</div>
           <div class="card-body">
             <div class="mb-3">
@@ -136,7 +147,8 @@ const form = reactive({
   processPollSeconds: 30,
   mediaPollSeconds: 5,
   idleThresholdMinutes: 2,
-  dataRetentionDays: 90
+  dataRetentionDays: 90,
+  apiPort: 5200
 })
 const excludeText = ref('')
 const saving = ref(false)
@@ -175,6 +187,7 @@ async function loadSettings() {
     form.mediaPollSeconds = s.mediaPollSeconds
     form.idleThresholdMinutes = s.idleThresholdMinutes
     form.dataRetentionDays = s.dataRetentionDays
+    form.apiPort = s.apiPort || 5200
     excludeText.value = (s.excludedProcesses || []).join(', ')
     statusOk.value = true
   } catch { statusOk.value = false }

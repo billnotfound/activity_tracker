@@ -24,6 +24,7 @@ public partial class SettingsWindow : Form
     private NumericUpDown _idleThreshold = null!;
     private TextBox _excludedBox = null!;
     private NumericUpDown _retentionDays = null!;
+    private NumericUpDown _apiPortInput = null!;
     private CheckBox _autoStartCheck = null!;
     private Button _saveButton = null!;
     private Button _cancelButton = null!;
@@ -38,7 +39,7 @@ public partial class SettingsWindow : Form
         _apiPort = apiPort;
 
         Text = "WinActivityTracker — 设置";
-        Size = new Size(480, 560);
+        Size = new Size(480, 640);
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -101,6 +102,18 @@ public partial class SettingsWindow : Form
         AddRow(dbGroup, "数据保留天数:", out _retentionDays, 1, 3650, 90);
         Controls.Add(dbGroup);
 
+        // --- Server ---
+        var srvGroup = NewGroup("服务器 (重启后生效)", pad, ref y, 72);
+        AddRow(srvGroup, "API 端口:", out _apiPortInput, 1024, 65535, 5200);
+        var srvHint = new Label
+        {
+            Text = "修改端口后需重启应用才能生效。浏览器仪表盘地址也会变化。",
+            Location = new Point(pad, 48), Size = new Size(ctrlW + lblW, 16),
+            ForeColor = SystemColors.GrayText, Font = new Font("Microsoft YaHei UI", 8)
+        };
+        srvGroup.Controls.Add(srvHint);
+        Controls.Add(srvGroup);
+
         // --- Auto-start ---
         var startGroup = NewGroup("系统集成", pad, ref y, 52);
         _autoStartCheck = new CheckBox
@@ -148,6 +161,7 @@ public partial class SettingsWindow : Form
         _idleThreshold.Value = s.IdleThresholdMinutes;
         _excludedBox.Text = string.Join(", ", s.ExcludedProcesses);
         _retentionDays.Value = s.DataRetentionDays;
+        _apiPortInput.Value = s.ApiPort;
         _autoStartCheck.Checked = IsAutoStartEnabled();
     }
 
@@ -165,6 +179,7 @@ public partial class SettingsWindow : Form
             .Where(x => x.Length > 0)
             .ToList();
         s.DataRetentionDays = (int)_retentionDays.Value;
+        s.ApiPort = (int)_apiPortInput.Value;
 
         // SettingsService.Update enforces minimum values and calls Save()
         _settings.Update(s);
