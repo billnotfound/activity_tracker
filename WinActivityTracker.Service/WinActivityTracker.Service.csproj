@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <!-- WinExe: no console window on startup. Console can be toggled from tray menu. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -16,12 +17,20 @@
 
   <!-- Copy Vue SPA build output (wwwroot) from Web project into Service output.
        This lets the tray icon's "打开仪表盘" serve the full UI from port 5200.
-       The Vue project must be built first: cd WinActivityTracker.Web && pnpm build -->
-  <Target Name="CopyVueDist" AfterTargets="Build" Condition="Exists('..\WinActivityTracker.Web\wwwroot\index.html')">
+       The Vue project must be built first: cd WinActivityTracker.Web && pnpm build
+       Build target: copies to output dir for dotnet run / F5.
+       Publish target: copies to publish dir for dotnet publish. -->
+  <Target Name="CopyVueDistBuild" AfterTargets="Build" Condition="Exists('..\WinActivityTracker.Web\wwwroot\index.html')">
     <ItemGroup>
       <VueFiles Include="..\WinActivityTracker.Web\wwwroot\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(VueFiles)" DestinationFolder="$(OutputPath)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyVueDistPublish" AfterTargets="Publish" Condition="Exists('..\WinActivityTracker.Web\wwwroot\index.html')">
+    <ItemGroup>
+      <VueFiles Include="..\WinActivityTracker.Web\wwwroot\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VueFiles)" DestinationFolder="$(PublishDir)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
