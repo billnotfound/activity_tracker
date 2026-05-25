@@ -1,6 +1,6 @@
-// Native settings form using TableLayoutPanel for adaptive layout.
-// GroupBoxes have fixed minimum heights and Anchor so they're always visible.
-// The outer TableLayoutPanel uses AutoSize rows so everything stacks naturally.
+// Native settings form.
+// Uses a simple TableLayoutPanel with fixed-height GroupBoxes — no AutoSize
+// conflicts, no overlapping. Each GroupBox docks an inner panel for its content.
 using Microsoft.Win32;
 using WinActivityTracker.Core.Services;
 
@@ -30,10 +30,9 @@ public partial class SettingsWindow : Form
 
         Text = "WinActivityTracker — 设置";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(440, 860);
-        Size = new Size(680, 900);
+        MinimumSize = new Size(500, 640);
+        Size = new Size(640, 740);
         ShowInTaskbar = true;
-        AutoScroll = true;
         Padding = new Padding(12);
 
         BuildUI();
@@ -42,88 +41,93 @@ public partial class SettingsWindow : Form
 
     private void BuildUI()
     {
-        var table = new TableLayoutPanel
+        // Outer panel: fills form, no AutoSize — lets children stretch properly
+        var main = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
             ColumnStyles = { new ColumnStyle(SizeType.Percent, 100) }
         };
 
-        // --- Tracking ---
+        // --- Tracking checkbox ---
         _trackingCheck = new CheckBox
         {
             Text = "启用追踪", AutoSize = true,
             Font = new Font("Microsoft YaHei UI", 9, FontStyle.Bold),
             Anchor = AnchorStyles.Left
         };
-        table.Controls.Add(_trackingCheck);
+        main.Controls.Add(_trackingCheck);
 
-        // --- Helper: Add a group with an inner 2-column table ---
-        TableLayoutPanel AddGroupBox(string title, int rows, Action<TableLayoutPanel> fill)
+        // === Helpers ===
+
+        // GroupBox with inner Panel — fixed Height, Dock=Fill inner so content stretches.
+        GroupBox MakeGroup(string title, int height)
         {
             var g = new GroupBox
             {
                 Text = title,
+                Height = height,
                 Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
-                Margin = new Padding(0, 8, 0, 0),
-                MinimumSize = new Size(0, rows * 34 + 42)
+                Margin = new Padding(0, 12, 0, 0)
             };
-            var inner = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                Padding = new Padding(8, 4, 8, 4),
-                ColumnStyles = { new ColumnStyle(SizeType.AutoSize), new ColumnStyle(SizeType.Percent, 100) }
-            };
-            fill(inner);
+            var inner = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 2, 8, 4) };
             g.Controls.Add(inner);
-            table.Controls.Add(g);
-            return inner;
+            main.Controls.Add(g);
+            return g;
         }
 
-        void AddRow(TableLayoutPanel parent, string label, out NumericUpDown nud, int min, int max, int def)
+        // Row: label + NUD, placed manually inside the inner panel.
+        void AddRow(Panel parent, int row, string label, out NumericUpDown nud, int min, int max, int def)
         {
-            parent.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 4, 12, 4) });
-            nud = new NumericUpDown { Minimum = min, Maximum = max, Value = def, Width = 80, Anchor = AnchorStyles.Left };
+            var y = 6 + row * 38;
+            var lbl = new Label { Text = label, AutoSize = true, Location = new Point(0, y) };
+            nud = new NumericUpDown { Minimum = min, Maximum = max, Value = def, Width = 80, Location = new Point(0, y - 1) };
+            nud.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            parent.Controls.Add(lbl);
             parent.Controls.Add(nud);
         }
 
-        // --- Polling ---
-        AddGroupBox("轮询间隔 (秒)", 3, inner =>
+        // --- Polling (3 rows → height ~136) ---
         {
-            AddRow(inner, "窗口/焦点轮询:", out _windowInterval, 1, 3600, 3);
-            AddRow(inner, "后台进程轮询:", out _processInterval, 5, 3600, 30);
-            AddRow(inner, "媒体播放检测:", out _mediaInterval, 1, 3600, 5);
-        });
+            var g = MakeGroup("轮询间隔 (秒)", 152);
+            var pan = g.Controls[0] as Panel;
+            AddRow(pan!, 0, "窗口/焦点轮询:", out _windowInterval, 1, 3600, 3);
+            AddRow(pan!, 1, "后台进程轮询:", out _processInterval, 5, 3600, 30);
+            AddRow(pan!, 2, "媒体播放检测:", out _mediaInterval, 1, 3600, 5);
+        }
 
-        // --- Idle ---
-        AddGroupBox("空闲检测", 1, inner =>
+        // --- Idle (1 row → height ~64) ---
         {
-            AddRow(inner, "空闲判定阈值 (分钟):", out _idleThreshold, 1, 120, 2);
-        });
+            var g = MakeGroup("空闲检测", 70);
+            var pan = g.Controls[0] as Panel;
+            AddRow(pan!, 0, "空闲判定阈值 (分钟):", out _idleThreshold, 1, 120, 2);
+        }
 
-        // --- Exclusions ---
-        var excl = AddGroupBox("进程排除 (逗号分隔，不区分大小写)", 1, inner =>
+        // --- Exclusions (textbox → height ~58) ---
         {
-            inner.ColumnStyles.Clear();
-            inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            _excludedBox = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Font = new Font("Consolas", 9), Margin = new Padding(0, 4, 0, 4) };
-            inner.Controls.Add(_excludedBox);
-        });
+            var g = MakeGroup("进程排除 (逗号分隔，不区分大小写)", 70);
+            _excludedBox = new TextBox
+            {
+                Font = new Font("Consolas", 9),
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0)
+            };
+            g.Controls[0].Controls.Add(_excludedBox);
+        }
 
-        // --- Database ---
-        AddGroupBox("数据库", 1, inner =>
+        // --- Database (1 row → height ~58) ---
         {
-            AddRow(inner, "数据保留天数:", out _retentionDays, 1, 3650, 90);
-        });
+            var g = MakeGroup("数据库", 64);
+            var pan = g.Controls[0] as Panel;
+            AddRow(pan!, 0, "数据保留天数:", out _retentionDays, 1, 3650, 90);
+        }
 
-        // --- Server ---
-        AddGroupBox("服务器 (重启后生效)", 1, inner =>
+        // --- Server (1 row → height ~58) ---
         {
-            AddRow(inner, "API 端口:", out _apiPortInput, 1024, 65535, 5200);
-        });
+            var g = MakeGroup("服务器 (重启后生效)", 64);
+            var pan = g.Controls[0] as Panel;
+            AddRow(pan!, 0, "API 端口:", out _apiPortInput, 1024, 65535, 5200);
+        }
 
         // --- Auto-start ---
         _autoStartCheck = new CheckBox
@@ -131,25 +135,27 @@ public partial class SettingsWindow : Form
             Text = "开机自动启动", AutoSize = true,
             Anchor = AnchorStyles.Left, Margin = new Padding(0, 8, 0, 0)
         };
-        table.Controls.Add(_autoStartCheck);
+        main.Controls.Add(_autoStartCheck);
 
         // --- Buttons ---
-        var btnPanel = new FlowLayoutPanel
         {
-            AutoSize = true, FlowDirection = FlowDirection.LeftToRight,
-            Anchor = AnchorStyles.Left, Margin = new Padding(0, 12, 0, 0)
-        };
-        var saveBtn = new Button { Text = "保存", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
-        saveBtn.Click += (_, _) => SaveSettings();
-        var cancelBtn = new Button { Text = "取消", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10) };
-        cancelBtn.Click += (_, _) => Close();
-        _statusLabel = new Label { Text = "", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(12, 6, 0, 0) };
-        btnPanel.Controls.Add(saveBtn);
-        btnPanel.Controls.Add(cancelBtn);
-        btnPanel.Controls.Add(_statusLabel);
-        table.Controls.Add(btnPanel);
+            var btnPanel = new FlowLayoutPanel
+            {
+                AutoSize = true, FlowDirection = FlowDirection.LeftToRight,
+                Anchor = AnchorStyles.Left, Margin = new Padding(0, 12, 0, 0)
+            };
+            var saveBtn = new Button { Text = "保存", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
+            saveBtn.Click += (_, _) => SaveSettings();
+            var cancelBtn = new Button { Text = "取消", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10) };
+            cancelBtn.Click += (_, _) => Close();
+            _statusLabel = new Label { Text = "", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(12, 6, 0, 0) };
+            btnPanel.Controls.Add(saveBtn);
+            btnPanel.Controls.Add(cancelBtn);
+            btnPanel.Controls.Add(_statusLabel);
+            main.Controls.Add(btnPanel);
+        }
 
-        Controls.Add(table);
+        Controls.Add(main);
     }
 
     private void LoadSettings()
