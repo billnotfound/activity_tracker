@@ -101,7 +101,11 @@ public class SettingsService
         sb.AppendLine();
         sb.AppendLine("  // ===== 服务器 =====");
         sb.AppendLine("  // API 和 Web UI 的监听端口。修改后需重启生效。范围: 1024-65535，默认 5200。");
-        sb.AppendLine($"  \"ApiPort\": {JsonSerializer.Serialize(s.ApiPort)}");
+        sb.AppendLine($"  \"ApiPort\": {JsonSerializer.Serialize(s.ApiPort)},");
+        sb.AppendLine();
+        sb.AppendLine("  // ===== 开机自启 =====");
+        sb.AppendLine("  // 启动时从注册表同步。true = 已在 HKCU\\Run 注册。");
+        sb.AppendLine($"  \"AutoStartEnabled\": {JsonSerializer.Serialize(s.AutoStartEnabled)}");
         sb.AppendLine("}");
 
         File.WriteAllText(_filePath, sb.ToString());
@@ -127,6 +131,7 @@ public class SettingsService
         _settings.DataRetentionDays = Math.Max(1, newSettings.DataRetentionDays);
         _settings.AutoCleanup = newSettings.AutoCleanup;
         _settings.ApiPort = Math.Clamp(newSettings.ApiPort, 1024, 65535);
+        _settings.AutoStartEnabled = newSettings.AutoStartEnabled;
         Save();
     }
 }

@@ -1,7 +1,6 @@
 // Native settings form.
 // Uses a simple TableLayoutPanel with fixed-height GroupBoxes — no AutoSize
 // conflicts, no overlapping. Each GroupBox docks an inner panel for its content.
-using Microsoft.Win32;
 using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Native;
@@ -21,8 +20,6 @@ public partial class SettingsWindow : Form
     private CheckBox _autoStartCheck = null!;
     private Label _statusLabel = null!;
 
-    private const string AutoStartKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string AutoStartValue = "WinActivityTracker";
 
     public SettingsWindow(SettingsService settings, int apiPort)
     {
@@ -169,7 +166,7 @@ public partial class SettingsWindow : Form
         _excludedBox.Text = string.Join(", ", s.ExcludedProcesses);
         _retentionDays.Value = s.DataRetentionDays;
         _apiPortInput.Value = s.ApiPort;
-        _autoStartCheck.Checked = IsAutoStartEnabled();
+        _autoStartCheck.Checked = s.AutoStartEnabled;
     }
 
     private void SaveSettings()
@@ -184,30 +181,10 @@ public partial class SettingsWindow : Form
         s.DataRetentionDays = (int)_retentionDays.Value;
         s.ApiPort = (int)_apiPortInput.Value;
         _settings.Update(s);
-        SetAutoStart(_autoStartCheck.Checked);
+        s.AutoStartEnabled = _autoStartCheck.Checked;
+        TrayApplicationContext.WriteRegistryAutoStart(_autoStartCheck.Checked);
         _statusLabel.Text = "已保存";
         _statusLabel.ForeColor = Color.DarkGreen;
     }
 
-    private static bool IsAutoStartEnabled()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey);
-            return key?.GetValue(AutoStartValue) is string path && File.Exists(path.Trim('"'));
-        }
-        catch { return false; }
-    }
-
-    private static void SetAutoStart(bool enable)
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey, writable: true);
-            if (key == null) return;
-            if (enable) key.SetValue(AutoStartValue, $"\"{Environment.ProcessPath ?? Application.ExecutablePath}\"");
-            else key.DeleteValue(AutoStartValue, throwOnMissingValue: false);
-        }
-        catch { }
-    }
 }

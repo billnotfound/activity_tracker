@@ -67,27 +67,30 @@ public class WindowTracker : BackgroundService
         {
             try
             {
+                var now = DateTime.UtcNow;
+
+                // Sleep detection — works even when tracking is disabled.
+                // _lastPollTime is always updated at the bottom of the loop,
+                // so a wall-clock gap means the system was suspended.
+                if ((now - _lastPollTime).TotalSeconds > _settings.Settings.WindowPollSeconds * 3)
+                {
+                    _logger.LogDebug("Sleep gap detected: {Gap}s", (now - _lastPollTime).TotalSeconds);
+                    if (_settings.Settings.TrackingEnabled)
+                    {
+                        await SaveFocusChange();
+                        await InsertSleepGap(_lastPollTime, now);
+                        _currentProcess = string.Empty;
+                        _currentTitle = string.Empty;
+                        _focusStart = now;
+                    }
+                }
+
                 if (!_settings.Settings.TrackingEnabled)
                 {
+                    _lastPollTime = now;
                     await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
                     continue;
                 }
-
-                // Detect sleep/hibernate by wall-clock gap between polls.
-                // Normal gap ≤ poll interval + small jitter. A gap > 3x means
-                // the system was suspended and we should not count that time.
-                var now = DateTime.UtcNow;
-                var expectedMax = TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds * 3);
-                if ((now - _lastPollTime) > expectedMax)
-                {
-                    _logger.LogDebug("Sleep gap detected: {Gap}s", (now - _lastPollTime).TotalSeconds);
-                    await SaveFocusChange();  // end pre-sleep session
-                    await InsertSleepGap(_lastPollTime, now);
-                    _currentProcess = string.Empty;
-                    _currentTitle = string.Empty;
-                    _focusStart = now;
-                }
-                _lastPollTime = now;
 
                 // Fullscreen/maximized windows (games, videos) → skip idle detection.
                 // Controlled by settings.FullscreenBypassIdle (default: true).
@@ -112,6 +115,7 @@ public class WindowTracker : BackgroundService
                 _logger.LogError(ex, "WindowTracker poll error");
             }
 
+            _lastPollTime = DateTime.UtcNow;
             await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
         }
 

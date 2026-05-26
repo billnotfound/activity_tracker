@@ -59,16 +59,18 @@
       <div class="col-md-6">
         <div class="card mb-3">
           <div class="card-header">最近媒体播放</div>
-          <div class="card-body" style="max-height:400px;overflow-y:auto">
-            <table class="table table-sm">
-              <thead><tr><th>时间</th><th>歌曲</th><th>艺术家</th></tr></thead>
+          <div class="card-body" style="max-height:400px;overflow-y:auto;padding:0">
+            <table class="table table-sm mb-0">
+              <thead><tr><th>持续</th><th>状态</th><th>歌曲</th><th>艺术家</th></tr></thead>
               <tbody>
-                <tr v-for="m in mergedMedia" :key="m.key">
-                  <td>{{ toLocal(m.timestamp) }}</td>
+                <tr v-for="m in mediaTimeline" :key="m.id || m.timestamp"
+                  :style="{borderLeft:'4px solid '+(m.playbackStatus==='Playing'?'#198754':'#dee2e6')}">
+                  <td>{{ m.durationFmt }}</td>
+                  <td>{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</td>
                   <td>{{ m.title }}</td>
                   <td>{{ m.artist }}</td>
                 </tr>
-                <tr v-if="!mergedMedia.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
+                <tr v-if="!media.length"><td colspan="4" class="text-muted">暂无数据</td></tr>
               </tbody>
             </table>
           </div>
@@ -90,45 +92,24 @@ const date = ref(new Date().toISOString().slice(0, 10))
 const summary = ref([])
 const media = ref([])
 
-// Merge consecutive non-playing media entries into single "paused" rows.
-// The API returns records in time-desc order; we reverse for chronological processing
-// then reverse back so newest entries appear first.
-const mergedMedia = computed(() => {
-  const raw = [...media.value].reverse()  // chronological order
-  const merged = []
-  let pauseStart = null
-  let pauseEnd = null
-
-  for (const m of raw) {
-    const isPlaying = m.playbackStatus === 'Playing'
-    if (isPlaying) {
-      if (pauseStart) {
-        merged.push({
-          key: `pause-${pauseStart}`, timestamp: pauseStart,
-          title: '— 未播放 —', artist: `${fmtRange(pauseStart, pauseEnd || pauseStart)}`,
-        })
-        pauseStart = null; pauseEnd = null
-      }
-      merged.push({ ...m, key: `m-${m.id || m.timestamp}` })
-    } else {
-      if (!pauseStart) pauseStart = m.timestamp
-      pauseEnd = m.timestamp
-    }
-  }
-  // trailing pause period
-  if (pauseStart) {
-    merged.push({
-      key: `pause-${pauseStart}`, timestamp: pauseStart,
-      title: '— 未播放 —', artist: `${fmtRange(pauseStart, pauseEnd || pauseStart)}`,
-    })
-  }
-  return merged.reverse()  // back to newest-first
+// Duration computed as gap to next record (or now for latest).
+const mediaWithDuration = computed(() => {
+  const list = [...media.value].reverse()
+  const now = Date.now()
+  const r = list.map((m, i) => {
+    const t1 = new Date((m.timestamp.endsWith('Z')?m.timestamp:m.timestamp+'Z')).getTime()
+    const t2 = i+1 < list.length
+      ? new Date((list[i+1].timestamp.endsWith('Z')?list[i+1].timestamp:list[i+1].timestamp+'Z')).getTime()
+      : now
+    return { ...m, durationSec: Math.max(1,Math.round((t2-t1)/1000)), durationFmt: fmtShortDur(Math.max(1,Math.round((t2-t1)/1000))) }
+  })
+  return r.reverse()
 })
-
-function fmtRange(a, b) {
-  if (a === b) return new Date(a + 'Z').toLocaleTimeString()
-  return `${new Date(b + 'Z').toLocaleTimeString()} ~ ${new Date(a + 'Z').toLocaleTimeString()}`
-}
+const mediaTimeline = computed(() => {
+  const total = mediaWithDuration.value.reduce((s,m)=>s+m.durationSec,0)||1
+  return mediaWithDuration.value.map(m=>({...m, pct: Math.max(1,(m.durationSec/total)*100)}))
+})
+function fmtShortDur(s) { return s<60?s+'s':s<3600?Math.round(s/60)+'m':(s/3600).toFixed(1)+'h' }
 
 // Template refs for the two canvas elements
 const focusChart = ref(null)

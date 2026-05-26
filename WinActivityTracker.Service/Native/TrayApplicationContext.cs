@@ -88,12 +88,16 @@ public class TrayApplicationContext : ApplicationContext
         menu.Items.Add(toggleItem);
 
         // --- Auto-start ---
-        var autoStartItem = new ToolStripMenuItem("开机自启")
+        // Sync registry → settings.json on startup so settings.json is the truth.
+        SyncAutoStartOnStartup();
+
+        var settings = _services.GetRequiredService<SettingsService>();
+        var autoStartItem = new ToolStripMenuItem("开机自启") { Checked = settings.Settings.AutoStartEnabled };
+        autoStartItem.Click += (_, _) =>
         {
-            Checked = IsAutoStartEnabled(),
-            CheckOnClick = true
+            autoStartItem.Checked = !autoStartItem.Checked;
+            ToggleAutoStart(autoStartItem.Checked);
         };
-        autoStartItem.Click += (_, _) => SetAutoStart(autoStartItem.Checked);
         menu.Items.Add(autoStartItem);
 
         menu.Items.Add(new ToolStripSeparator());
@@ -198,35 +202,43 @@ public class TrayApplicationContext : ApplicationContext
     // Console.Out is redirected to the ConsoleWindow's TextBox on first show.
     private ConsoleWindow? _consoleWindow;
 
-    // ===== Auto-start via Registry =====
+    // ===== Auto-start (registry ↔ settings.json) =====
 
-    private static bool IsAutoStartEnabled()
+    // On startup: read registry, write to settings.json as the single source of truth.
+    private void SyncAutoStartOnStartup()
     {
+        var settings = _services.GetRequiredService<SettingsService>();
+        bool inRegistry;
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey);
-            return key?.GetValue(AutoStartValue) is string path &&
-                   File.Exists(path.Trim('"'));
+            inRegistry = key?.GetValue(AutoStartValue) is string path && File.Exists(path.Trim('"'));
         }
-        catch { return false; }
+        catch { inRegistry = false; }
+        settings.Settings.AutoStartEnabled = inRegistry;
+        settings.Save();
     }
 
-    private static void SetAutoStart(bool enable)
+    // Toggles both registry and settings.json. Called by tray menu checkbox.
+    private void ToggleAutoStart(bool enable)
+    {
+        WriteRegistryAutoStart(enable);
+        var settings = _services.GetRequiredService<SettingsService>();
+        settings.Settings.AutoStartEnabled = enable;
+        settings.Save();
+    }
+
+    // Writes/deletes the registry Run key. Also called by SettingsWindow.
+    public static void WriteRegistryAutoStart(bool enable)
     {
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey, writable: true);
             if (key == null) return;
-
             if (enable)
-            {
-                var exePath = Environment.ProcessPath ?? Application.ExecutablePath;
-                key.SetValue(AutoStartValue, $"\"{exePath}\"");
-            }
+                key.SetValue(AutoStartValue, $"\"{Environment.ProcessPath ?? Application.ExecutablePath}\"");
             else
-            {
                 key.DeleteValue(AutoStartValue, throwOnMissingValue: false);
-            }
         }
         catch { }
     }

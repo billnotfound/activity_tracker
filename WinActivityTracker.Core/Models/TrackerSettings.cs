@@ -40,4 +40,8 @@ public class TrackerSettings
     // API server port. Requires restart to take effect (not hot-reloadable).
     // Min: 1024, Max: 65535, Default: 5200.
     public int ApiPort { get; set; } = 5200;
+
+    // Whether the program is registered for auto-start (HKCU\...\Run).
+    // Synced with registry on startup; toggled by both tray menu and settings window.
+    public bool AutoStartEnabled { get; set; }
 }

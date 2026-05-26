@@ -26,8 +26,11 @@ public class MediaSessionTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly ILogger<MediaSessionTracker> _logger;
 
+    private string _lastApp = string.Empty;
     private string _lastTitle = string.Empty;
     private string _lastArtist = string.Empty;
+    private string _lastStatus = string.Empty;
+    private bool _dedupSeeded;  // true after first poll loads state from DB
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings, ILogger<MediaSessionTracker> logger)
     {
@@ -84,11 +87,32 @@ public class MediaSessionTracker : BackgroundService
 
             if (string.IsNullOrEmpty(title)) return;
 
-            // Dedup: only write when title or artist actually changed
-            if (title == _lastTitle && artist == _lastArtist) return;
+            // On first poll after startup, seed dedup state from the DB so we don't
+            // create a duplicate if the same song is still playing.
+            if (!_dedupSeeded)
+            {
+                _dedupSeeded = true;
+                using var seedScope = _scopeFactory.CreateScope();
+                var seedDb = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var last = seedDb.MediaSessionRecords.OrderByDescending(m => m.Timestamp).FirstOrDefault();
+                if (last != null)
+                {
+                    _lastApp = last.AppName;
+                    _lastTitle = last.Title;
+                    _lastArtist = last.Artist;
+                    _lastStatus = last.PlaybackStatus;
+                }
+                if (appName == _lastApp && title == _lastTitle && artist == _lastArtist && status == _lastStatus)
+                    return;
+            }
 
+            // Dedup: skip if same app, title, artist, AND status as last record
+            if (appName == _lastApp && title == _lastTitle && artist == _lastArtist && status == _lastStatus) return;
+
+            _lastApp = appName;
             _lastTitle = title;
             _lastArtist = artist;
+            _lastStatus = status;
 
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
