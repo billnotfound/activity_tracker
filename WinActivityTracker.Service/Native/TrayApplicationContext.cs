@@ -204,19 +204,12 @@ public class TrayApplicationContext : ApplicationContext
 
     // ===== Auto-start (registry ↔ settings.json) =====
 
-    // On startup: read registry, write to settings.json as the single source of truth.
+    // On startup: read settings.AutoStartEnabled (the single source of truth),
+    // then apply it to the registry — add or remove the Run key accordingly.
     private void SyncAutoStartOnStartup()
     {
         var settings = _services.GetRequiredService<SettingsService>();
-        bool inRegistry;
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey);
-            inRegistry = key?.GetValue(AutoStartValue) is string path && File.Exists(path.Trim('"'));
-        }
-        catch { inRegistry = false; }
-        settings.Settings.AutoStartEnabled = inRegistry;
-        settings.Save();
+        WriteRegistryAutoStart(settings.Settings.AutoStartEnabled);
     }
 
     // Toggles both registry and settings.json. Called by tray menu checkbox.
@@ -236,7 +229,7 @@ public class TrayApplicationContext : ApplicationContext
             using var key = Registry.CurrentUser.OpenSubKey(AutoStartKey, writable: true);
             if (key == null) return;
             if (enable)
-                key.SetValue(AutoStartValue, $"\"{Environment.ProcessPath ?? Application.ExecutablePath}\"");
+                key.SetValue(AutoStartValue, $"\"{Environment.ProcessPath ?? Application.ExecutablePath}\" --autostart");
             else
                 key.DeleteValue(AutoStartValue, throwOnMissingValue: false);
         }

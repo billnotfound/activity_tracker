@@ -16,12 +16,18 @@ public class AppDbContext : DbContext
     public DbSet<ProcessSnapshot> ProcessSnapshots => Set<ProcessSnapshot>();  // deprecated
     public DbSet<ProcessSession> ProcessSessions => Set<ProcessSession>();     // replaces ProcessSnapshots
     public DbSet<MediaSessionRecord> MediaSessionRecords => Set<MediaSessionRecord>();
+    public DbSet<Heartbeat> Heartbeats => Set<Heartbeat>();
     public DbSet<DailySummary> DailySummaries => Set<DailySummary>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Heartbeat>(e =>
+        {
+            e.HasKey(x => x.Id);
+        });
+
         modelBuilder.Entity<FocusChange>(e =>
         {
             e.HasKey(x => x.Id);

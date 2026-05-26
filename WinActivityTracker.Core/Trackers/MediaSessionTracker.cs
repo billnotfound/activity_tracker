@@ -11,6 +11,7 @@
 //
 // Deduplication: compares title+artist against the previous poll; only INSERTs on change.
 // This prevents flooding the DB with identical rows for the same song.
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -26,11 +27,11 @@ public class MediaSessionTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly ILogger<MediaSessionTracker> _logger;
 
-    private string _lastApp = string.Empty;
-    private string _lastTitle = string.Empty;
-    private string _lastArtist = string.Empty;
-    private string _lastStatus = string.Empty;
-    private bool _dedupSeeded;  // true after first poll loads state from DB
+    // Per-app dedup: (appName) → (title, artist, status).
+    // When switching between media apps (foobar2000 → browser → back),
+    // each app's last-known state is preserved independently.
+    private readonly Dictionary<string, (string Title, string Artist, string Status)> _perAppState = new();
+    private bool _dedupSeeded;
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings, ILogger<MediaSessionTracker> logger)
     {
@@ -87,32 +88,27 @@ public class MediaSessionTracker : BackgroundService
 
             if (string.IsNullOrEmpty(title)) return;
 
-            // On first poll after startup, seed dedup state from the DB so we don't
-            // create a duplicate if the same song is still playing.
+            // Seed per-app state from DB on first poll (prevents restart duplicates).
             if (!_dedupSeeded)
             {
                 _dedupSeeded = true;
                 using var seedScope = _scopeFactory.CreateScope();
                 var seedDb = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var last = seedDb.MediaSessionRecords.OrderByDescending(m => m.Timestamp).FirstOrDefault();
-                if (last != null)
-                {
-                    _lastApp = last.AppName;
-                    _lastTitle = last.Title;
-                    _lastArtist = last.Artist;
-                    _lastStatus = last.PlaybackStatus;
-                }
-                if (appName == _lastApp && title == _lastTitle && artist == _lastArtist && status == _lastStatus)
-                    return;
+                var groups = seedDb.MediaSessionRecords
+                    .GroupBy(m => m.AppName)
+                    .Select(g => g.OrderByDescending(m => m.Timestamp).First())
+                    .ToList();
+                foreach (var r in groups)
+                    _perAppState[r.AppName] = (r.Title, r.Artist, r.PlaybackStatus);
             }
 
-            // Dedup: skip if same app, title, artist, AND status as last record
-            if (appName == _lastApp && title == _lastTitle && artist == _lastArtist && status == _lastStatus) return;
+            // Per-app dedup: each media source (foobar2000, firefox, etc.) has its
+            // own last-known state. Switching between apps doesn't lose dedup info.
+            if (_perAppState.TryGetValue(appName, out var prev) &&
+                prev.Title == title && prev.Artist == artist && prev.Status == status)
+                return;
 
-            _lastApp = appName;
-            _lastTitle = title;
-            _lastArtist = artist;
-            _lastStatus = status;
+            _perAppState[appName] = (title, artist, status);
 
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();

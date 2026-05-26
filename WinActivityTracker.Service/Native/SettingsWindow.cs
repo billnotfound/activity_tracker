@@ -17,7 +17,6 @@ public partial class SettingsWindow : Form
     private TextBox _excludedBox = null!;
     private NumericUpDown _retentionDays = null!;
     private NumericUpDown _apiPortInput = null!;
-    private CheckBox _autoStartCheck = null!;
     private Label _statusLabel = null!;
 
 
@@ -25,9 +24,9 @@ public partial class SettingsWindow : Form
     {
         _settings = settings;
 
-        Text = "WinActivityTracker — 设置";
+        Text = " 设置 ";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(500, 640);
+        MinimumSize = new Size(500, 710);
         Size = new Size(640, 740);
         ShowInTaskbar = true;
         Padding = new Padding(12);
@@ -38,7 +37,7 @@ public partial class SettingsWindow : Form
 
     private void BuildUI()
     {
-        // Outer panel: fills form, no AutoSize — lets children stretch properly
+
         var main = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -86,7 +85,7 @@ public partial class SettingsWindow : Form
 
         // --- Polling (3 rows → height ~136) ---
         {
-            var g = MakeGroup("轮询间隔 (秒)", 152);
+            var g = MakeGroup("轮询间隔 (秒)", 156);
             var pan = g.Controls[0] as Panel;
             AddRow(pan!, 0, "窗口/焦点轮询:", out _windowInterval, 1, 3600, 3);
             AddRow(pan!, 1, "后台进程轮询:", out _processInterval, 5, 3600, 30);
@@ -95,14 +94,14 @@ public partial class SettingsWindow : Form
 
         // --- Idle (1 row → height ~64) ---
         {
-            var g = MakeGroup("空闲检测", 70);
+            var g = MakeGroup("空闲检测", 78);
             var pan = g.Controls[0] as Panel;
             AddRow(pan!, 0, "空闲判定阈值 (分钟):", out _idleThreshold, 1, 120, 2);
         }
 
         // --- Exclusions (textbox → height ~58) ---
         {
-            var g = MakeGroup("进程排除 (逗号分隔，不区分大小写)", 70);
+            var g = MakeGroup("进程排除 (逗号分隔，不区分大小写)", 78);
             _excludedBox = new TextBox
             {
                 Font = new Font("Consolas", 9),
@@ -114,25 +113,17 @@ public partial class SettingsWindow : Form
 
         // --- Database (1 row → height ~58) ---
         {
-            var g = MakeGroup("数据库", 64);
+            var g = MakeGroup("数据库", 78);
             var pan = g.Controls[0] as Panel;
             AddRow(pan!, 0, "数据保留天数:", out _retentionDays, 1, 3650, 90);
         }
 
         // --- Server (1 row → height ~58) ---
         {
-            var g = MakeGroup("服务器 (重启后生效)", 64);
+            var g = MakeGroup("服务器 (重启后生效)", 78);
             var pan = g.Controls[0] as Panel;
             AddRow(pan!, 0, "API 端口:", out _apiPortInput, 1024, 65535, 5200);
         }
-
-        // --- Auto-start ---
-        _autoStartCheck = new CheckBox
-        {
-            Text = "开机自动启动", AutoSize = true,
-            Anchor = AnchorStyles.Left, Margin = new Padding(0, 8, 0, 0)
-        };
-        main.Controls.Add(_autoStartCheck);
 
         // --- Buttons ---
         {
@@ -141,9 +132,9 @@ public partial class SettingsWindow : Form
                 AutoSize = true, FlowDirection = FlowDirection.LeftToRight,
                 Anchor = AnchorStyles.Left, Margin = new Padding(0, 12, 0, 0)
             };
-            var saveBtn = new Button { Text = "保存", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
+            var saveBtn = new Button { Text = "保存", Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
             saveBtn.Click += (_, _) => SaveSettings();
-            var cancelBtn = new Button { Text = "取消", Size = new Size(100, 36), Font = new Font("Microsoft YaHei UI", 10) };
+            var cancelBtn = new Button { Text = "取消", Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10) };
             cancelBtn.Click += (_, _) => Close();
             _statusLabel = new Label { Text = "", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(12, 6, 0, 0) };
             btnPanel.Controls.Add(saveBtn);
@@ -166,7 +157,6 @@ public partial class SettingsWindow : Form
         _excludedBox.Text = string.Join(", ", s.ExcludedProcesses);
         _retentionDays.Value = s.DataRetentionDays;
         _apiPortInput.Value = s.ApiPort;
-        _autoStartCheck.Checked = s.AutoStartEnabled;
     }
 
     private void SaveSettings()
@@ -181,8 +171,6 @@ public partial class SettingsWindow : Form
         s.DataRetentionDays = (int)_retentionDays.Value;
         s.ApiPort = (int)_apiPortInput.Value;
         _settings.Update(s);
-        s.AutoStartEnabled = _autoStartCheck.Checked;
-        TrayApplicationContext.WriteRegistryAutoStart(_autoStartCheck.Checked);
         _statusLabel.Text = "已保存";
         _statusLabel.ForeColor = Color.DarkGreen;
     }

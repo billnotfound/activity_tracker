@@ -89,22 +89,20 @@ public class SettingsService
         sb.AppendLine($"  \"FullscreenBypassIdle\": {JsonSerializer.Serialize(s.FullscreenBypassIdle)},");
         sb.AppendLine();
         sb.AppendLine("  // ===== 进程排除 =====");
-        sb.AppendLine("  // 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。");
+        sb.AppendLine("  // 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。谨慎操作。");
         sb.AppendLine("  // 示例: [\"explorer\", \"SearchApp\", \"TextInputHost\"]");
         sb.AppendLine($"  \"ExcludedProcesses\": {JsonSerializer.Serialize(s.ExcludedProcesses)},");
         sb.AppendLine();
         sb.AppendLine("  // ===== 数据库 =====");
-        sb.AppendLine("  // POST /api/db/cleanup 的默认保留天数。最小 1。");
+        sb.AppendLine("  //数据库的默认保留天数。最小 1。");
         sb.AppendLine($"  \"DataRetentionDays\": {JsonSerializer.Serialize(s.DataRetentionDays)},");
-        sb.AppendLine("  // 是否启用自动清理 (目前为预留字段，尚未实现自动调度)。");
-        sb.AppendLine($"  \"AutoCleanup\": {JsonSerializer.Serialize(s.AutoCleanup)},");
         sb.AppendLine();
         sb.AppendLine("  // ===== 服务器 =====");
-        sb.AppendLine("  // API 和 Web UI 的监听端口。修改后需重启生效。范围: 1024-65535，默认 5200。");
+        sb.AppendLine("  // API 和 Web UI 的监听端口。修改后需重启生效。默认 5200。");
         sb.AppendLine($"  \"ApiPort\": {JsonSerializer.Serialize(s.ApiPort)},");
         sb.AppendLine();
         sb.AppendLine("  // ===== 开机自启 =====");
-        sb.AppendLine("  // 启动时从注册表同步。true = 已在 HKCU\\Run 注册。");
+        sb.AppendLine("  // 启动时从注册表同步。");
         sb.AppendLine($"  \"AutoStartEnabled\": {JsonSerializer.Serialize(s.AutoStartEnabled)}");
         sb.AppendLine("}");
 

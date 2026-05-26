@@ -37,6 +37,9 @@ using WinActivityTracker.Service.Native;
 // STA thread is required for WinForms clipboard, drag-drop, and COM interop.
 Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 
+// DPI awareness — must be set before ANY WinForms calls (including MessageBox).
+Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+
 // --- Read port from settings.json early (before DI builds) ---
 // The port must be known before WebApplication starts, but SettingsService is
 // constructed inside builder.Build(). We read the file directly here.
@@ -50,8 +53,8 @@ var myPid = Environment.ProcessId;
 var existing = System.Diagnostics.Process.GetProcessesByName("taskmonitor114");
 if (existing.Any(p => p.Id != myPid))
 {
-    MessageBox.Show("taskmonitor114 已在运行中。\n请查看系统通知区域的托盘图标。",
-        "taskmonitor114", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    MessageBox.Show("程序已经在运行中。\n看看系统托盘吧。",
+        "你干嘛。。。", MessageBoxButtons.OK, MessageBoxIcon.Information);
     return;
 }
 var settingsPath = Path.Combine(trackerDir, "settings.json");
@@ -97,6 +100,7 @@ builder.Services.AddSingleton<IdleDetector>();
 builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
+builder.Services.AddHostedService<HeartbeatService>();
 
 // Windows Service support — enables sc.exe / PowerShell service management.
 // When running as a service (detected automatically), the WinForms tray is skipped.
@@ -376,12 +380,11 @@ var webTask = Task.Run(() => app.RunAsync());
 // Ensure the web host has started before showing the tray
 await Task.Delay(500);
 
-// PerMonitorV2 enables per-monitor DPI scaling — prevents blurry text on high-DPI displays.
-// Must be called before any WinForms controls are created (before EnableVisualStyles).
-Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
-Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: true));
+// --autostart: don't pop up StatusWindow on startup (used by registry auto-start)
+var silent = args.Any(a => a is "--autostart" or "--silent");
+Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: !silent));
 
 // When Application.Run returns (user clicked Exit), signal the web host to stop.
 await app.StopAsync();

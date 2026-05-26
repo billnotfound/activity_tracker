@@ -29,11 +29,7 @@ public class IdleDetector
         info.cbSize = (uint)Marshal.SizeOf(info);
 
         if (!NativeMethods.GetLastInputInfo(ref info))
-            return IsIdle;  // API call failed — keep previous state, don't flip-flop
-
-        // Environment.TickCount wraps around after ~49.7 days; the subtraction
-        // handles overflow correctly because both values are unsigned and the
-        // result is cast to int (same behavior as GetTickCount arithmetic).
+            return IsIdle;
         var idleMs = Environment.TickCount - (int)info.dwTime;
         var thresholdMs = _settings.Settings.IdleThresholdMinutes * 60_000;
         IsIdle = idleMs > thresholdMs;

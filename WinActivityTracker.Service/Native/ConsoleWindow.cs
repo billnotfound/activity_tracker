@@ -16,8 +16,8 @@ public class ConsoleWindow : Form
     {
         _mirror = mirror;
 
-        Text = "WinActivityTracker — 控制台";
-        Size = new Size(700, 500);
+        Text = " 控制台 ";
+        Size = new Size(950, 600);
         MinimumSize = new Size(400, 300);
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;

@@ -53,7 +53,7 @@ public partial class StatusWindow : Form
         {
             var g = new GroupBox
             {
-                Text = "当前焦点窗口", Height = 60,
+                Text = "当前焦点窗口", Height = 76,
                 Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
                 Margin = new Padding(0, 0, 0, 8)
             };
@@ -105,7 +105,7 @@ public partial class StatusWindow : Form
 
             _toggleButton = new Button
             {
-                Text = "暂停追踪", Size = new Size(110, 32),
+                Text = "暂停追踪", Size = new Size(120, 38),
                 Font = new Font("Microsoft YaHei UI", 9)
             };
             _toggleButton.Click += async (_, _) => await ToggleTracking(services);

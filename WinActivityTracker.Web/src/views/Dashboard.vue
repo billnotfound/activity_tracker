@@ -16,9 +16,14 @@
 <template>
   <div>
     <div class="row mb-3">
-      <div class="col text-center">
-        <input type="date" v-model="date" class="form-control d-inline-block w-auto" />
-        <button class="btn btn-primary btn-sm ms-2" @click="loadSummary">查询</button>
+      <div class="col d-flex align-items-center">
+        <div class="btn-group btn-group-sm me-2" role="group">
+          <button v-for="p in periods" :key="p.key" class="btn"
+            :class="period===p.key?'btn-primary':'btn-outline-secondary'"
+            @click="setPeriod(p.key)">{{ p.label }}</button>
+        </div>
+        <input type="date" v-model="pickDate" class="form-control form-control-sm" style="width:150px"
+          @change="onPickDate" title="查询特定日期" />
       </div>
     </div>
 
@@ -58,7 +63,7 @@
       </div>
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">最近媒体播放</div>
+          <div class="card-header">最近媒体播放 <small class="text-muted">总计听歌 {{ totalListenFmt }}</small></div>
           <div class="card-body" style="max-height:400px;overflow-y:auto;padding:0">
             <table class="table table-sm mb-0">
               <thead><tr><th>持续</th><th>状态</th><th>歌曲</th><th>艺术家</th></tr></thead>
@@ -88,9 +93,32 @@ Chart.register(...registerables)
 
 const apiBase = inject('apiBase')
 
-const date = ref(new Date().toISOString().slice(0, 10))
+const periods = [
+  { key: 'today', label: '当日' },
+  { key: 'week', label: '7天' },
+  { key: 'month', label: '1月' },
+  { key: 'year', label: '1年' },
+  { key: 'all', label: '全部' },
+]
+const period = ref('today')
+const pickDate = ref(new Date().toISOString().slice(0, 10))
 const summary = ref([])
 const media = ref([])
+
+function setPeriod(p) { period.value = p; loadSummary() }
+function onPickDate() { period.value = 'today'; loadSummary() }
+
+function periodRange() {
+  const now = new Date()
+  const to = now.toISOString().slice(0,10)
+  switch (period.value) {
+    case 'week': { const d=new Date(now-7*86400000); return [d.toISOString().slice(0,10), to] }
+    case 'month': { const d=new Date(now.getFullYear(),now.getMonth()-1,now.getDate()); return [d.toISOString().slice(0,10), to] }
+    case 'year': { const d=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()); return [d.toISOString().slice(0,10), to] }
+    case 'all': return ['2020-01-01', to]
+    default: return [pickDate.value, pickDate.value]
+  }
+}
 
 // Duration computed as gap to next record (or now for latest).
 const mediaWithDuration = computed(() => {
@@ -111,6 +139,26 @@ const mediaTimeline = computed(() => {
 })
 function fmtShortDur(s) { return s<60?s+'s':s<3600?Math.round(s/60)+'m':(s/3600).toFixed(1)+'h' }
 
+// Merge overlapping Playing intervals from ALL apps into non-overlapping ranges.
+// Uses mediaWithDuration which already has computed time spans per record.
+const totalListenFmt = computed(() => {
+  const playing = mediaWithDuration.value.filter(m => m.playbackStatus === 'Playing')
+  if (!playing.length) return '0s'
+  // Build intervals: [timestamp, timestamp + duration] in ms, sorted by start
+  const intervals = playing.map(m => {
+    const t = new Date((m.timestamp.endsWith('Z')?m.timestamp:m.timestamp+'Z')).getTime()
+    return [t, t + m.durationSec * 1000]
+  }).sort((a,b) => a[0]-b[0])
+  const merged = []
+  for (const [s, e] of intervals) {
+    const last = merged[merged.length-1]
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e)
+    else merged.push([s, e])
+  }
+  const total = merged.reduce((sum, [s, e]) => sum + (e-s)/1000, 0)
+  return fmtShortDur(total)
+})
+
 // Template refs for the two canvas elements
 const focusChart = ref(null)
 const switchChart = ref(null)
@@ -124,7 +172,11 @@ async function loadSummary() {
 
 async function fetchSummary() {
   try {
-    const r = await fetch(`${apiBase}/api/summary/today?date=${date.value}`)
+    const [from, to] = periodRange()
+    const url = period.value === 'today'
+      ? `${apiBase}/api/summary/today?date=${pickDate.value}`
+      : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
+    const r = await fetch(url)
     const data = await r.json()
     summary.value = data
     renderCharts(data)
