@@ -43,7 +43,7 @@
                 <tr><th>时间</th><th>程序</th><th>窗口标题</th><th>持续</th></tr>
               </thead>
               <tbody>
-                <tr v-for="d in sortedTimeline" :key="d.timestamp">
+                <tr v-for="d in sortedTimeline" :key="d.timestamp + '|' + d.processName">
                   <td>{{ toLocal(d.timestamp) }}</td>
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ d.windowTitle }}</td>
@@ -62,7 +62,7 @@
             <table class="table table-sm">
               <thead><tr><th>程序</th><th>标题</th><th>焦点</th></tr></thead>
               <tbody>
-                <tr v-for="w in windows" :key="w.title" :class="{ 'table-primary': w.isFocused }">
+                <tr v-for="w in windows" :key="w.processName + '|' + w.title" :class="{ 'table-primary': w.isFocused }">
                   <td>{{ w.processName }}</td>
                   <td>{{ w.title }}</td>
                   <td>{{ w.isFocused ? '✅' : '' }}</td>
@@ -101,13 +101,10 @@ onMounted(() => {
 
 onUnmounted(() => clearInterval(timer))
 
-const sortedTimeline = computed(() => {
-  const arr = [...timeline.value]
-  arr.sort((a, b) => sortAsc.value
-    ? new Date(a.timestamp + 'Z') - new Date(b.timestamp + 'Z')
-    : new Date(b.timestamp + 'Z') - new Date(a.timestamp + 'Z'))
-  return arr
-})
+// API returns data ordered by Timestamp ASC. Just reverse for descending.
+const sortedTimeline = computed(() =>
+  sortAsc.value ? timeline.value : [...timeline.value].reverse()
+)
 
 function toggleSort() {
   sortAsc.value = !sortAsc.value

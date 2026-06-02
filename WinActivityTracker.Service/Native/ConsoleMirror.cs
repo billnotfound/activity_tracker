@@ -14,7 +14,7 @@ namespace WinActivityTracker.Service.Native;
 
 public class ConsoleMirror : TextWriter, IDisposable
 {
-    private const int MaxChars = 250_000;
+    private const int MaxChars = 80_000;
     private const int NotifyMs = 200;
 
     private readonly StringBuilder _buffer = new();
@@ -30,7 +30,7 @@ public class ConsoleMirror : TextWriter, IDisposable
     public ConsoleMirror(TextWriter original)
     {
         _original = original;
-        _timer = new System.Timers.Timer(NotifyMs) { AutoReset = true };
+        _timer = new System.Timers.Timer(NotifyMs) { AutoReset = false };
         _timer.Elapsed += (_, _) =>
         {
             if (_dirty)
@@ -74,7 +74,7 @@ public class ConsoleMirror : TextWriter, IDisposable
         lock (_lock) { return _cached; }
     }
 
-    public override void Write(char value) => Append(value.ToString());
+    public override void Write(char value) => Append(value);
 
     public override void Write(string? value)
     {
@@ -82,23 +82,39 @@ public class ConsoleMirror : TextWriter, IDisposable
         Append(value);
     }
 
+    private void Append(char value)
+    {
+        lock (_lock)
+        {
+            _buffer.Append(value);
+            TrimExcessLocked();
+        }
+        _original.Write(value);
+        _dirty = true;
+        _timer.Stop(); _timer.Start();
+    }
+
     private void Append(string text)
     {
         lock (_lock)
         {
             _buffer.Append(text);
-            // Trim from the beginning if buffer exceeds max
-            if (_buffer.Length > MaxChars)
-            {
-                var excess = _buffer.Length - MaxChars + MaxChars / 4; // trim 25% extra to avoid frequent trims
-                // Find next newline after the excess point for clean cut
-                var cutAt = excess;
-                while (cutAt < _buffer.Length && _buffer[cutAt] != '\n') cutAt++;
-                if (cutAt < _buffer.Length) cutAt++; // include the newline
-                _buffer.Remove(0, Math.Min(cutAt, _buffer.Length));
-            }
+            TrimExcessLocked();
         }
         _original.Write(text);
         _dirty = true;
+        _timer.Stop(); _timer.Start();
+    }
+
+    private void TrimExcessLocked()
+    {
+        if (_buffer.Length > MaxChars)
+        {
+            var excess = _buffer.Length - MaxChars + MaxChars / 4;
+            var cutAt = excess;
+            while (cutAt < _buffer.Length && _buffer[cutAt] != '\n') cutAt++;
+            if (cutAt < _buffer.Length) cutAt++;
+            _buffer.Remove(0, Math.Min(cutAt, _buffer.Length));
+        }
     }
 }

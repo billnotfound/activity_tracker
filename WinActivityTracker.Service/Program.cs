@@ -98,6 +98,9 @@ Console.SetOut(mirror);
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(mirror);
 
+// Kestrel: desktop tray app, not a public server. Low connection limits save memory.
+builder.WebHost.ConfigureKestrel(o => o.Limits.MaxConcurrentConnections = 10);
+
 // --- Database path: defaults to %LOCALAPPDATA% ---
 var dbPath = Path.Combine(trackerDir, "activity.db");
 Directory.CreateDirectory(trackerDir);
@@ -105,9 +108,9 @@ Directory.CreateDirectory(trackerDir);
 // Register BEFORE trackers — they depend on it via constructor injection
 builder.Services.AddSingleton<SettingsService>();
 
-// SQLite via EF Core. Connection string is the file path.
+// SQLite via EF Core. Shared cache reduces per-connection memory overhead.
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath}"));
+    options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
 
 // IdleDetector is singleton so all trackers share the same idle state
 builder.Services.AddSingleton<IdleDetector>();
@@ -154,7 +157,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
-        await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL");
+        await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;PRAGMA cache_size=-2000");
 }
 
 // ===== API Endpoints =====
@@ -203,7 +206,17 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
         .OrderByDescending(x => x.TotalSeconds)
         .ToListAsync();
 
-    return Results.Ok(data);
+    // Compute adjusted switch counts (merge same-process consecutive switches).
+    // Always computed server-side to avoid the client downloading the full timeline.
+    var adj = await ComputeAdjustedSwitchCounts(db, start, end);
+
+    return Results.Ok(data.Select(d => new
+    {
+        d.ProcessName,
+        d.TotalSeconds,
+        SwitchCount = d.SwitchCount,
+        AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
+    }).OrderByDescending(x => x.TotalSeconds));
 });
 
 app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext db) =>
@@ -221,20 +234,55 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
         .OrderByDescending(x => x.TotalSeconds)
         .ToListAsync();
 
-    return Results.Ok(data);
+    var adj = await ComputeAdjustedSwitchCounts(db, from, to);
+
+    return Results.Ok(data.Select(d => new
+    {
+        d.ProcessName,
+        d.TotalSeconds,
+        SwitchCount = d.SwitchCount,
+        AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
+    }).OrderByDescending(x => x.TotalSeconds));
 });
+
+// Computes merge-same-process switch counts using SQL LAG() window function.
+// Only counts transitions where ProcessName differs from the previous row,
+// avoiding materializing the full timeline in memory.
+static async Task<Dictionary<string, int>> ComputeAdjustedSwitchCounts(AppDbContext db, DateTime start, DateTime end)
+{
+    var rows = await db.Database.SqlQuery<AdjustedSwitchRow>($"""
+        SELECT p.ProcessName, COUNT(*) AS SwitchCount
+        FROM (
+            SELECT ProcessName,
+                   LAG(ProcessName) OVER (ORDER BY Timestamp) AS Prev
+            FROM FocusChanges
+            WHERE ProcessName != '__SystemSleep'
+              AND Timestamp >= {start} AND Timestamp <= {end}
+        ) p
+        WHERE p.Prev IS NULL OR p.ProcessName != p.Prev
+        GROUP BY p.ProcessName
+    """).ToListAsync();
+
+    var counts = new Dictionary<string, int>(rows.Count, StringComparer.OrdinalIgnoreCase);
+    foreach (var r in rows)
+        counts[r.ProcessName] = r.SwitchCount;
+    return counts;
+}
 
 // Returns the LIVE list of visible windows — does not query the database.
 // Useful for the Timeline page's real-time panel and the native StatusWindow.
-app.MapGet("/api/windows/current", () =>
+app.MapGet("/api/windows/current", (SettingsService settings) =>
 {
+    var excluded = settings.Settings.ExcludedProcesses;
     var windows = WindowTracker.EnumerateVisibleWindows();
-    return Results.Ok(windows.Select(w => new
-    {
-        w.ProcessName,
-        w.Title,
-        w.IsFocused
-    }));
+    return Results.Ok(windows
+        .Where(w => !excluded.Contains(w.ProcessName, StringComparer.OrdinalIgnoreCase))
+        .Select(w => new
+        {
+            w.ProcessName,
+            w.Title,
+            w.IsFocused
+        }));
 });
 
 // Time-ordered focus change records for the timeline view.
@@ -296,34 +344,34 @@ app.MapGet("/api/media/history", async (int? limit, AppDbContext db) =>
     return Results.Ok(data);
 });
 
-// Database statistics — useful for monitoring growth.
+// Database statistics — single combined query instead of 6 round trips.
 // If the oldest record is the same as today, newRecordsPerDay will be artificially high.
 app.MapGet("/api/db/stats", async (AppDbContext db) =>
 {
     var now = DateTime.UtcNow;
 
-    var focusCount = await db.FocusChanges.CountAsync();
-    var windowCount = await db.WindowSnapshots.CountAsync();
-    var sessionCount = await db.WindowSessions.CountAsync();
-    var processCount = await db.ProcessSnapshots.CountAsync();
-    var processSessionCount = await db.ProcessSessions.CountAsync();
-    var mediaCount = await db.MediaSessionRecords.CountAsync();
-
-    var oldest = await db.FocusChanges
-        .OrderBy(f => f.Timestamp)
-        .Select(f => (DateTime?)f.Timestamp)
-        .FirstOrDefaultAsync();
+    // Single SQL query gathers all counts + oldest timestamp in one round trip.
+    var stats = await db.Database.SqlQuery<DbStatsRow>($"""
+        SELECT
+            (SELECT COUNT(*) FROM FocusChanges) AS FocusCount,
+            (SELECT COUNT(*) FROM WindowSnapshots) AS WindowCount,
+            (SELECT COUNT(*) FROM WindowSessions) AS SessionCount,
+            (SELECT COUNT(*) FROM ProcessSnapshots) AS ProcessCount,
+            (SELECT COUNT(*) FROM ProcessSessions) AS ProcessSessionCount,
+            (SELECT COUNT(*) FROM MediaSessionRecords) AS MediaCount,
+            (SELECT MIN(Timestamp) FROM FocusChanges) AS OldestRecord
+    """).FirstAsync();
 
     return Results.Ok(new
     {
-        focusChanges = focusCount,
-        windowSnapshots = windowCount,
-        windowSessions = sessionCount,
-        processSnapshots = processCount,
-        processSessions = processSessionCount,
-        mediaRecords = mediaCount,
-        oldestRecord = oldest,
-        newRecordsPerDay = Math.Round(focusCount / Math.Max(1, (now - (oldest ?? now)).TotalDays), 1)
+        focusChanges = stats.FocusCount,
+        windowSnapshots = stats.WindowCount,
+        windowSessions = stats.SessionCount,
+        processSnapshots = stats.ProcessCount,
+        processSessions = stats.ProcessSessionCount,
+        mediaRecords = stats.MediaCount,
+        oldestRecord = stats.OldestRecord,
+        newRecordsPerDay = Math.Round(stats.FocusCount / Math.Max(1, (now - (stats.OldestRecord ?? now)).TotalDays), 1)
     });
 });
 
@@ -411,3 +459,22 @@ Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus
 // When Application.Run returns (user clicked Exit), signal the web host to stop.
 await app.StopAsync();
 try { await webTask; } catch (OperationCanceledException) { }
+
+// Type for the /api/db/stats combined SQL query.
+internal sealed class DbStatsRow
+{
+    public int FocusCount { get; set; }
+    public int WindowCount { get; set; }
+    public int SessionCount { get; set; }
+    public int ProcessCount { get; set; }
+    public int ProcessSessionCount { get; set; }
+    public int MediaCount { get; set; }
+    public DateTime? OldestRecord { get; set; }
+}
+
+// Type for the ComputeAdjustedSwitchCounts SQL query.
+internal sealed class AdjustedSwitchRow
+{
+    public string ProcessName { get; set; } = string.Empty;
+    public int SwitchCount { get; set; }
+}

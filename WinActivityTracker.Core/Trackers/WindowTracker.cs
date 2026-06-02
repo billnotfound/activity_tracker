@@ -1,4 +1,4 @@
-﻿// Core tracker: monitors the foreground window and all visible top-level windows.
+// Core tracker: monitors the foreground window and all visible top-level windows.
 //
 // Lifecycle:
 //   Every WindowPollSeconds (default 3s), it:
@@ -22,6 +22,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -51,6 +52,16 @@ public class WindowTracker : BackgroundService
     // disappears, CloseTime is updated. This replaces the old point-in-time snapshots.
     private readonly Dictionary<IntPtr, (long DbId, string Process, string Title)> _openWindows = new();
 
+    // Reusable collections to reduce per-cycle allocations.
+    private readonly List<(IntPtr Hwnd, string ProcessName, string Title, bool IsFocused)> _reusableWindows = new();
+    private readonly HashSet<IntPtr> _reusableHwnds = new();
+    private readonly List<(IntPtr Hwnd, Models.WindowSession Session, string Process, string Title)> _reusablePendingAdds = new();
+    private readonly List<long> _reusableIdsToClose = new();
+    private readonly List<IntPtr> _reusableGoneHwnds = new();
+
+    // Reusable StringBuilder — [ThreadStatic] avoids lock contention.
+    [ThreadStatic] private static StringBuilder? t_normalizeBuf;
+
     public WindowTracker(IServiceScopeFactory scopeFactory, IdleDetector idleDetector, SettingsService settings, ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
@@ -69,9 +80,6 @@ public class WindowTracker : BackgroundService
             {
                 var now = DateTime.UtcNow;
 
-                // Sleep detection — works even when tracking is disabled.
-                // _lastPollTime is always updated at the bottom of the loop,
-                // so a wall-clock gap means the system was suspended.
                 if ((now - _lastPollTime).TotalSeconds > _settings.Settings.WindowPollSeconds * 3)
                 {
                     _logger.LogDebug("Sleep gap detected: {Gap}s", (now - _lastPollTime).TotalSeconds);
@@ -92,8 +100,6 @@ public class WindowTracker : BackgroundService
                     continue;
                 }
 
-                // Fullscreen/maximized windows (games, videos) → skip idle detection.
-                // Controlled by settings.FullscreenBypassIdle (default: true).
                 var isFullscreen = _settings.Settings.FullscreenBypassIdle && IsForegroundFullscreen();
                 var isIdle = isFullscreen ? false : _idleDetector.CheckIdle();
 
@@ -119,12 +125,9 @@ public class WindowTracker : BackgroundService
             await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
         }
 
-        // Graceful shutdown: mark all remaining open windows as closed
         await CloseAllWindowSessions();
     }
 
-    // Inserts a __SystemSleep marker for the detected sleep period.
-    // Called from the poll loop when wall-clock gap between polls exceeds 3x the interval.
     private async Task InsertSleepGap(DateTime sleepStart, DateTime wakeTime)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -154,17 +157,13 @@ public class WindowTracker : BackgroundService
             using var proc = Process.GetProcessById((int)pid);
             processName = proc.ProcessName;
         }
-        catch { return; }  // Process already exited or access denied
+        catch { return; }
 
-        // Skip excluded processes — they don't trigger focus changes
         if (_settings.Settings.ExcludedProcesses.Contains(processName, StringComparer.OrdinalIgnoreCase))
             return;
 
-        // Is this a different window than the one we're currently tracking?
         if (processName != _currentProcess || title != _currentTitle)
         {
-            // Fire-and-forget: we don't await here because the next poll might arrive
-            // before the DB write completes. The duration was already snapshotted.
             _ = SaveFocusChange();
 
             _currentProcess = processName;
@@ -175,17 +174,8 @@ public class WindowTracker : BackgroundService
         }
     }
 
-    // Persists the PREVIOUS focus session (the one ending now).
-    // Called on: focus change, idle transition, and eventually on graceful shutdown.
-    //
-    // State is captured into locals BEFORE any await — this prevents a race where
-    // a second call overwrites _currentProcess/_focusStart before the first reads them.
-    // Fields are cleared immediately so a concurrent call sees empty state and returns.
     private async Task SaveFocusChange()
     {
-        // Capture state under the natural synchronization of the single-threaded poll loop.
-        // No lock needed — only one poll iteration runs at a time; the fire-and-forget
-        // from TrackForegroundWindow completes before the next iteration starts.
         var process = _currentProcess;
         var title = _currentTitle;
         var start = _focusStart;
@@ -193,9 +183,8 @@ public class WindowTracker : BackgroundService
         if (string.IsNullOrEmpty(process)) return;
 
         var duration = (DateTime.UtcNow - start).TotalSeconds;
-        if (duration < 0.5) return;  // Filter out accidental sub-second switches
+        if (duration < 0.5) return;
 
-        // Clear immediately so a re-entrant call sees empty state.
         _currentProcess = string.Empty;
         _currentTitle = string.Empty;
 
@@ -213,17 +202,6 @@ public class WindowTracker : BackgroundService
         await db.SaveChangesAsync();
     }
 
-    // Session-based window tracking — replaces the old SaveVisibleWindows() which
-    // wrote a full snapshot every poll. Now we detect window open/close transitions.
-    //
-    // New window (HWND not in _openWindows) → INSERT WindowSession, OpenTime=now.
-    // Title changed for same HWND         → UPDATE old CloseTime, INSERT new session.
-    // Window gone (HWND no longer visible) → UPDATE CloseTime=now.
-    //
-    // All changes are collected and flushed in a single SaveChangesAsync call
-    // per poll cycle (was N+1 round trips before).
-    //
-    // Data volume goes from ~100K rows/day to ~100-500 rows/day.
     private async Task SyncWindowSessions()
     {
         using var scope = _scopeFactory.CreateScope();
@@ -232,83 +210,81 @@ public class WindowTracker : BackgroundService
         var excluded = _settings.Settings.ExcludedProcesses;
 
         var processMap = BuildProcessNameMap();
-        var currentWindows = EnumerateVisibleWindowsWithHwnd(processMap);
-        var currentHwnds = new HashSet<IntPtr>();
+        EnumerateVisibleWindowsInto(_reusableWindows, processMap);
 
-        // Track new sessions added so we can read their DB-generated Ids after save.
-        var pendingAdds = new List<(IntPtr Hwnd, Models.WindowSession Session, string Process, string Title)>();
+        _reusableHwnds.Clear();
+        _reusablePendingAdds.Clear();
+        _reusableIdsToClose.Clear();
 
-        foreach (var (hwnd, process, title, _) in currentWindows)
+        foreach (var (hwnd, process, title, _) in _reusableWindows)
         {
             if (excluded.Contains(process, StringComparer.OrdinalIgnoreCase)) continue;
-            currentHwnds.Add(hwnd);
+            _reusableHwnds.Add(hwnd);
 
             if (_openWindows.TryGetValue(hwnd, out var existing))
             {
-                // Title changed → close old session, open new one.
-                // Strip Braille spinner chars (U+2800–U+28FF) before comparing —
-                // terminal titles change every poll due to progress spinners.
                 if (NormalizeTitle(existing.Title) != NormalizeTitle(title))
                 {
-                    var old = await db.WindowSessions.FindAsync(existing.DbId);
-                    if (old != null) old.CloseTime = now;
+                    _reusableIdsToClose.Add(existing.DbId);
                     var s = new Models.WindowSession { ProcessName = process, WindowTitle = title, OpenTime = now };
                     db.WindowSessions.Add(s);
-                    pendingAdds.Add((hwnd, s, process, title));
+                    _reusablePendingAdds.Add((hwnd, s, process, title));
                 }
             }
             else
             {
-                // New window opened
                 var s = new Models.WindowSession { ProcessName = process, WindowTitle = title, OpenTime = now };
                 db.WindowSessions.Add(s);
-                pendingAdds.Add((hwnd, s, process, title));
+                _reusablePendingAdds.Add((hwnd, s, process, title));
             }
         }
 
-        // Close windows that disappeared.
-        var gone = new List<IntPtr>();
+        _reusableGoneHwnds.Clear();
         foreach (var (hwnd, entry) in _openWindows)
         {
-            if (!currentHwnds.Contains(hwnd))
+            if (!_reusableHwnds.Contains(hwnd))
             {
-                var closed = await db.WindowSessions.FindAsync(entry.DbId);
-                if (closed != null) closed.CloseTime = now;
-                gone.Add(hwnd);
+                _reusableIdsToClose.Add(entry.DbId);
+                _reusableGoneHwnds.Add(hwnd);
             }
         }
 
-        // Single flush for all changes in this poll cycle.
+        if (_reusableIdsToClose.Count > 0)
+        {
+            var toClose = await db.WindowSessions.Where(s => _reusableIdsToClose.Contains(s.Id)).ToListAsync();
+            foreach (var s in toClose) s.CloseTime = now;
+            _reusableIdsToClose.Clear();
+        }
+
         await db.SaveChangesAsync();
 
-        // Update in-memory dictionary with DB-generated Ids.
-        foreach (var (hwnd, session, process, title) in pendingAdds)
+        foreach (var (hwnd, session, process, title) in _reusablePendingAdds)
             _openWindows[hwnd] = (session.Id, process, title);
 
-        foreach (var hwnd in gone) _openWindows.Remove(hwnd);
+        foreach (var hwnd in _reusableGoneHwnds) _openWindows.Remove(hwnd);
     }
 
-    // Called on shutdown — close all remaining open sessions.
     private async Task CloseAllWindowSessions()
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var now = DateTime.UtcNow;
-        foreach (var (_, entry) in _openWindows)
+        var ids = _openWindows.Values.Select(e => e.DbId).ToList();
+        if (ids.Count > 0)
         {
-            var s = await db.WindowSessions.FindAsync(entry.DbId);
-            if (s != null) s.CloseTime = now;
+            var sessions = await db.WindowSessions.Where(s => ids.Contains(s.Id)).ToListAsync();
+            foreach (var s in sessions) s.CloseTime = now;
+            await db.SaveChangesAsync();
         }
         _openWindows.Clear();
-        await db.SaveChangesAsync();
     }
 
-    // Like EnumerateVisibleWindows but also returns HWND for session tracking.
-    // Accepts a pre-built PID->Name map to avoid per-window Process.GetProcessById calls.
-    private static List<(IntPtr Hwnd, string ProcessName, string Title, bool IsFocused)> EnumerateVisibleWindowsWithHwnd(Dictionary<int, string>? processMap = null)
+    // Fills the reusable list — avoids new list allocation each poll cycle.
+    private static void EnumerateVisibleWindowsInto(
+        List<(IntPtr Hwnd, string ProcessName, string Title, bool IsFocused)> results,
+        Dictionary<int, string> processMap)
     {
-        var map = processMap ?? BuildProcessNameMap();
-        var results = new List<(IntPtr, string, string, bool)>();
+        results.Clear();
         var foregroundHwnd = NativeMethods.GetForegroundWindow();
 
         NativeMethods.EnumWindows((hWnd, _) =>
@@ -320,19 +296,15 @@ public class WindowTracker : BackgroundService
             if (string.IsNullOrEmpty(title)) return true;
 
             NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (!map.TryGetValue((int)pid, out var processName)) return true;
+            if (!processMap.TryGetValue((int)pid, out var processName)) return true;
 
             results.Add((hWnd, processName, title, hWnd == foregroundHwnd));
             return true;
         }, IntPtr.Zero);
-
-        return results;
     }
 
     // Static so it can be called from API endpoints (GET /api/windows/current)
     // without needing a WindowTracker instance.
-    // Builds a PID->Name map from a single GetProcesses() call instead of
-    // calling GetProcessById for each visible window.
     public static List<(string ProcessName, string Title, bool IsFocused)> EnumerateVisibleWindows()
     {
         var map = BuildProcessNameMap();
@@ -341,8 +313,6 @@ public class WindowTracker : BackgroundService
 
         NativeMethods.EnumWindows((hWnd, _) =>
         {
-            // Filter: must be visible, not minimized, and have a non-empty title.
-            // This excludes UWP frame hosts, invisible overlay windows, etc.
             if (!NativeMethods.IsWindowVisible(hWnd)) return true;
             if (NativeMethods.IsIconic(hWnd)) return true;
 
@@ -353,17 +323,28 @@ public class WindowTracker : BackgroundService
             if (!map.TryGetValue((int)pid, out var processName)) return true;
 
             results.Add((processName, title, hWnd == foregroundHwnd));
-            return true;  // Continue enumeration
+            return true;
         }, IntPtr.Zero);
 
         return results;
     }
 
-    // Calls Process.GetProcesses() once and returns a PID->Name dictionary.
-    // Used by the window enumeration methods to avoid per-window GetProcessById calls.
+    // Cached PID→Name snapshot. Returns the dictionary directly rather than
+    // creating a copy — callers that only read it don't need their own copy.
+    private static (Dictionary<int, string> Map, DateTime Timestamp) s_cachedProcessMap;
+    private static readonly object s_processMapLock = new();
+
     private static Dictionary<int, string> BuildProcessNameMap()
     {
-        var map = new Dictionary<int, string>();
+        var now = DateTime.UtcNow;
+        Dictionary<int, string> map;
+        lock (s_processMapLock)
+        {
+            if ((now - s_cachedProcessMap.Timestamp).TotalSeconds < 2 && s_cachedProcessMap.Map.Count > 0)
+                return s_cachedProcessMap.Map;
+        }
+
+        map = new Dictionary<int, string>();
         try
         {
             var procs = Process.GetProcesses();
@@ -374,18 +355,17 @@ public class WindowTracker : BackgroundService
             }
         }
         catch { }
+
+        lock (s_processMapLock) { s_cachedProcessMap = (map, now); }
         return map;
     }
 
     // Returns true if the foreground window is maximized or fullscreen.
-    // Uses GetWindowPlacement (detects maximized windows) and
-    // GetWindowRect vs screen bounds (detects borderless fullscreen).
     private static bool IsForegroundFullscreen()
     {
         var hWnd = NativeMethods.GetForegroundWindow();
         if (hWnd == IntPtr.Zero) return false;
 
-        // Check maximized state
         var wp = new NativeMethods.WINDOWPLACEMENT();
         wp.length = (uint)Marshal.SizeOf(wp);
         if (NativeMethods.GetWindowPlacement(hWnd, ref wp))
@@ -394,7 +374,6 @@ public class WindowTracker : BackgroundService
                 return true;
         }
 
-        // Check borderless fullscreen: window rect covers the monitor
         if (NativeMethods.GetWindowRect(hWnd, out var wr))
         {
             var hMon = NativeMethods.MonitorFromWindow(hWnd, NativeMethods.MONITOR_DEFAULTTONEAREST);
@@ -411,17 +390,28 @@ public class WindowTracker : BackgroundService
     }
 
     // Strips Braille Patterns (U+2800–U+28FF) used as terminal progress spinners.
-// These glyphs change every poll cycle and would otherwise create a new
-// WindowSession on every poll (spurious "title changed" events).
-private static string NormalizeTitle(string title)
-{
-    if (string.IsNullOrEmpty(title)) return title;
-    var result = new StringBuilder(title.Length);
-    foreach (var c in title)
-        if ((int)c < 0x2800 || (int)c > 0x28FF)
-            result.Append(c);
-    return result.ToString();
-}
+    // Uses a [ThreadStatic] pooled StringBuilder to avoid per-call allocation.
+    private static string NormalizeTitle(string title)
+    {
+        if (string.IsNullOrEmpty(title)) return title;
+
+        var buf = t_normalizeBuf;
+        if (buf == null)
+        {
+            buf = new StringBuilder(title.Length);
+            t_normalizeBuf = buf;
+        }
+        else
+        {
+            buf.Clear();
+            buf.EnsureCapacity(title.Length);
+        }
+
+        foreach (var c in title)
+            if ((int)c < 0x2800 || (int)c > 0x28FF)
+                buf.Append(c);
+        return buf.ToString();
+    }
 
     private static string GetWindowText(IntPtr hWnd)
     {

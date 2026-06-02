@@ -9,6 +9,13 @@
     <!-- Required for NotifyIcon, ContextMenuStrip, and StatusWindow -->
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>taskmonitor114</AssemblyName>
+    <!-- Desktop tray app → Workstation GC (single-heap, aggressive return to OS).
+         Server GC (default for Web SDK) creates per-CPU heaps ~16MB each. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <!-- .NET 9+: forces GC to aggressively compact and return memory to OS (0-9, 9 = max). -->
+    <GCConserveMemory>9</GCConserveMemory>
+    <!-- Strip localized exception messages from runtime, saves ~2-3MB. -->
+    <UseSystemResourceKeys>true</UseSystemResourceKeys>
   </PropertyGroup>
 
   <ItemGroup>

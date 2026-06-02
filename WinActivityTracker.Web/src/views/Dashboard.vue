@@ -53,7 +53,7 @@
                 <tr v-for="d in summary" :key="d.processName">
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ fmtDuration(d.totalSeconds) }}</td>
-                  <td>{{ adjustedSwitches[d.processName] ?? d.switchCount }}</td>
+                  <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
                 </tr>
                 <tr v-if="!summary.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
               </tbody>
@@ -87,7 +87,7 @@
 
 <script setup>
 import { ref, inject, onMounted, computed } from 'vue'
-import { toLocalTime as toLocal, fmtDuration, fmtShortDur, parseUtcTs } from '../utils/time.js'
+import { fmtShortDur } from '../utils/time.js'
 
 import { Chart, registerables } from 'chart.js'
 
@@ -107,8 +107,6 @@ const pickDate = ref(new Date().toISOString().slice(0, 10))
 const mergeSameProcess = ref(true)  // loaded from /api/settings
 const summary = ref([])
 const media = ref([])
-// Adjusted switch counts (same-process consecutive merged)
-const adjustedSwitches = ref({})
 
 function setPeriod(p) { period.value = p; loadSummary() }
 function onPickDate() { period.value = 'today'; loadSummary() }
@@ -179,10 +177,7 @@ onMounted(async () => {
 })
 
 async function loadSummary() {
-  const tasks = [fetchSummary(), fetchMedia()]
-  if (mergeSameProcess.value) tasks.push(fetchAdjustedSwitches())
-  else adjustedSwitches.value = {}
-  await Promise.all(tasks)
+  await Promise.all([fetchSummary(), fetchMedia()])
 }
 
 async function fetchSummary() {
@@ -202,25 +197,6 @@ async function fetchMedia() {
   try {
     const r = await fetch(`${apiBase}/api/media/history?limit=20`)
     media.value = await r.json()
-  } catch {}
-}
-
-async function fetchAdjustedSwitches() {
-  try {
-    const [from, to] = periodRange()
-    const url = period.value === 'today'
-      ? `${apiBase}/api/windows/timeline?from=${from}T00:00:00&to=${to}T23:59:59`
-      : `${apiBase}/api/windows/timeline?from=${from}&to=${to}T23:59:59`
-    const r = await fetch(url)
-    const timeline = await r.json()
-    // Count process transitions: only count when process name changes
-    const counts = {}
-    let prev = ''
-    for (const t of timeline) {
-      if (t.processName !== prev) { counts[t.processName] = (counts[t.processName]||0) + 1 }
-      prev = t.processName
-    }
-    adjustedSwitches.value = counts
   } catch {}
 }
 
@@ -259,7 +235,7 @@ function renderCharts(data) {
       labels,
       datasets: [{
         label: '切换次数',
-        data: top.map(d => adjustedSwitches.value[d.processName] ?? d.switchCount),
+        data: top.map(d => mergeSameProcess.value ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount),
         backgroundColor: colors
       }]
     },
@@ -270,13 +246,6 @@ function renderCharts(data) {
       scales: { y: { beginAtZero: true, title: { display: true, text: '次数' } } }
     }
   })
-}
-
-// DB stores UTC; EF Core strips DateTimeKind so the JSON string has no 'Z' suffix.
-// Append 'Z' so JavaScript parses as UTC, then format in local time.
-function toLocal(ts) {
-  if (!ts) return '-'
-  return new Date(ts.endsWith('Z') ? ts : ts + 'Z').toLocaleTimeString()
 }
 
 // Human-readable duration formatting

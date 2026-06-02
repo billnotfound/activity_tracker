@@ -1,0 +1,7 @@
+{
+  "configProperties": {
+    "GCHeapHardLimit": "0x8000000",
+    "GCHeapCount": "1",
+    "System.GC.DynamicAdaptationMode": "1"
+  }
+}
