@@ -74,6 +74,20 @@ if (File.Exists(settingsPath))
     catch { }
 }
 
+// --- Port conflict check ---
+try
+{
+    using var test = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, apiPort);
+    test.Start();
+    test.Stop();
+}
+catch (System.Net.Sockets.SocketException)
+{
+    MessageBox.Show($"端口 {apiPort} 已被占用。\n请修改设置中的端口或关闭占用程序后重试。",
+        "端口冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    return;
+}
+
 // --- Redirect Console.Out BEFORE builder builds ---
 // The ASP.NET Core console logger captures the TextWriter during Build().
 // By swapping it now, ALL log output (trackers, API, EF Core) will flow
