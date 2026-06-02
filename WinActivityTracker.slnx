@@ -2,4 +2,5 @@
   <Project Path="WinActivityTracker.Core/WinActivityTracker.Core.csproj" />
   <Project Path="WinActivityTracker.Service/WinActivityTracker.Service.csproj" />
   <Project Path="WinActivityTracker.Web/WinActivityTracker.Web.csproj" />
+  <Project Path="WinActivityTracker.Tests/WinActivityTracker.Tests.csproj" />
 </Solution>

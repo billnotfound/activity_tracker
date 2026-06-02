@@ -27,8 +27,8 @@ public partial class SettingsWindow : Form
 
         Text = " 设置 ";
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(500, 710);
-        Size = new Size(640, 740);
+        MinimumSize = new Size(590, 760);
+        Size = new Size(610, 780);
         ShowInTaskbar = true;
         Padding = new Padding(12);
 
@@ -57,7 +57,7 @@ public partial class SettingsWindow : Form
 
         _mergeSwitchesCheck = new CheckBox
         {
-            Text = "同进程连续切换合并计数 (Firefox 切多个 tab 只算 1 次)", AutoSize = true,
+            Text = "同进程连续切换不计数", AutoSize = true,
             Anchor = AnchorStyles.Left, Margin = new Padding(0, 4, 0, 8)
         };
         main.Controls.Add(_mergeSwitchesCheck);

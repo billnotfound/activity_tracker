@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   Dashboard view — today's usage overview.
   Features:
     - Date picker to view any day's data
@@ -87,6 +87,8 @@
 
 <script setup>
 import { ref, inject, onMounted, computed } from 'vue'
+import { toLocalTime as toLocal, fmtDuration, fmtShortDur, parseUtcTs } from '../utils/time.js'
+
 import { Chart, registerables } from 'chart.js'
 
 Chart.register(...registerables)
@@ -140,7 +142,7 @@ const mediaTimeline = computed(() => {
   const total = mediaWithDuration.value.reduce((s,m)=>s+m.durationSec,0)||1
   return mediaWithDuration.value.map(m=>({...m, pct: Math.max(1,(m.durationSec/total)*100)}))
 })
-function fmtShortDur(s) { return s<60?s+'s':s<3600?Math.round(s/60)+'m':(s/3600).toFixed(1)+'h' }
+
 
 // Merge overlapping Playing intervals from ALL apps into non-overlapping ranges.
 // Uses mediaWithDuration which already has computed time spans per record.

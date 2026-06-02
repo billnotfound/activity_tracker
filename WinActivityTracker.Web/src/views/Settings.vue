@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   Settings page — full configuration UI for the backend.
   Loads current settings on mount, allows editing all fields, saves via PUT /api/settings.
   Changes take effect immediately (trackers read settings each poll cycle).
@@ -153,6 +153,8 @@
 
 <script setup>
 import { ref, reactive, inject, onMounted, computed } from 'vue'
+import { toLocalString as fmtLocal } from '../utils/time.js'
+
 
 const apiBase = inject('apiBase')
 
@@ -273,11 +275,5 @@ async function runReset() {
   await loadDbStats()
 }
 
-// DB timestamps are UTC but may lack 'Z' suffix (EF Core strips Kind).
-// Append 'Z' so JS parses as UTC, then format in local time.
-function fmtLocal(ts) {
-  if (!ts) return '-'
-  const t = ts.endsWith('Z') ? ts : ts + 'Z'
-  return new Date(t).toLocaleString()
-}
+
 </script>

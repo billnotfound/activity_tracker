@@ -242,6 +242,9 @@ public class TrayApplicationContext : ApplicationContext
         {
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
+            _settingsWindow?.Dispose();
+            _statusWindow?.Dispose();
+            _consoleWindow?.Dispose();
         }
         base.Dispose(disposing);
     }

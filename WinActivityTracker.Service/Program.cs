@@ -1,4 +1,4 @@
-// taskmonitor114 — backend monitoring process with native system tray.
+﻿// taskmonitor114 — backend monitoring process with native system tray.
 //
 // Dual-thread architecture:
 //   Main thread (STA):  WinForms Application.Run() — tray + native windows
@@ -125,7 +125,7 @@ builder.Services.AddWindowsService(options =>
 
 // CORS: allow all origins in development. The Vue dev server runs on port 5000.
 builder.Services.AddCors(c => c.AddDefaultPolicy(p =>
-    p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+    p.WithOrigins($"http://localhost:{apiPort}", "http://localhost:5000").AllowAnyMethod().AllowAnyHeader()));
 
 var app = builder.Build();
 
@@ -154,6 +154,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
+        await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL");
 }
 
 // ===== API Endpoints =====

@@ -1,4 +1,4 @@
-<!--
+﻿<!--
   Timeline view — chronological focus change log + live window list.
   Features:
     - Datetime-local pickers for precise time range filtering
@@ -79,6 +79,8 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
+import { toLocalTime as toLocal } from '../utils/time.js'
+
 
 const apiBase = inject('apiBase')
 
@@ -125,10 +127,5 @@ async function loadWindows() {
   } catch {}
 }
 
-// DB timestamps are UTC without 'Z' suffix (EF Core strips DateTimeKind).
-// Append 'Z' so JavaScript parses as UTC, then display in local time.
-function toLocal(ts) {
-  if (!ts) return '-'
-  return new Date(ts.endsWith('Z') ? ts : ts + 'Z').toLocaleTimeString()
-}
+
 </script>

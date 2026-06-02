@@ -12,7 +12,7 @@ using System.Text;
 
 namespace WinActivityTracker.Service.Native;
 
-public class ConsoleMirror : TextWriter
+public class ConsoleMirror : TextWriter, IDisposable
 {
     private const int MaxChars = 250_000;
     private const int NotifyMs = 200;
@@ -40,6 +40,12 @@ public class ConsoleMirror : TextWriter
                 _listener?.Invoke();
             }
         };
+    }
+
+    void IDisposable.Dispose()
+    {
+        _timer.Stop();
+        _timer.Dispose();
     }
 
     public void Subscribe(Action listener)
