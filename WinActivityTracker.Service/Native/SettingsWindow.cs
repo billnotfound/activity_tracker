@@ -17,6 +17,7 @@ public partial class SettingsWindow : Form
     private TextBox _excludedBox = null!;
     private NumericUpDown _retentionDays = null!;
     private NumericUpDown _apiPortInput = null!;
+    private CheckBox _mergeSwitchesCheck = null!;
     private Label _statusLabel = null!;
 
 
@@ -53,6 +54,13 @@ public partial class SettingsWindow : Form
             Anchor = AnchorStyles.Left
         };
         main.Controls.Add(_trackingCheck);
+
+        _mergeSwitchesCheck = new CheckBox
+        {
+            Text = "同进程连续切换合并计数 (Firefox 切多个 tab 只算 1 次)", AutoSize = true,
+            Anchor = AnchorStyles.Left, Margin = new Padding(0, 4, 0, 8)
+        };
+        main.Controls.Add(_mergeSwitchesCheck);
 
         // === Helpers ===
 
@@ -150,6 +158,7 @@ public partial class SettingsWindow : Form
     {
         var s = _settings.Settings;
         _trackingCheck.Checked = s.TrackingEnabled;
+        _mergeSwitchesCheck.Checked = s.MergeSameProcessSwitches;
         _windowInterval.Value = s.WindowPollSeconds;
         _processInterval.Value = s.ProcessPollSeconds;
         _mediaInterval.Value = s.MediaPollSeconds;
@@ -163,6 +172,7 @@ public partial class SettingsWindow : Form
     {
         var s = _settings.Settings;
         s.TrackingEnabled = _trackingCheck.Checked;
+        s.MergeSameProcessSwitches = _mergeSwitchesCheck.Checked;
         s.WindowPollSeconds = (int)_windowInterval.Value;
         s.ProcessPollSeconds = (int)_processInterval.Value;
         s.MediaPollSeconds = (int)_mediaInterval.Value;

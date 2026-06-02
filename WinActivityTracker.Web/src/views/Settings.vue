@@ -63,6 +63,13 @@
               </label>
               <div class="form-text">启用后，全屏/最大化窗口（游戏、视频）不会因无操作而暂停追踪。</div>
             </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="mergeSwitches" v-model="form.mergeSameProcessSwitches" />
+              <label class="form-check-label" for="mergeSwitches">
+                同程序连续切换合并计数
+              </label>
+              <div class="form-text">启用后，Firefox 切 3 个 tab 只计 1 次切换。影响切换次数显示。</div>
+            </div>
           </div>
         </div>
 
@@ -152,6 +159,7 @@ const apiBase = inject('apiBase')
 const form = reactive({
   trackingEnabled: true,
   fullscreenBypassIdle: true,
+  mergeSameProcessSwitches: true,
   windowPollSeconds: 3,
   processPollSeconds: 30,
   mediaPollSeconds: 5,
@@ -192,6 +200,7 @@ async function loadSettings() {
     const s = await r.json()
     form.trackingEnabled = s.trackingEnabled
     form.fullscreenBypassIdle = s.fullscreenBypassIdle ?? true
+    form.mergeSameProcessSwitches = s.mergeSameProcessSwitches ?? true
     form.windowPollSeconds = s.windowPollSeconds
     form.processPollSeconds = s.processPollSeconds
     form.mediaPollSeconds = s.mediaPollSeconds

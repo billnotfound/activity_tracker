@@ -87,6 +87,8 @@ public class SettingsService
         sb.AppendLine($"  \"IdleThresholdMinutes\": {JsonSerializer.Serialize(s.IdleThresholdMinutes)},");
         sb.AppendLine("  // 全屏/最大化窗口是否绕过空闲检测。打游戏/看视频时不会因无操作而暂停追踪。");
         sb.AppendLine($"  \"FullscreenBypassIdle\": {JsonSerializer.Serialize(s.FullscreenBypassIdle)},");
+        sb.AppendLine("  // 同进程连续切换是否合并计数。Firefox 切 3 个 tab 只算 1 次切换。");
+        sb.AppendLine($"  \"MergeSameProcessSwitches\": {JsonSerializer.Serialize(s.MergeSameProcessSwitches)},");
         sb.AppendLine();
         sb.AppendLine("  // ===== 进程排除 =====");
         sb.AppendLine("  // 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。谨慎操作。");
@@ -121,6 +123,7 @@ public class SettingsService
     {
         _settings.TrackingEnabled = newSettings.TrackingEnabled;
         _settings.FullscreenBypassIdle = newSettings.FullscreenBypassIdle;
+        _settings.MergeSameProcessSwitches = newSettings.MergeSameProcessSwitches;
         _settings.WindowPollSeconds = Math.Max(1, newSettings.WindowPollSeconds);
         _settings.ProcessPollSeconds = Math.Max(5, newSettings.ProcessPollSeconds);
         _settings.MediaPollSeconds = Math.Max(1, newSettings.MediaPollSeconds);

@@ -53,7 +53,7 @@
                 <tr v-for="d in summary" :key="d.processName">
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ fmtDuration(d.totalSeconds) }}</td>
-                  <td>{{ d.switchCount }}</td>
+                  <td>{{ adjustedSwitches[d.processName] ?? d.switchCount }}</td>
                 </tr>
                 <tr v-if="!summary.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
               </tbody>
@@ -102,8 +102,11 @@ const periods = [
 ]
 const period = ref('today')
 const pickDate = ref(new Date().toISOString().slice(0, 10))
+const mergeSameProcess = ref(true)  // loaded from /api/settings
 const summary = ref([])
 const media = ref([])
+// Adjusted switch counts (same-process consecutive merged)
+const adjustedSwitches = ref({})
 
 function setPeriod(p) { period.value = p; loadSummary() }
 function onPickDate() { period.value = 'today'; loadSummary() }
@@ -164,10 +167,20 @@ const focusChart = ref(null)
 const switchChart = ref(null)
 let fc = null, sc = null  // Chart.js instance references for destroy/recreate
 
-onMounted(loadSummary)
+onMounted(async () => {
+  try {
+    const r = await fetch(`${apiBase}/api/settings`)
+    const s = await r.json()
+    mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
+  } catch {}
+  loadSummary()
+})
 
 async function loadSummary() {
-  await Promise.all([fetchSummary(), fetchMedia()])
+  const tasks = [fetchSummary(), fetchMedia()]
+  if (mergeSameProcess.value) tasks.push(fetchAdjustedSwitches())
+  else adjustedSwitches.value = {}
+  await Promise.all(tasks)
 }
 
 async function fetchSummary() {
@@ -187,6 +200,25 @@ async function fetchMedia() {
   try {
     const r = await fetch(`${apiBase}/api/media/history?limit=20`)
     media.value = await r.json()
+  } catch {}
+}
+
+async function fetchAdjustedSwitches() {
+  try {
+    const [from, to] = periodRange()
+    const url = period.value === 'today'
+      ? `${apiBase}/api/windows/timeline?from=${from}T00:00:00&to=${to}T23:59:59`
+      : `${apiBase}/api/windows/timeline?from=${from}&to=${to}T23:59:59`
+    const r = await fetch(url)
+    const timeline = await r.json()
+    // Count process transitions: only count when process name changes
+    const counts = {}
+    let prev = ''
+    for (const t of timeline) {
+      if (t.processName !== prev) { counts[t.processName] = (counts[t.processName]||0) + 1 }
+      prev = t.processName
+    }
+    adjustedSwitches.value = counts
   } catch {}
 }
 
@@ -225,7 +257,7 @@ function renderCharts(data) {
       labels,
       datasets: [{
         label: '切换次数',
-        data: top.map(d => d.switchCount),
+        data: top.map(d => adjustedSwitches.value[d.processName] ?? d.switchCount),
         backgroundColor: colors
       }]
     },

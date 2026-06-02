@@ -16,6 +16,10 @@ public class TrackerSettings
     // Prevents AFK timeout during gaming, video, or presentations.
     public bool FullscreenBypassIdle { get; set; } = true;
 
+    // When true, consecutive same-process FocusChanges count as 1 switch.
+    // Firefox tabs, IDE windows, etc. won't inflate the switch count.
+    public bool MergeSameProcessSwitches { get; set; } = true;
+
     // How often WindowTracker enumerates visible windows and checks focus (seconds). Min: 1.
     public int WindowPollSeconds { get; set; } = 3;
 

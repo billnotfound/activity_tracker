@@ -149,13 +149,35 @@ public partial class StatusWindow : Form
                 var summary = await sumResp.Content.ReadFromJsonAsync<List<SummaryItem>>();
                 var top5 = (summary ?? []).Take(5).ToList();
 
+                // Load adjusted switch counts if merge is enabled
+                var svc = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
+                var adjustedSwitches = new Dictionary<string, int>();
+                if (svc.Settings.MergeSameProcessSwitches)
+                {
+                    var tlResp = await http.GetAsync($"{_apiBase}/api/windows/timeline?from={DateTime.Now:yyyy-MM-dd}T00:00:00&to={DateTime.Now:yyyy-MM-dd}T23:59:59");
+                    if (tlResp.IsSuccessStatusCode)
+                    {
+                        var timeline = await tlResp.Content.ReadFromJsonAsync<List<TimelineItem>>();
+                        if (timeline != null)
+                        {
+                            string prev = "";
+                            foreach (var t in timeline)
+                            {
+                                if (t.ProcessName != prev) adjustedSwitches[t.ProcessName] = adjustedSwitches.GetValueOrDefault(t.ProcessName) + 1;
+                                prev = t.ProcessName;
+                            }
+                        }
+                    }
+                }
+
                 _topList.BeginUpdate();
                 _topList.Items.Clear();
                 foreach (var item in top5)
                 {
                     var lvi = new ListViewItem(item.ProcessName);
                     lvi.SubItems.Add(FmtDur(item.TotalSeconds));
-                    lvi.SubItems.Add(item.SwitchCount.ToString());
+                    var sc = adjustedSwitches.GetValueOrDefault(item.ProcessName, item.SwitchCount);
+                    lvi.SubItems.Add(sc.ToString());
                     _topList.Items.Add(lvi);
                 }
                 _topList.EndUpdate();
@@ -200,4 +222,5 @@ public partial class StatusWindow : Form
 
     private record WindowInfo(string ProcessName, string Title, bool IsFocused);
     private record SummaryItem(string ProcessName, double TotalSeconds, int SwitchCount);
+    private record TimelineItem(string ProcessName, double DurationSeconds);
 }

@@ -270,6 +270,13 @@ app.MapGet("/api/processes/snapshot", async (AppDbContext db) =>
     return Results.Ok(data);
 });
 
+// Serve title_rules.json so the frontend can normalize window titles
+app.MapGet("/api/title-rules", () =>
+{
+    var n = new TitleNormalizer();
+    return Results.Ok(n.GetRules());
+});
+
 app.MapGet("/api/media/history", async (int? limit, AppDbContext db) =>
 {
     var data = await db.MediaSessionRecords
