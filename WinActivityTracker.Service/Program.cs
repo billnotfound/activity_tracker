@@ -221,9 +221,11 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
 
 app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext db) =>
 {
+    var start = DateTime.SpecifyKind(from, DateTimeKind.Local).ToUniversalTime();
+    var end = DateTime.SpecifyKind(to, DateTimeKind.Local).ToUniversalTime();
     var data = await db.FocusChanges
         .Where(f => f.ProcessName != "__SystemSleep")
-        .Where(f => f.Timestamp >= from && f.Timestamp <= to)
+        .Where(f => f.Timestamp >= start && f.Timestamp <= end)
         .GroupBy(f => f.ProcessName)
         .Select(g => new
         {
@@ -234,7 +236,7 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
         .OrderByDescending(x => x.TotalSeconds)
         .ToListAsync();
 
-    var adj = await ComputeAdjustedSwitchCounts(db, from, to);
+    var adj = await ComputeAdjustedSwitchCounts(db, start, end);
 
     return Results.Ok(data.Select(d => new
     {
@@ -289,8 +291,12 @@ app.MapGet("/api/windows/current", (SettingsService settings) =>
 // Default range: last hour.
 app.MapGet("/api/windows/timeline", async (DateTime? from, DateTime? to, AppDbContext db) =>
 {
-    var start = from ?? DateTime.UtcNow.AddHours(-1);
-    var end = to ?? DateTime.UtcNow;
+    var start = from.HasValue
+        ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
+        : DateTime.UtcNow.AddHours(-1);
+    var end = to.HasValue
+        ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
+        : DateTime.UtcNow;
 
     var data = await db.FocusChanges
         .Where(f => f.Timestamp >= start && f.Timestamp <= end)

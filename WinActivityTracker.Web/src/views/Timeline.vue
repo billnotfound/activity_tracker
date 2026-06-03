@@ -79,14 +79,14 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
-import { toLocalTime as toLocal } from '../utils/time.js'
+import { toLocalTime as toLocal, toLocalDatetimeString } from '../utils/time.js'
 
 
 const apiBase = inject('apiBase')
 
 // Default time range: last 1 hour (in local time)
-const fromTime = ref(new Date(Date.now() - 3600000).toISOString().slice(0, 16))
-const toTime = ref(new Date().toISOString().slice(0, 16))
+const fromTime = ref(toLocalDatetimeString(new Date(Date.now() - 3600000)))
+const toTime = ref(toLocalDatetimeString(new Date()))
 const timeline = ref([])
 const windows = ref([])
 const sortAsc = ref(true)  // true = oldest first, false = newest first

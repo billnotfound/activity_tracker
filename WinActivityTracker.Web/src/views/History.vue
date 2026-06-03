@@ -53,11 +53,12 @@
 
 <script setup>
 import { ref, inject, onMounted, computed } from 'vue'
+import { toLocalDateString, fmtDuration } from '../utils/time.js'
 
 const apiBase = inject('apiBase')
 
-const fromDate = ref(new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10))
-const toDate = ref(new Date().toISOString().slice(0, 10))
+const fromDate = ref(toLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+const toDate = ref(toLocalDateString(new Date()))
 const data = ref([])
 const sortAsc = ref(false)
 
@@ -80,11 +81,5 @@ async function loadData() {
     const r = await fetch(`${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`)
     data.value = await r.json()
   } catch (e) { console.error(e) }
-}
-
-function fmtDuration(s) {
-  if (s < 60) return `${s.toFixed(0)}秒`
-  if (s < 3600) return `${(s / 60).toFixed(1)}分钟`
-  return `${(s / 3600).toFixed(1)}小时`
 }
 </script>

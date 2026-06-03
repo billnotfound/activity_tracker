@@ -87,7 +87,7 @@
 
 <script setup>
 import { ref, inject, onMounted, computed } from 'vue'
-import { fmtShortDur } from '../utils/time.js'
+import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
 
 import { Chart, registerables } from 'chart.js'
 
@@ -103,7 +103,7 @@ const periods = [
   { key: 'all', label: '全部' },
 ]
 const period = ref('today')
-const pickDate = ref(new Date().toISOString().slice(0, 10))
+const pickDate = ref(toLocalDateString())
 const mergeSameProcess = ref(true)  // loaded from /api/settings
 const summary = ref([])
 const media = ref([])
@@ -113,11 +113,11 @@ function onPickDate() { period.value = 'today'; loadSummary() }
 
 function periodRange() {
   const now = new Date()
-  const to = now.toISOString().slice(0,10)
+  const to = toLocalDateString(now)
   switch (period.value) {
-    case 'week': { const d=new Date(now-7*86400000); return [d.toISOString().slice(0,10), to] }
-    case 'month': { const d=new Date(now.getFullYear(),now.getMonth()-1,now.getDate()); return [d.toISOString().slice(0,10), to] }
-    case 'year': { const d=new Date(now.getFullYear()-1,now.getMonth(),now.getDate()); return [d.toISOString().slice(0,10), to] }
+    case 'week': { const d = new Date(now - 7 * 86400000); return [toLocalDateString(d), to] }
+    case 'month': { const d = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate()); return [toLocalDateString(d), to] }
+    case 'year': { const d = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()); return [toLocalDateString(d), to] }
     case 'all': return ['2020-01-01', to]
     default: return [pickDate.value, pickDate.value]
   }
@@ -128,11 +128,12 @@ const mediaWithDuration = computed(() => {
   const list = [...media.value].reverse()
   const now = Date.now()
   const r = list.map((m, i) => {
-    const t1 = new Date((m.timestamp.endsWith('Z')?m.timestamp:m.timestamp+'Z')).getTime()
-    const t2 = i+1 < list.length
-      ? new Date((list[i+1].timestamp.endsWith('Z')?list[i+1].timestamp:list[i+1].timestamp+'Z')).getTime()
+    const t1 = parseUtcTs(m.timestamp)?.getTime() || now
+    const t2 = i + 1 < list.length
+      ? (parseUtcTs(list[i + 1].timestamp)?.getTime() || now)
       : now
-    return { ...m, durationSec: Math.max(1,Math.round((t2-t1)/1000)), durationFmt: fmtShortDur(Math.max(1,Math.round((t2-t1)/1000))) }
+    const sec = Math.max(1, Math.round((t2 - t1) / 1000))
+    return { ...m, durationSec: sec, durationFmt: fmtShortDur(sec) }
   })
   return r.reverse()
 })
@@ -149,9 +150,9 @@ const totalListenFmt = computed(() => {
   if (!playing.length) return '0s'
   // Build intervals: [timestamp, timestamp + duration] in ms, sorted by start
   const intervals = playing.map(m => {
-    const t = new Date((m.timestamp.endsWith('Z')?m.timestamp:m.timestamp+'Z')).getTime()
+    const t = parseUtcTs(m.timestamp)?.getTime() || 0
     return [t, t + m.durationSec * 1000]
-  }).sort((a,b) => a[0]-b[0])
+  }).sort((a, b) => a[0] - b[0])
   const merged = []
   for (const [s, e] of intervals) {
     const last = merged[merged.length-1]
@@ -248,10 +249,4 @@ function renderCharts(data) {
   })
 }
 
-// Human-readable duration formatting
-function fmtDuration(s) {
-  if (s < 60) return `${s.toFixed(0)}秒`
-  if (s < 3600) return `${(s / 60).toFixed(1)}分钟`
-  return `${(s / 3600).toFixed(1)}小时`
-}
 </script>

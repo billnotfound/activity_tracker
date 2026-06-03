@@ -5,6 +5,30 @@ export function parseUtcTs(ts) {
   return new Date(ts.endsWith('Z') ? ts : ts + 'Z')
 }
 
+// RFC 3339 timestamp — always appends 'Z' for API interoperability.
+// Unlike toISOString(), this guarantees correct UTC parsing even when
+// the backend returns dates without timezone info.
+export function toUtcIso(ts) {
+  if (!ts) return '?'
+  const d = parseUtcTs(ts)
+  return d ? d.toLocaleString() : '?'
+}
+
+// Local date string "YYYY-MM-DD" for date inputs and date-only API params.
+// Avoids toISOString() which shifts dates across midnight for non-UTC timezones.
+export function toLocalDateString(d) {
+  d = d || new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+// Local datetime string "YYYY-MM-DDTHH:mm" for datetime-local inputs.
+export function toLocalDatetimeString(d) {
+  d = d || new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${toLocalDateString(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 export function toLocalTime(ts) {
   const d = parseUtcTs(ts)
   return d ? d.toLocaleTimeString() : '-'
