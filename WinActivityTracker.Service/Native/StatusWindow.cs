@@ -146,8 +146,9 @@ public partial class StatusWindow : Form
             var sumResp = await http.GetAsync($"{_apiBase}/api/summary/today");
             if (sumResp.IsSuccessStatusCode)
             {
-                var summary = await sumResp.Content.ReadFromJsonAsync<List<SummaryItem>>();
-                var top5 = (summary ?? []).Take(5).ToList();
+                var wrapped = await sumResp.Content.ReadFromJsonAsync<SummaryResponse>();
+                var summary = wrapped?.Items ?? [];
+                var top5 = summary.Take(5).ToList();
 
                 // Load adjusted switch counts if merge is enabled
                 var svc = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
@@ -221,6 +222,7 @@ public partial class StatusWindow : Form
         => text.Length <= n ? text : text[..(n - 3)] + "...";
 
     private record WindowInfo(string ProcessName, string Title, bool IsFocused);
+    private record SummaryResponse(List<SummaryItem> Items, double TotalSleepSeconds);
     private record SummaryItem(string ProcessName, double TotalSeconds, int SwitchCount);
     private record TimelineItem(string ProcessName, double DurationSeconds);
 }

@@ -33,6 +33,11 @@ public class MediaSessionTracker : BackgroundService
     private readonly Dictionary<string, (string Title, string Artist, string Status)> _perAppState = new();
     private bool _dedupSeeded;
 
+    // Tracks the most recent Wake event handled, so we don't react to the
+    // same event on every poll. HeartbeatService writes SystemEvents;
+    // this tracker reads them on each cycle.
+    private DateTime _lastWakeTime = DateTime.MinValue;
+
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings, ILogger<MediaSessionTracker> logger)
     {
         _scopeFactory = scopeFactory;
@@ -69,6 +74,11 @@ public class MediaSessionTracker : BackgroundService
     {
         try
         {
+            // Check SystemEvents for a new Wake (HeartbeatService writes Sleep+Wake pairs).
+            // If found, insert a media __SystemSleep marker and clear dedup so the
+            // frontend correctly splits pre-sleep and post-wake playback intervals.
+            await CheckForWakeEvent();
+
             // WinRT async factory — must be called on a thread with a compatible apartment.
             // The first call initializes the WinRT subsystem; subsequent calls are fast.
             var manager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
@@ -130,6 +140,35 @@ public class MediaSessionTracker : BackgroundService
         {
             // WinRT initialization not ready — silently retry next cycle.
             // This happens occasionally on startup when the COM apartment isn't set up yet.
+        }
+    }
+
+    private async Task CheckForWakeEvent()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var newWake = await db.SystemEvents
+            .Where(e => e.EventType == "Wake" && e.Timestamp > _lastWakeTime)
+            .OrderBy(e => e.Timestamp)
+            .FirstOrDefaultAsync();
+
+        if (newWake != null)
+        {
+            _logger.LogInformation("MediaTracker: wake event at {WakeTime}", newWake.Timestamp);
+            _lastWakeTime = newWake.Timestamp;
+
+            db.MediaSessionRecords.Add(new MediaSessionRecord
+            {
+                Timestamp = newWake.Timestamp,
+                AppName = "__SystemSleep",
+                Title = "System sleep or program stopped",
+                Artist = string.Empty,
+                PlaybackStatus = "SystemSleep"
+            });
+            await db.SaveChangesAsync();
+
+            _perAppState.Clear();
         }
     }
 }

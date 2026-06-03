@@ -82,11 +82,14 @@ public class WindowTracker : BackgroundService
 
                 if ((now - _lastPollTime).TotalSeconds > _settings.Settings.WindowPollSeconds * 3)
                 {
-                    _logger.LogDebug("Sleep gap detected: {Gap}s", (now - _lastPollTime).TotalSeconds);
+                    _logger.LogDebug("Sleep gap detected: {Gap}s — resetting focus state",
+                        (now - _lastPollTime).TotalSeconds);
                     if (_settings.Settings.TrackingEnabled)
                     {
-                        await SaveFocusChange();
-                        await InsertSleepGap(_lastPollTime, now);
+                        // Close the pre-sleep focus session using _lastPollTime as the
+                        // approximate end (at most 3s before actual sleep). HeartbeatService
+                        // handles the __SystemSleep FocusChange and SystemEvents table.
+                        await SaveFocusChange(_lastPollTime);
                         _currentProcess = string.Empty;
                         _currentTitle = string.Empty;
                         _focusStart = now;
@@ -128,20 +131,6 @@ public class WindowTracker : BackgroundService
         await CloseAllWindowSessions();
     }
 
-    private async Task InsertSleepGap(DateTime sleepStart, DateTime wakeTime)
-    {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<Data.AppDbContext>();
-        db.FocusChanges.Add(new Models.FocusChange
-        {
-            Timestamp = sleepStart,
-            ProcessName = "__SystemSleep",
-            WindowTitle = "Sleep gap detected",
-            DurationSeconds = (wakeTime - sleepStart).TotalSeconds
-        });
-        await db.SaveChangesAsync();
-    }
-
     private void TrackForegroundWindow()
     {
         var hWnd = NativeMethods.GetForegroundWindow();
@@ -174,7 +163,7 @@ public class WindowTracker : BackgroundService
         }
     }
 
-    private async Task SaveFocusChange()
+    private async Task SaveFocusChange(DateTime? endTime = null)
     {
         var process = _currentProcess;
         var title = _currentTitle;
@@ -182,7 +171,8 @@ public class WindowTracker : BackgroundService
 
         if (string.IsNullOrEmpty(process)) return;
 
-        var duration = (DateTime.UtcNow - start).TotalSeconds;
+        var end = endTime ?? DateTime.UtcNow;
+        var duration = (end - start).TotalSeconds;
         if (duration < 0.5) return;
 
         _currentProcess = string.Empty;

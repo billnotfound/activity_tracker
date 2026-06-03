@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<MediaSessionRecord> MediaSessionRecords => Set<MediaSessionRecord>();
     public DbSet<Heartbeat> Heartbeats => Set<Heartbeat>();
     public DbSet<DailySummary> DailySummaries => Set<DailySummary>();
+    public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -64,6 +65,13 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.OpenTime);       // query open windows: WHERE CloseTime IS NULL
+        });
+
+        modelBuilder.Entity<SystemEvent>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.EventType);
+            e.HasIndex(x => x.Timestamp);
         });
 
         modelBuilder.Entity<DailySummary>(e =>

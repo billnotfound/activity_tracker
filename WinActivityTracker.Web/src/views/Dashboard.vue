@@ -45,7 +45,9 @@
     <div class="row">
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">统计概览</div>
+          <div class="card-header">统计概览
+            <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠 {{ fmtDuration(totalSleepSeconds) }}</small>
+          </div>
           <div class="card-body" style="max-height:400px;overflow-y:auto">
             <table class="table table-sm table-striped">
               <thead><tr><th>程序</th><th>总时长</th><th>切换次数</th></tr></thead>
@@ -68,7 +70,7 @@
             <table class="table table-sm mb-0">
               <thead><tr><th>持续</th><th>状态</th><th>歌曲</th><th>艺术家</th></tr></thead>
               <tbody>
-                <tr v-for="m in mediaTimeline" :key="m.id || m.timestamp"
+                <tr v-for="m in displayMedia" :key="m.id || m.timestamp"
                   :style="{borderLeft:'4px solid '+(m.playbackStatus==='Playing'?'#198754':'#dee2e6')}">
                   <td>{{ m.durationFmt }}</td>
                   <td>{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</td>
@@ -106,6 +108,7 @@ const period = ref('today')
 const pickDate = ref(toLocalDateString())
 const mergeSameProcess = ref(true)  // loaded from /api/settings
 const summary = ref([])
+const totalSleepSeconds = ref(0)
 const media = ref([])
 
 function setPeriod(p) { period.value = p; loadSummary() }
@@ -141,6 +144,9 @@ const mediaTimeline = computed(() => {
   const total = mediaWithDuration.value.reduce((s,m)=>s+m.durationSec,0)||1
   return mediaWithDuration.value.map(m=>({...m, pct: Math.max(1,(m.durationSec/total)*100)}))
 })
+const displayMedia = computed(() =>
+  mediaTimeline.value.filter(m => m.playbackStatus !== 'SystemSleep')
+)
 
 
 // Merge overlapping Playing intervals from ALL apps into non-overlapping ranges.
@@ -188,9 +194,12 @@ async function fetchSummary() {
       ? `${apiBase}/api/summary/today?date=${pickDate.value}`
       : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
     const r = await fetch(url)
-    const data = await r.json()
-    summary.value = data
-    renderCharts(data)
+    const res = await r.json()
+    // New API shape: { items: [...], totalSleepSeconds: N }
+    // Old shape (array) kept for backward compat if backend hasn't been restarted.
+    summary.value = Array.isArray(res) ? res : (res.items || [])
+    totalSleepSeconds.value = Array.isArray(res) ? 0 : (res.totalSleepSeconds || 0)
+    renderCharts(summary.value)
   } catch (e) { console.error(e) }
 }
 

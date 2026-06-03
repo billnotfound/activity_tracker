@@ -210,13 +210,22 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
     // Always computed server-side to avoid the client downloading the full timeline.
     var adj = await ComputeAdjustedSwitchCounts(db, start, end);
 
-    return Results.Ok(data.Select(d => new
+    // Query sleep time from SystemEvents (replaces the old __SystemSleep FocusChange approach).
+    var totalSleepSec = await db.SystemEvents
+        .Where(e => e.EventType == "Sleep" && e.Timestamp >= start && e.Timestamp <= end)
+        .SumAsync(e => e.DurationSeconds);
+
+    return Results.Ok(new
     {
-        d.ProcessName,
-        d.TotalSeconds,
-        SwitchCount = d.SwitchCount,
-        AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
-    }).OrderByDescending(x => x.TotalSeconds));
+        items = data.Select(d => new
+        {
+            d.ProcessName,
+            d.TotalSeconds,
+            SwitchCount = d.SwitchCount,
+            AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
+        }).OrderByDescending(x => x.TotalSeconds),
+        totalSleepSeconds = totalSleepSec
+    });
 });
 
 app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext db) =>
@@ -238,13 +247,21 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
 
     var adj = await ComputeAdjustedSwitchCounts(db, start, end);
 
-    return Results.Ok(data.Select(d => new
+    var totalSleepSec = await db.SystemEvents
+        .Where(e => e.EventType == "Sleep" && e.Timestamp >= start && e.Timestamp <= end)
+        .SumAsync(e => e.DurationSeconds);
+
+    return Results.Ok(new
     {
-        d.ProcessName,
-        d.TotalSeconds,
-        SwitchCount = d.SwitchCount,
-        AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
-    }).OrderByDescending(x => x.TotalSeconds));
+        items = data.Select(d => new
+        {
+            d.ProcessName,
+            d.TotalSeconds,
+            SwitchCount = d.SwitchCount,
+            AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
+        }).OrderByDescending(x => x.TotalSeconds),
+        totalSleepSeconds = totalSleepSec
+    });
 });
 
 // Computes merge-same-process switch counts using SQL LAG() window function.
@@ -365,6 +382,7 @@ app.MapGet("/api/db/stats", async (AppDbContext db) =>
             (SELECT COUNT(*) FROM ProcessSnapshots) AS ProcessCount,
             (SELECT COUNT(*) FROM ProcessSessions) AS ProcessSessionCount,
             (SELECT COUNT(*) FROM MediaSessionRecords) AS MediaCount,
+            (SELECT COUNT(*) FROM SystemEvents) AS SystemEventCount,
             (SELECT MIN(Timestamp) FROM FocusChanges) AS OldestRecord
     """).FirstAsync();
 
@@ -376,6 +394,7 @@ app.MapGet("/api/db/stats", async (AppDbContext db) =>
         processSnapshots = stats.ProcessCount,
         processSessions = stats.ProcessSessionCount,
         mediaRecords = stats.MediaCount,
+        systemEvents = stats.SystemEventCount,
         oldestRecord = stats.OldestRecord,
         newRecordsPerDay = Math.Round(stats.FocusCount / Math.Max(1, (now - (stats.OldestRecord ?? now)).TotalDays), 1)
     });
@@ -395,6 +414,7 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
     var deletedProcesses = await db.ProcessSnapshots.Where(p => p.Timestamp < cutoff).ExecuteDeleteAsync();
     var deletedProcSessions = await db.ProcessSessions.Where(p => p.StartTime < cutoff).ExecuteDeleteAsync();
     var deletedMedia = await db.MediaSessionRecords.Where(m => m.Timestamp < cutoff).ExecuteDeleteAsync();
+    var deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
 
     await db.Database.ExecuteSqlRawAsync("VACUUM");
 
@@ -402,7 +422,7 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
     {
         retentionDays = retention,
         cutoff = cutoff,
-        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia }
+        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia, systemEvents = deletedSystemEvents }
     });
 });
 
@@ -420,13 +440,14 @@ app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
     var deletedProcesses = await db.ProcessSnapshots.ExecuteDeleteAsync();
     var deletedProcSessions = await db.ProcessSessions.ExecuteDeleteAsync();
     var deletedMedia = await db.MediaSessionRecords.ExecuteDeleteAsync();
+    var deletedSystemEvents = await db.SystemEvents.ExecuteDeleteAsync();
 
     await db.Database.ExecuteSqlRawAsync("VACUUM");
 
     return Results.Ok(new
     {
         message = "All data deleted. Database schema preserved.",
-        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia }
+        deleted = new { focusChanges = deletedFocus, windowSnapshots = deletedWindows, windowSessions = deletedSessions, processSnapshots = deletedProcesses, processSessions = deletedProcSessions, mediaRecords = deletedMedia, systemEvents = deletedSystemEvents }
     });
 });
 
@@ -475,6 +496,7 @@ internal sealed class DbStatsRow
     public int ProcessCount { get; set; }
     public int ProcessSessionCount { get; set; }
     public int MediaCount { get; set; }
+    public int SystemEventCount { get; set; }
     public DateTime? OldestRecord { get; set; }
 }
 

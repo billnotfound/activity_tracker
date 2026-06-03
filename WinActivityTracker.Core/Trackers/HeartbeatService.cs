@@ -1,6 +1,15 @@
-// Writes a heartbeat timestamp to the DB every 30s.
-// On startup, checks the gap between now and the last heartbeat.
-// If gap > 33s, inserts a __SystemSleep marker for the missing period.
+// Heartbeat — sole source of truth for sleep/wake detection.
+//
+// Every 30s, updates a single-row Heartbeats table with the current UTC time.
+// If the gap between now and the previous heartbeat exceeds 33s (30s + 3s tolerance),
+// the system was asleep or the program was stopped. In that case:
+//
+//   1. SystemEvent "Sleep" is recorded at the last heartbeat time.
+//   2. SystemEvent "Wake" is recorded at the current time.
+//   3. A __SystemSleep FocusChange covers the gap (backward compatible with existing queries).
+//
+// Other trackers (WindowTracker, MediaSessionTracker) query SystemEvents for the
+// latest Wake event instead of doing their own ad-hoc gap detection.
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -25,16 +34,20 @@ public class HeartbeatService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Ensure the Heartbeats table exists (DB may have been created before this table was added).
+        // Ensure tables exist — Heartbeats is a single-row table; SystemEvents
+        // records every sleep/wake pair with sleep duration. Both tables may predate
+        // their EF Core model definitions, so raw SQL ensures they exist.
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             await db.Database.ExecuteSqlRawAsync(
                 "CREATE TABLE IF NOT EXISTS Heartbeats (Id INTEGER PRIMARY KEY, LastTick TEXT NOT NULL)");
+            await db.Database.ExecuteSqlRawAsync(
+                "CREATE TABLE IF NOT EXISTS SystemEvents (Id INTEGER PRIMARY KEY AUTOINCREMENT, EventType TEXT NOT NULL, Timestamp TEXT NOT NULL, DurationSeconds REAL NOT NULL DEFAULT 0)");
+            // Migration: add DurationSeconds to tables created before this column existed.
+            try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE SystemEvents ADD COLUMN DurationSeconds REAL NOT NULL DEFAULT 0"); }
+            catch { /* column already exists */ }
         }
-
-        // On startup, check if we missed time (program was stopped or system slept).
-        await CheckStartupGap();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -45,14 +58,21 @@ public class HeartbeatService : BackgroundService
                 var now = DateTime.UtcNow;
 
                 var hb = await db.Heartbeats.FindAsync(1);
+
                 if (hb == null)
                 {
+                    // First run — seed the heartbeat.
                     db.Heartbeats.Add(new Heartbeat { Id = 1, LastTick = now });
                 }
-                else
+                else if ((now - hb.LastTick).TotalSeconds > GapThresholdSec)
                 {
-                    hb.LastTick = now;
+                    // System slept or program was stopped.
+                    RecordSleepWake(db, hb.LastTick, now);
                 }
+
+                // Always update heartbeat so the next iteration can measure the gap.
+                if (hb != null) hb.LastTick = now;
+
                 await db.SaveChangesAsync();
             }
             catch (Exception ex)
@@ -64,33 +84,26 @@ public class HeartbeatService : BackgroundService
         }
     }
 
-    private async Task CheckStartupGap()
+    private void RecordSleepWake(AppDbContext db, DateTime sleepTime, DateTime wakeTime)
     {
-        try
-        {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var now = DateTime.UtcNow;
-            var last = await db.Heartbeats.FindAsync(1);
+        var gapSec = (wakeTime - sleepTime).TotalSeconds;
+        _logger.LogInformation("Sleep/wake: {Gap}s gap — recording events", gapSec);
 
-            if (last != null && (now - last.LastTick).TotalSeconds > GapThresholdSec)
-            {
-                _logger.LogInformation("Startup gap detected: {Gap}s — inserting SystemSleep marker",
-                    (now - last.LastTick).TotalSeconds);
-
-                db.FocusChanges.Add(new FocusChange
-                {
-                    Timestamp = last.LastTick,
-                    ProcessName = "__SystemSleep",
-                    WindowTitle = "Program stopped or system slept",
-                    DurationSeconds = (now - last.LastTick).TotalSeconds
-                });
-                await db.SaveChangesAsync();
-            }
-        }
-        catch (Exception ex)
+        db.SystemEvents.Add(new SystemEvent
         {
-            _logger.LogError(ex, "Heartbeat startup gap check error");
-        }
+            EventType = "Sleep",
+            Timestamp = sleepTime,
+            DurationSeconds = gapSec
+        });
+        db.SystemEvents.Add(new SystemEvent
+        {
+            EventType = "Wake",
+            Timestamp = wakeTime
+        });
+
+        // __SystemSleep FocusChange is no longer inserted here.
+        // Sleep time is now queried directly from SystemEvents (SUM DurationSeconds
+        // WHERE EventType = 'Sleep'), which is more accurate and avoids polluting
+        // the focus-change timeline with synthetic records.
     }
 }

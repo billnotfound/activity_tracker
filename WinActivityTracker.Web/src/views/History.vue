@@ -79,7 +79,8 @@ function toggleSort() {
 async function loadData() {
   try {
     const r = await fetch(`${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`)
-    data.value = await r.json()
+    const res = await r.json()
+    data.value = Array.isArray(res) ? res : (res.items || [])
   } catch (e) { console.error(e) }
 }
 </script>
