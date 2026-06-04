@@ -42,7 +42,7 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
 
-    // Returns true if the window is minimized — minimized windows are excluded from visible-window snapshots.
+    // Returns true if the window is minimized — excluded from visible-window enumeration.
     [DllImport("user32.dll")]
     public static extern bool IsIconic(IntPtr hWnd);
 

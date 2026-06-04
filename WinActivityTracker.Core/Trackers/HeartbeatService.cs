@@ -1,15 +1,11 @@
-// Heartbeat — sole source of truth for sleep/wake detection.
+// Sleep/wake detection via heartbeat gap.
 //
-// Every 30s, updates a single-row Heartbeats table with the current UTC time.
-// If the gap between now and the previous heartbeat exceeds 33s (30s + 3s tolerance),
-// the system was asleep or the program was stopped. In that case:
+// Every 30s, updates a single-row Heartbeats table. If the gap exceeds 33s
+// (30s + 3s tolerance), the system was asleep or the program was stopped:
+//   - Sleep: records Sleep+Wake SystemEvents
+//   - Shutdown: records Shutdown+Start SystemEvents (Program.cs writes Shutdown)
 //
-//   1. SystemEvent "Sleep" is recorded at the last heartbeat time.
-//   2. SystemEvent "Wake" is recorded at the current time.
-//   3. A __SystemSleep FocusChange covers the gap (backward compatible with existing queries).
-//
-// Other trackers (WindowTracker, MediaSessionTracker) query SystemEvents for the
-// latest Wake event instead of doing their own ad-hoc gap detection.
+// Other trackers query SystemEvents for the latest Wake/Start event to detect gaps.
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -34,9 +30,7 @@ public class HeartbeatService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Ensure tables exist — Heartbeats is a single-row table; SystemEvents
-        // records every sleep/wake pair with sleep duration. Both tables may predate
-        // their EF Core model definitions, so raw SQL ensures they exist.
+        // Ensure tables exist (Heartbeats was created via raw SQL before EF Core model existed)
         using (var scope = _scopeFactory.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -66,8 +60,7 @@ public class HeartbeatService : BackgroundService
                 }
                 else if ((now - hb.LastTick).TotalSeconds > GapThresholdSec)
                 {
-                    // System slept or program was stopped.
-                    RecordSleepWake(db, hb.LastTick, now);
+                    await HandleGapAsync(db, hb.LastTick, now);
                 }
 
                 // Always update heartbeat so the next iteration can measure the gap.
@@ -84,26 +77,43 @@ public class HeartbeatService : BackgroundService
         }
     }
 
-    private void RecordSleepWake(AppDbContext db, DateTime sleepTime, DateTime wakeTime)
+    // Detects whether a heartbeat gap was caused by system sleep or a clean shutdown.
+    // On shutdown, Program.cs writes a "Shutdown" SystemEvent before exiting.
+    // If that event exists between lastHeartbeat and now, it was a shutdown.
+    // Otherwise, it was a sleep (or crash — indistinguishable from sleep).
+    private async Task HandleGapAsync(AppDbContext db, DateTime lastHeartbeat, DateTime now)
     {
-        var gapSec = (wakeTime - sleepTime).TotalSeconds;
-        _logger.LogInformation("Sleep/wake: {Gap}s gap — recording events", gapSec);
+        var gapSec = (now - lastHeartbeat).TotalSeconds;
 
-        db.SystemEvents.Add(new SystemEvent
-        {
-            EventType = "Sleep",
-            Timestamp = sleepTime,
-            DurationSeconds = gapSec
-        });
-        db.SystemEvents.Add(new SystemEvent
-        {
-            EventType = "Wake",
-            Timestamp = wakeTime
-        });
+        var shutdown = await db.SystemEvents
+            .Where(e => e.EventType == "Shutdown" && e.Timestamp > lastHeartbeat && e.Timestamp <= now)
+            .OrderBy(e => e.Timestamp)
+            .FirstOrDefaultAsync();
 
-        // __SystemSleep FocusChange is no longer inserted here.
-        // Sleep time is now queried directly from SystemEvents (SUM DurationSeconds
-        // WHERE EventType = 'Sleep'), which is more accurate and avoids polluting
-        // the focus-change timeline with synthetic records.
+        if (shutdown != null)
+        {
+            _logger.LogInformation("Shutdown detected: off for {Gap}s", gapSec);
+            shutdown.DurationSeconds = (now - shutdown.Timestamp).TotalSeconds;
+            db.SystemEvents.Add(new SystemEvent
+            {
+                EventType = "Start",
+                Timestamp = now
+            });
+        }
+        else
+        {
+            _logger.LogInformation("Sleep/wake: {Gap}s gap", gapSec);
+            db.SystemEvents.Add(new SystemEvent
+            {
+                EventType = "Sleep",
+                Timestamp = lastHeartbeat,
+                DurationSeconds = gapSec
+            });
+            db.SystemEvents.Add(new SystemEvent
+            {
+                EventType = "Wake",
+                Timestamp = now
+            });
+        }
     }
 }

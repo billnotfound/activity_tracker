@@ -131,14 +131,20 @@
             <div v-if="cleanupResult" class="alert alert-success small mt-2">
               清理完成：删除 {{ cleanupResult.deleted.focusChanges }} 条焦点变化、
               {{ cleanupResult.deleted.windowSnapshots }} 条窗口快照、
+              {{ cleanupResult.deleted.windowSessions }} 条窗口会话、
               {{ cleanupResult.deleted.processSnapshots }} 条进程快照、
-              {{ cleanupResult.deleted.mediaRecords }} 条媒体记录。
+              {{ cleanupResult.deleted.processSessions }} 条进程会话、
+              {{ cleanupResult.deleted.mediaRecords }} 条媒体记录、
+              {{ cleanupResult.deleted.systemEvents }} 条系统事件。
             </div>
             <div v-if="resetResult" class="alert alert-warning small mt-2">
               {{ resetResult.message }}：删除 {{ resetResult.deleted.focusChanges }} 条焦点变化、
               {{ resetResult.deleted.windowSnapshots }} 条窗口快照、
+              {{ resetResult.deleted.windowSessions }} 条窗口会话、
               {{ resetResult.deleted.processSnapshots }} 条进程快照、
-              {{ resetResult.deleted.mediaRecords }} 条媒体记录。
+              {{ resetResult.deleted.processSessions }} 条进程会话、
+              {{ resetResult.deleted.mediaRecords }} 条媒体记录、
+              {{ resetResult.deleted.systemEvents }} 条系统事件。
             </div>
           </div>
         </div>
@@ -167,7 +173,9 @@ const form = reactive({
   mediaPollSeconds: 5,
   idleThresholdMinutes: 2,
   dataRetentionDays: 90,
-  apiPort: 5200
+  apiPort: 5200,
+  autoCleanup: true,
+  autoStartEnabled: false
 })
 const excludeText = ref('')
 const saving = ref(false)
@@ -209,6 +217,8 @@ async function loadSettings() {
     form.idleThresholdMinutes = s.idleThresholdMinutes
     form.dataRetentionDays = s.dataRetentionDays
     form.apiPort = s.apiPort || 5200
+    form.autoCleanup = s.autoCleanup ?? true
+    form.autoStartEnabled = s.autoStartEnabled ?? false
     excludeText.value = (s.excludedProcesses || []).join(', ')
     statusOk.value = true
   } catch { statusOk.value = false }
@@ -216,6 +226,8 @@ async function loadSettings() {
 
 async function saveSettings() {
   saving.value = true
+  cleanupResult.value = null
+  resetResult.value = null
   try {
     const body = {
       ...form,

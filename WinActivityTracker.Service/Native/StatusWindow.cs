@@ -6,12 +6,14 @@ namespace WinActivityTracker.Service.Native;
 
 public partial class StatusWindow : Form
 {
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
     private readonly string _apiBase;
     private readonly System.Windows.Forms.Timer _refreshTimer;
 
     private Label _focusLabel = null!;
     private ListView _topList = null!;
     private Label _statusLabel = null!;
+    private Label _offLabel = null!;
     private Button _toggleButton = null!;
 
     public StatusWindow(IServiceProvider services, int apiPort)
@@ -95,6 +97,15 @@ public partial class StatusWindow : Form
                 Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 0, 0)
             };
 
+            _offLabel = new Label
+            {
+                Text = "", AutoSize = true,
+                Font = new Font("Microsoft YaHei UI", 9),
+                ForeColor = Color.Gray,
+                Margin = new Padding(0, 4, 16, 0)
+            };
+            panel.Controls.Add(_offLabel);
+
             _statusLabel = new Label
             {
                 Text = "追踪状态: 检测中...", AutoSize = true,
@@ -131,9 +142,7 @@ public partial class StatusWindow : Form
     {
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-
-            var winResp = await http.GetAsync($"{_apiBase}/api/windows/current");
+            var winResp = await _http.GetAsync($"{_apiBase}/api/windows/current");
             if (winResp.IsSuccessStatusCode)
             {
                 var windows = await winResp.Content.ReadFromJsonAsync<List<WindowInfo>>();
@@ -143,11 +152,13 @@ public partial class StatusWindow : Form
                     : "无焦点窗口";
             }
 
-            var sumResp = await http.GetAsync($"{_apiBase}/api/summary/today");
+            var sumResp = await _http.GetAsync($"{_apiBase}/api/summary/today");
             if (sumResp.IsSuccessStatusCode)
             {
                 var wrapped = await sumResp.Content.ReadFromJsonAsync<SummaryResponse>();
                 var summary = wrapped?.Items ?? [];
+                var totalOff = wrapped?.TotalSleepSeconds ?? 0;
+                _offLabel.Text = totalOff > 0 ? $"今日休眠/关机: {FmtDur(totalOff)}" : "";
                 var top5 = summary.Take(5).ToList();
 
                 // Load adjusted switch counts if merge is enabled
@@ -155,7 +166,7 @@ public partial class StatusWindow : Form
                 var adjustedSwitches = new Dictionary<string, int>();
                 if (svc.Settings.MergeSameProcessSwitches)
                 {
-                    var tlResp = await http.GetAsync($"{_apiBase}/api/windows/timeline?from={DateTime.Now:yyyy-MM-dd}T00:00:00&to={DateTime.Now:yyyy-MM-dd}T23:59:59");
+                    var tlResp = await _http.GetAsync($"{_apiBase}/api/windows/timeline?from={DateTime.Now:yyyy-MM-dd}T00:00:00&to={DateTime.Now:yyyy-MM-dd}T23:59:59");
                     if (tlResp.IsSuccessStatusCode)
                     {
                         var timeline = await tlResp.Content.ReadFromJsonAsync<List<TimelineItem>>();
@@ -190,8 +201,9 @@ public partial class StatusWindow : Form
             _statusLabel.ForeColor = enabled ? Color.DarkGreen : Color.DarkOrange;
             _toggleButton.Text = enabled ? "暂停追踪" : "恢复追踪";
         }
-        catch
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"StatusWindow refresh error: {ex.Message}");
             _statusLabel.Text = "⚠ 无响应";
             _statusLabel.ForeColor = Color.Red;
         }
@@ -204,10 +216,12 @@ public partial class StatusWindow : Form
         settings.Save();
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            await http.PutAsJsonAsync($"{_apiBase}/api/settings", settings.Settings);
+            await _http.PutAsJsonAsync($"{_apiBase}/api/settings", settings.Settings);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"ToggleTracking error: {ex.Message}");
+        }
         await RefreshData(services);
     }
 

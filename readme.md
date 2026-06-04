@@ -1,4 +1,7 @@
-# A simple app to track your activity.
-Based on .net and vue. Simple, and work.
+# WinActivityTracker
 
-Database and settings are stored in ``` %APPDATA%\Local\WinActivityTracker ```.
+## An activity tracker, simple and work.
+
+Based on .NET and Vue.
+
+Database and settings are stored in `%LOCALAPPDATA%\WinActivityTracker`.

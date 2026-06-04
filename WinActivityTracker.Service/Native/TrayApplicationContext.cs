@@ -1,23 +1,9 @@
-// Manages the system tray icon and its context menu.
+// System tray icon and context menu.
 //
-// Runs on the WinForms STA thread via Application.Run().
-// OutputType is WinExe — no console window on startup.
-// Console is an in-app WinForms window (ConsoleWindow), not the system console —
-// closing it never exits the application.
+// Runs on the WinForms STA thread. Console is an in-app ConsoleWindow form,
+// not the system console — closing it does not exit the application.
 //
-// Menu structure:
-//   打开仪表盘        → browser opens SPA on localhost:apiPort
-//   设置...           → native SettingsWindow
-//   显示状态窗口       → native StatusWindow
-//   ─────────────────
-//   暂停/恢复追踪      → toggle trackingEnabled
-//   开机自启           → toggle HKCU\...\Run registry entry
-//   显示/隐藏控制台     → show/hide ConsoleWindow (ConsoleMirror subscriber)
-//   ─────────────────
-//   退出              → stop web host + close tray
-//
-// Double-clicking the tray icon opens the dashboard.
-// On first launch, the StatusWindow opens automatically after a 1-second delay.
+// Double-click opens dashboard. On first launch, StatusWindow opens after 1s delay.
 using System.Diagnostics;
 
 using Microsoft.Extensions.DependencyInjection;
@@ -196,10 +182,7 @@ public class TrayApplicationContext : ApplicationContext
     private SettingsWindow? _settingsWindow;
     private StatusWindow? _statusWindow;
 
-    // ===== In-app console (WinForms window, not the system console) =====
-    // Avoids AllocConsole issues: encoding, Ctrl handler conflicts with .NET runtime,
-    // and process termination when the user closes the console window.
-    // Console.Out is redirected to the ConsoleWindow's TextBox on first show.
+    // ===== In-app console (ConsoleWindow form, not system console) =====
     private ConsoleWindow? _consoleWindow;
 
     // ===== Auto-start (registry ↔ settings.json) =====

@@ -3,11 +3,10 @@
 // writes through this, not the original stdout.
 //
 // Memory model:
-//   - StringBuilder with 250KB cap; oldest content trimmed when exceeded.
-//   - Trimming aligns to newline boundaries for clean cuts.
-//   - Subscribers notified at most once per 200ms (not per-write).
-//   - GetHistory() returns a cached string rebuilt only when dirty.
-//   - Writes are tee'd to the original stdout (visible in dotnet run terminal).
+//   - StringBuilder capped at 80K chars; excess trimmed at newline boundaries.
+//   - Subscribers notified at most once per 200ms.
+//   - GetHistory() returns a cached string; rebuilt only when dirty.
+//   - Writes are tee'd to the original stdout.
 using System.Text;
 
 namespace WinActivityTracker.Service.Native;

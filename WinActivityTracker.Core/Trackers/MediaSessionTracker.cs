@@ -1,16 +1,8 @@
-// Tracks media playback via the Windows SystemMediaTransportControls WinRT API.
+// Tracks media playback via Windows SystemMediaTransportControls (WinRT).
+// Reports title, artist, and playback status for the currently-playing session.
 //
-// This API provides info about the currently-playing media session (e.g. Spotify, foobar2000,
-// YouTube in a browser) — title, artist, playback status.
-//
-// WinRT caveats:
-//   - Requires net10.0-windows10.0.19041.0 TFM (WinRT projections)
-//   - RequestAsync() can fail with InvalidCastException if WinRT isn't initialized on the thread.
-//     We catch and silently retry on the next poll.
-//   - Only reports the CURRENT session — if multiple apps are playing, only the active one is seen.
-//
-// Deduplication: compares title+artist against the previous poll; only INSERTs on change.
-// This prevents flooding the DB with identical rows for the same song.
+// Deduplication: compares title+artist against the previous poll; only inserts on change.
+// WinRT initialization may fail with InvalidCastException on startup — silently retried.
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -32,6 +24,7 @@ public class MediaSessionTracker : BackgroundService
     // each app's last-known state is preserved independently.
     private readonly Dictionary<string, (string Title, string Artist, string Status)> _perAppState = new();
     private bool _dedupSeeded;
+    private string _lastAppName = string.Empty;
 
     // Tracks the most recent Wake event handled, so we don't react to the
     // same event on every poll. HeartbeatService writes SystemEvents;
@@ -74,10 +67,14 @@ public class MediaSessionTracker : BackgroundService
     {
         try
         {
-            // Check SystemEvents for a new Wake (HeartbeatService writes Sleep+Wake pairs).
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            // Check SystemEvents for a new Wake or Start (HeartbeatService writes
+            // Sleep+Wake pairs for sleep; Shutdown+Start for clean shutdown).
             // If found, insert a media __SystemSleep marker and clear dedup so the
             // frontend correctly splits pre-sleep and post-wake playback intervals.
-            await CheckForWakeEvent();
+            await CheckForWakeEvent(db);
 
             // WinRT async factory — must be called on a thread with a compatible apartment.
             // The first call initializes the WinRT subsystem; subsequent calls are fast.
@@ -112,16 +109,16 @@ public class MediaSessionTracker : BackgroundService
                     _perAppState[r.AppName] = (r.Title, r.Artist, r.PlaybackStatus);
             }
 
-            // Per-app dedup: each media source (foobar2000, firefox, etc.) has its
-            // own last-known state. Switching between apps doesn't lose dedup info.
-            if (_perAppState.TryGetValue(appName, out var prev) &&
-                prev.Title == title && prev.Artist == artist && prev.Status == status)
+            // Per-app dedup: each media source keeps its own last-known state.
+            // If the app changed since last poll, always insert — otherwise
+            // the frontend loses gap-based durations when switching back.
+            if (appName == _lastAppName
+                && _perAppState.TryGetValue(appName, out var prev)
+                && prev.Title == title && prev.Artist == artist && prev.Status == status)
                 return;
 
             _perAppState[appName] = (title, artist, status);
-
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            _lastAppName = appName;
 
             db.MediaSessionRecords.Add(new MediaSessionRecord
             {
@@ -143,19 +140,16 @@ public class MediaSessionTracker : BackgroundService
         }
     }
 
-    private async Task CheckForWakeEvent()
+    private async Task CheckForWakeEvent(AppDbContext db)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
         var newWake = await db.SystemEvents
-            .Where(e => e.EventType == "Wake" && e.Timestamp > _lastWakeTime)
+            .Where(e => (e.EventType == "Wake" || e.EventType == "Start") && e.Timestamp > _lastWakeTime)
             .OrderBy(e => e.Timestamp)
             .FirstOrDefaultAsync();
 
         if (newWake != null)
         {
-            _logger.LogInformation("MediaTracker: wake event at {WakeTime}", newWake.Timestamp);
+            _logger.LogInformation("MediaTracker: wake/start event at {WakeTime}", newWake.Timestamp);
             _lastWakeTime = newWake.Timestamp;
 
             db.MediaSessionRecords.Add(new MediaSessionRecord

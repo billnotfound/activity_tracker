@@ -18,7 +18,7 @@ public class ProcessTracker : BackgroundService
     // PID → (dbId, processName) for session-based tracking.
     private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
 
-    // Reusable collections — cleared each cycle to reduce GC churn.
+    // Reusable collections cleared each cycle.
     private readonly HashSet<int> _reusablePids = new();
     private readonly List<(string Name, int Id)> _reusableBg = new();
     private readonly List<long> _reusableGoneIds = new();
@@ -69,8 +69,7 @@ public class ProcessTracker : BackgroundService
 
         GetBackgroundProcesses(_reusableBg, _reusablePids);
 
-        // Rebuild _reusablePids with actual background PIDs (GetBackgroundProcesses
-        // filled it with window-having PIDs as a filter — wrong for the gone-check below).
+        // Rebuild _reusablePids with actual background PIDs for the gone-check below.
         _reusablePids.Clear();
         foreach (var (_, pid) in _reusableBg) _reusablePids.Add(pid);
 

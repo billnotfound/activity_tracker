@@ -1,14 +1,13 @@
 ﻿<!--
-  Dashboard view — today's usage overview.
+  Dashboard view — today's usage overview. Auto-refreshes every 2s.
   Features:
     - Date picker to view any day's data
     - Two Chart.js bar charts: focus duration and switch count (Top 10)
     - Full data table with all tracked processes (scrollable)
     - Recent media playback list (scrollable)
 
-  Chart lifecycle: charts are destroyed and re-created on each data load.
-  Chart.js requires explicit destroy() before replacing to avoid canvas conflicts
-  and memory leaks from orphaned chart instances.
+  Chart lifecycle: created on first load, updated in-place on refresh.
+  fc.update('none') skips animation to avoid visual noise during polling.
 
   Timezone: DB timestamps are UTC (EF Core strips DateTimeKind, so no 'Z' suffix).
   The toLocal() helper appends 'Z' before parsing, ensuring correct local-time display.
@@ -25,6 +24,11 @@
         <input type="date" v-model="pickDate" class="form-control form-control-sm" style="width:150px"
           @change="onPickDate" title="查询特定日期" />
       </div>
+    </div>
+
+    <div v-if="error" class="alert alert-danger alert-dismissible fade show" role="alert">
+      {{ error }}
+      <button type="button" class="btn-close" @click="error=''"></button>
     </div>
 
     <div class="row">
@@ -46,7 +50,7 @@
       <div class="col-md-6">
         <div class="card mb-3">
           <div class="card-header">统计概览
-            <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠 {{ fmtDuration(totalSleepSeconds) }}</small>
+            <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠/关机 {{ fmtDuration(totalSleepSeconds) }}</small>
           </div>
           <div class="card-body" style="max-height:400px;overflow-y:auto">
             <table class="table table-sm table-striped">
@@ -88,7 +92,7 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted, computed } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
 import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
 
 import { Chart, registerables } from 'chart.js'
@@ -110,9 +114,11 @@ const mergeSameProcess = ref(true)  // loaded from /api/settings
 const summary = ref([])
 const totalSleepSeconds = ref(0)
 const media = ref([])
+const error = ref('')
+const loading = ref(false)
 
-function setPeriod(p) { period.value = p; loadSummary() }
-function onPickDate() { period.value = 'today'; loadSummary() }
+function setPeriod(p) { period.value = p; clearInterval(timer); timer = setInterval(loadSummary, 2000); loadSummary() }
+function onPickDate() { period.value = 'today'; clearInterval(timer); timer = setInterval(loadSummary, 2000); loadSummary() }
 
 function periodRange() {
   const now = new Date()
@@ -173,14 +179,24 @@ const totalListenFmt = computed(() => {
 const focusChart = ref(null)
 const switchChart = ref(null)
 let fc = null, sc = null  // Chart.js instance references for destroy/recreate
+let timer = null
 
 onMounted(async () => {
   try {
     const r = await fetch(`${apiBase}/api/settings`)
-    const s = await r.json()
-    mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
+    if (r.ok) {
+      const s = await r.json()
+      mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
+    }
   } catch {}
-  loadSummary()
+  await loadSummary()
+  timer = setInterval(loadSummary, 2000)
+})
+
+onUnmounted(() => {
+  clearInterval(timer)
+  fc?.destroy(); fc = null
+  sc?.destroy(); sc = null
 })
 
 async function loadSummary() {
@@ -194,68 +210,86 @@ async function fetchSummary() {
       ? `${apiBase}/api/summary/today?date=${pickDate.value}`
       : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
     const r = await fetch(url)
+    if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
-    // New API shape: { items: [...], totalSleepSeconds: N }
-    // Old shape (array) kept for backward compat if backend hasn't been restarted.
     summary.value = Array.isArray(res) ? res : (res.items || [])
     totalSleepSeconds.value = Array.isArray(res) ? 0 : (res.totalSleepSeconds || 0)
+    error.value = ''
     renderCharts(summary.value)
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error(e); error.value = '加载摘要失败: ' + e.message }
 }
 
 async function fetchMedia() {
   try {
     const r = await fetch(`${apiBase}/api/media/history?limit=20`)
+    if (!r.ok) throw new Error(`API ${r.status}`)
     media.value = await r.json()
-  } catch {}
+  } catch (e) { console.error(e) }
+}
+
+function hashStr(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0
+  return Math.abs(h)
 }
 
 function renderCharts(data) {
   const top = data.slice(0, 10)
   const labels = top.map(d => d.processName)
-  // Deterministic color rotation using HSL — same process always gets the same hue
-  const colors = labels.map((_, i) => `hsl(${i * 37 % 360}, 60%, 55%)`)
+  const colors = labels.map(name => `hsl(${hashStr(name) % 360}, 60%, 55%)`)
+  const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
+  const switchData = top.map(d => mergeSameProcess.value ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount)
 
-  // Destroy previous chart instances before creating new ones.
-  // If we don't, old charts persist in memory and the canvas becomes unresponsive.
-  if (fc) fc.destroy()
-  fc = new Chart(focusChart.value, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: '时长 (分钟)',
-        data: top.map(d => +(d.totalSeconds / 60).toFixed(1)),
-        backgroundColor: colors
-      }]
-    },
-    options: {
-      responsive: true,
-      // Maintain aspect ratio prevents the chart from growing to fill height: 300
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: '分钟' } } }
-    }
-  })
+  // Update in-place to avoid flicker; create on first call
+  if (fc) {
+    fc.data.labels = labels
+    fc.data.datasets[0].data = focusData
+    fc.data.datasets[0].backgroundColor = colors
+    fc.update('none')
+  } else {
+    fc = new Chart(focusChart.value, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: '时长 (分钟)',
+          data: focusData,
+          backgroundColor: colors
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: '分钟' } } }
+      }
+    })
+  }
 
-  if (sc) sc.destroy()
-  sc = new Chart(switchChart.value, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [{
-        label: '切换次数',
-        data: top.map(d => mergeSameProcess.value ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount),
-        backgroundColor: colors
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: '次数' } } }
-    }
-  })
+  if (sc) {
+    sc.data.labels = labels
+    sc.data.datasets[0].data = switchData
+    sc.data.datasets[0].backgroundColor = colors
+    sc.update('none')
+  } else {
+    sc = new Chart(switchChart.value, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: '切换次数',
+          data: switchData,
+          backgroundColor: colors
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: '次数' } } }
+      }
+    })
+  }
 }
 
 </script>

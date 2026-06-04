@@ -46,7 +46,7 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.StartTime);
-            e.HasIndex(x => x.EndTime);       // WHERE EndTime IS NULL (active process snapshot)
+            e.HasIndex(x => x.EndTime);       // WHERE EndTime IS NULL (active process session)
         });
 
         modelBuilder.Entity<ProcessSnapshot>(e =>

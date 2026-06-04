@@ -1,7 +1,6 @@
-// Records a media playback event from the Windows SystemMediaTransportControls (WinRT API).
-// Deduplicated: only INSERTed when title+artist differs from the previous record.
+// Media playback event from Windows SystemMediaTransportControls (WinRT).
+// Deduplicated: only inserted when title+artist differs from the previous record.
 // PlaybackStatus values: "Playing", "Paused", "Stopped", "Closed", "Changing", "Opened".
-// Requires WinRT — only works on Windows 10 19041+ with net10.0-windows10.0.19041.0 TFM.
 namespace WinActivityTracker.Core.Models;
 
 public class MediaSessionRecord

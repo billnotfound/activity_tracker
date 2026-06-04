@@ -1,16 +1,13 @@
 ﻿<!--
-  Timeline view — chronological focus change log + live window list.
+  Timeline view — focus change log + live window list. Auto-refreshes every 2s.
   Features:
     - Datetime-local pickers for precise time range filtering
     - Focus change table (scrollable) showing every recorded window switch with duration
-    - Live "current windows" panel (scrollable) that auto-refreshes every 3 seconds
+    - Live "current windows" panel (scrollable) that auto-refreshes
       (this panel uses the real-time /api/windows/current endpoint, not the DB)
 
   Timezone: DB timestamps are UTC without 'Z' suffix (EF Core strips Kind).
   toLocal() converts to local time; for datetime-local inputs we use local values directly.
-
-  The live panel polls every 3s — this matches the default WindowTracker interval.
-  More frequent polling would just repeat the same data.
 -->
 <template>
   <div>
@@ -31,6 +28,11 @@
           {{ sortAsc ? '↑ 时间升序' : '↓ 时间降序' }}
         </button>
       </div>
+    </div>
+
+    <div v-if="error" class="alert alert-danger alert-dismissible fade show" role="alert">
+      {{ error }}
+      <button type="button" class="btn-close" @click="error=''"></button>
     </div>
 
     <div class="row">
@@ -57,7 +59,7 @@
       </div>
       <div class="col-md-4">
         <div class="card mb-3">
-          <div class="card-header">当前可见窗口 <small class="text-muted">(每 3s 刷新)</small></div>
+          <div class="card-header">当前可见窗口 <small class="text-muted">(每 2s 刷新)</small></div>
           <div class="card-body" style="max-height:600px;overflow-y:auto">
             <table class="table table-sm">
               <thead><tr><th>程序</th><th>标题</th><th>焦点</th></tr></thead>
@@ -90,13 +92,14 @@ const toTime = ref(toLocalDatetimeString(new Date()))
 const timeline = ref([])
 const windows = ref([])
 const sortAsc = ref(true)  // true = oldest first, false = newest first
+const error = ref('')
 
 let timer = null
 
 onMounted(() => {
   loadTimeline()
   loadWindows()
-  timer = setInterval(loadWindows, 3000)
+  timer = setInterval(() => { loadTimeline(); loadWindows() }, 2000)
 })
 
 onUnmounted(() => clearInterval(timer))
@@ -113,15 +116,18 @@ function toggleSort() {
 async function loadTimeline() {
   try {
     const r = await fetch(`${apiBase}/api/windows/timeline?from=${fromTime.value}&to=${toTime.value}`)
+    if (!r.ok) throw new Error(`API ${r.status}`)
     timeline.value = await r.json()
-  } catch {}
+    error.value = ''
+  } catch (e) { console.error(e); error.value = '加载时间线失败: ' + e.message }
 }
 
 async function loadWindows() {
   try {
     const r = await fetch(`${apiBase}/api/windows/current`)
+    if (!r.ok) throw new Error(`API ${r.status}`)
     windows.value = await r.json()
-  } catch {}
+  } catch (e) { console.error(e) }
 }
 
 

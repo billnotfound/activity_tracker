@@ -1,11 +1,8 @@
-// Detects user idle state via GetLastInputInfo() — a kernel-level tick counter of the last
-// keyboard or mouse event. More reliable than polling cursor position (which fails during
-// fullscreen video/games where the cursor is hidden).
+// Detects user idle via GetLastInputInfo(), a kernel-level tick counter for the last
+// keyboard/mouse event.
 //
-// Used by WindowTracker: when idle, focus tracking is paused so AFK time doesn't inflate
-// an application's focus duration. When the user returns, a new focus session begins.
-//
-// Idle threshold is configurable via settings (IdleThresholdMinutes).
+// Used by WindowTracker: when idle, focus tracking is paused so AFK time is not counted.
+// Idle threshold is set via TrackerSettings.IdleThresholdMinutes.
 using System.Runtime.InteropServices;
 using WinActivityTracker.Core.Interop;
 using WinActivityTracker.Core.Services;

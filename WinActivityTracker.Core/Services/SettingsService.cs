@@ -30,9 +30,9 @@ public class SettingsService
         Load();
     }
 
-    // Silently falls back to defaults if the file is missing or corrupted.
-    // Comment lines (//) are stripped before JSON parsing so hand-edited files work.
-    // After loading, the file is re-saved to ensure the commented format is written.
+    // Falls back to defaults if the file is missing or corrupted.
+    // Comment lines (//) are stripped before JSON parsing.
+    // After loading, the file is re-saved to ensure commented format.
     private void Load()
     {
         try
@@ -117,7 +117,7 @@ public class SettingsService
     // - Process poll min 5s (enumeration is expensive with hundreds of processes)
     // - Media poll min 1s
     // - Idle threshold min 1 minute
-    // - Retention min 1 day (0 would delete everything)
+    // - Retention min 1 day (0 deletes all data)
     // - ApiPort clamped to 1024-65535 range (well-known ports excluded)
     public void Update(TrackerSettings newSettings)
     {

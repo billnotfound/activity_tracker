@@ -29,7 +29,9 @@
     </div>
 
     <div class="card mb-3">
-      <div class="card-header">时段汇总 <small class="text-muted">({{ data.length }} 个程序)</small></div>
+      <div class="card-header">时段汇总 <small class="text-muted">({{ data.length }} 个程序)</small>
+        <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠/关机 {{ fmtDuration(totalSleepSeconds) }}</small>
+      </div>
       <div class="card-body" style="max-height:600px;overflow-y:auto">
         <div class="table-responsive">
           <table class="table table-striped table-hover">
@@ -40,7 +42,7 @@
               <tr v-for="d in sortedData" :key="d.processName">
                 <td><strong>{{ d.processName }}</strong></td>
                 <td>{{ fmtDuration(d.totalSeconds) }}</td>
-                <td>{{ d.switchCount }}</td>
+                <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
               </tr>
               <tr v-if="!data.length"><td colspan="3" class="text-muted">暂无数据 — 请选择一个有数据的日期范围</td></tr>
             </tbody>
@@ -61,8 +63,19 @@ const fromDate = ref(toLocalDateString(new Date(new Date().getFullYear(), new Da
 const toDate = ref(toLocalDateString(new Date()))
 const data = ref([])
 const sortAsc = ref(false)
+const mergeSameProcess = ref(true)
+const totalSleepSeconds = ref(0)
 
-onMounted(loadData)
+onMounted(async () => {
+  try {
+    const r = await fetch(`${apiBase}/api/settings`)
+    if (r.ok) {
+      const s = await r.json()
+      mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
+    }
+  } catch {}
+  await loadData()
+})
 
 const sortedData = computed(() => {
   const arr = [...data.value]
@@ -79,8 +92,10 @@ function toggleSort() {
 async function loadData() {
   try {
     const r = await fetch(`${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`)
+    if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
     data.value = Array.isArray(res) ? res : (res.items || [])
+    totalSleepSeconds.value = Array.isArray(res) ? 0 : (res.totalSleepSeconds || 0)
   } catch (e) { console.error(e) }
 }
 </script>

@@ -12,6 +12,6 @@ public class FocusChange
     public string WindowTitle { get; set; } = string.Empty;
 
     // How long the user stayed on this window before switching away or going idle.
-    // Values under 0.5s are discarded as noise (accidental alt-tab flickers).
+    // Values under 0.5s are discarded as transient focus flickers.
     public double DurationSeconds { get; set; }
 }

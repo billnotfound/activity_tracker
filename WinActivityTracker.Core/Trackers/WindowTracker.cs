@@ -1,24 +1,16 @@
-// Core tracker: monitors the foreground window and all visible top-level windows.
+// Core tracker: monitors foreground window and all visible top-level windows.
 //
-// Lifecycle:
-//   Every WindowPollSeconds (default 3s), it:
-//   1. Checks idle state via IdleDetector
-//   2. If not idle, gets the foreground window (GetForegroundWindow)
-//   3. Compares with the previous foreground window — if different, writes a FocusChange record
-//      for the OLD window (duration = now - focusStart)
-//   4. Enumerates all visible windows via EnumWindows and writes a WindowSnapshot batch
+// Every WindowPollSeconds (default 3s):
+//   1. Checks idle via IdleDetector
+//   2. If not idle, gets foreground window (GetForegroundWindow)
+//   3. If foreground changed, writes a FocusChange for the previous window
+//   4. Syncs visible windows as WindowSession rows
 //
-// Focus duration is calculated retroactively: when the user switches FROM app A TO app B,
-// app A's FocusChange is INSERTed with DurationSeconds = time spent on A. This means the
-// CURRENT foreground window has NO corresponding FocusChange row until the user switches away.
-// On shutdown/crash, the last focus session is lost.
+// Focus duration is calculated retroactively: when focus leaves app A for app B,
+// app A's FocusChange is inserted with DurationSeconds = time spent on A.
 //
-// Excluded processes (from settings) are filtered out at two points:
-//   - Focus tracking: excluded processes don't trigger focus changes
-//   - Visible window snapshots: excluded processes aren't written to the DB
-//
-// Thread safety: uses IServiceScopeFactory to create a new scope per poll cycle.
-// EF Core DbContext is NOT thread-safe; scoping ensures each tracker has its own instance.
+// Excluded processes (from settings) are filtered from both focus tracking and
+// window session enumeration.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;

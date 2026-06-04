@@ -1,32 +1,7 @@
-﻿// taskmonitor114 — backend monitoring process with native system tray.
+﻿// taskmonitor114 — background monitoring with system tray and Web API.
 //
-// Dual-thread architecture:
-//   Main thread (STA):  WinForms Application.Run() — tray + native windows
-//   Background thread:  ASP.NET Core WebApplication — REST API + trackers
-//   Shared: DI container via static IServiceProvider reference
-//
-// When !Environment.UserInteractive (Windows Service), WinForms is skipped.
-//
-// Startup order:
-//   1. Single-instance guard: check for existing taskmonitor114 process by name
-//   2. Read port from settings.json (comment-stripped)
-//   3. Install ConsoleMirror BEFORE Build() so ASP.NET logger pipes through it
-//   4. Build web host, ensure DB, start background thread
-//   5. On first launch, StatusWindow auto-opens after 1s delay
-//
-// API endpoints:
-//   GET  /api/status              — health check (+ trackingEnabled)
-//   GET  /api/settings            — read current configuration
-//   PUT  /api/settings            — update configuration (body: TrackerSettings JSON)
-//   GET  /api/summary/today       — today's focus time per process (?date=yyyy-MM-dd)
-//   GET  /api/summary/range       — focus time over a date range (?from=&to=)
-//   GET  /api/windows/current     — live visible windows (real-time, not from DB)
-//   GET  /api/windows/timeline    — focus change history (?from=&to=)
-//   GET  /api/processes/snapshot  — latest background process snapshot
-//   GET  /api/media/history       — recent media playback records (?limit=)
-//   GET  /api/db/stats            — database row counts and age
-//   POST /api/db/cleanup          — delete old records and VACUUM (?days=)
-//   POST /api/db/reset            — delete ALL data (?confirm=true)
+// Architecture: main thread runs WinForms tray; background thread runs ASP.NET Core.
+// Windows Service mode skips WinForms when !Environment.UserInteractive.
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
@@ -37,7 +12,7 @@ using WinActivityTracker.Service.Native;
 // STA thread is required for WinForms clipboard, drag-drop, and COM interop.
 Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 
-// DPI awareness — must be set before ANY WinForms calls (including MessageBox).
+// DPI awareness must be set before any WinForms windows are created.
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
 // --- Read port from settings.json early (before DI builds) ---
@@ -53,8 +28,8 @@ var myPid = Environment.ProcessId;
 var existing = System.Diagnostics.Process.GetProcessesByName("taskmonitor114");
 if (existing.Any(p => p.Id != myPid))
 {
-    MessageBox.Show("程序已经在运行中。\n看看系统托盘吧。",
-        "你干嘛。。。", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    MessageBox.Show("程序在运行中了。\n看看系统托盘不？",
+        "别急", MessageBoxButtons.OK, MessageBoxIcon.Information);
     return;
 }
 var settingsPath = Path.Combine(trackerDir, "settings.json");
@@ -126,7 +101,7 @@ builder.Services.AddWindowsService(options =>
     options.ServiceName = "taskmonitor114";
 });
 
-// CORS: allow all origins in development. The Vue dev server runs on port 5000.
+// CORS: allow local origins. Vue dev server runs on port 5000.
 builder.Services.AddCors(c => c.AddDefaultPolicy(p =>
     p.WithOrigins($"http://localhost:{apiPort}", "http://localhost:5000").AllowAnyMethod().AllowAnyHeader()));
 
@@ -138,9 +113,8 @@ app.UseCors();
 // In development, the Vue dev server runs separately on port 5000 with HMR.
 // In production (or when tray icon opens :5200), the Service serves the built files.
 // The CopyVueDist MSBuild target in the .csproj copies Web/wwwroot → output/wwwroot.
-// wwwroot is copied to the output directory by the CopyVueDist MSBuild target.
-// During dotnet run, ContentRootPath = project dir, but wwwroot is in the bin output dir.
-// We configure a PhysicalFileProvider so UseStaticFiles uses the correct path.
+// wwwroot is in AppContext.BaseDirectory (copied by CopyVueDist MSBuild target).
+// ContentRootPath differs during dotnet run, so we use a PhysicalFileProvider.
 var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 var serveSpa = Directory.Exists(webRoot);
 Microsoft.Extensions.FileProviders.PhysicalFileProvider? fp = null;
@@ -193,9 +167,18 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
     var start = localStart.ToUniversalTime();
     var end = localEnd.ToUniversalTime();
 
-    var data = await db.FocusChanges
+    // Query sleep/shutdown periods so we can exclude FocusChanges that fall within them.
+    var offPeriods = await GetOffPeriods(db, start, end);
+
+    var raw = await db.FocusChanges
         .Where(f => f.ProcessName != "__SystemSleep")
         .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+        .ToListAsync();
+
+    // Exclude records whose timestamp falls within a sleep/shutdown window.
+    var filtered = ExcludeOffPeriods(raw, offPeriods);
+
+    var data = filtered
         .GroupBy(f => f.ProcessName)
         .Select(g => new
         {
@@ -204,16 +187,11 @@ app.MapGet("/api/summary/today", async (string? date, AppDbContext db) =>
             SwitchCount = g.Count()
         })
         .OrderByDescending(x => x.TotalSeconds)
-        .ToListAsync();
+        .ToList();
 
-    // Compute adjusted switch counts (merge same-process consecutive switches).
-    // Always computed server-side to avoid the client downloading the full timeline.
-    var adj = await ComputeAdjustedSwitchCounts(db, start, end);
+    var adj = ComputeAdjustedSwitchCounts(filtered);
 
-    // Query sleep time from SystemEvents (replaces the old __SystemSleep FocusChange approach).
-    var totalSleepSec = await db.SystemEvents
-        .Where(e => e.EventType == "Sleep" && e.Timestamp >= start && e.Timestamp <= end)
-        .SumAsync(e => e.DurationSeconds);
+    var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
 
     return Results.Ok(new
     {
@@ -232,9 +210,17 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
 {
     var start = DateTime.SpecifyKind(from, DateTimeKind.Local).ToUniversalTime();
     var end = DateTime.SpecifyKind(to, DateTimeKind.Local).ToUniversalTime();
-    var data = await db.FocusChanges
+
+    var offPeriods = await GetOffPeriods(db, start, end);
+
+    var raw = await db.FocusChanges
         .Where(f => f.ProcessName != "__SystemSleep")
         .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+        .ToListAsync();
+
+    var filtered = ExcludeOffPeriods(raw, offPeriods);
+
+    var data = filtered
         .GroupBy(f => f.ProcessName)
         .Select(g => new
         {
@@ -243,13 +229,11 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
             SwitchCount = g.Count()
         })
         .OrderByDescending(x => x.TotalSeconds)
-        .ToListAsync();
+        .ToList();
 
-    var adj = await ComputeAdjustedSwitchCounts(db, start, end);
+    var adj = ComputeAdjustedSwitchCounts(filtered);
 
-    var totalSleepSec = await db.SystemEvents
-        .Where(e => e.EventType == "Sleep" && e.Timestamp >= start && e.Timestamp <= end)
-        .SumAsync(e => e.DurationSeconds);
+    var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
 
     return Results.Ok(new
     {
@@ -264,27 +248,40 @@ app.MapGet("/api/summary/range", async (DateTime from, DateTime to, AppDbContext
     });
 });
 
-// Computes merge-same-process switch counts using SQL LAG() window function.
-// Only counts transitions where ProcessName differs from the previous row,
-// avoiding materializing the full timeline in memory.
-static async Task<Dictionary<string, int>> ComputeAdjustedSwitchCounts(AppDbContext db, DateTime start, DateTime end)
+// Returns sleep/shutdown periods (SystemEvents) in the given UTC range.
+static async Task<List<(DateTime Start, DateTime End, double DurationSeconds)>> GetOffPeriods(AppDbContext db, DateTime start, DateTime end)
 {
-    var rows = await db.Database.SqlQuery<AdjustedSwitchRow>($"""
-        SELECT p.ProcessName, COUNT(*) AS SwitchCount
-        FROM (
-            SELECT ProcessName,
-                   LAG(ProcessName) OVER (ORDER BY Timestamp) AS Prev
-            FROM FocusChanges
-            WHERE ProcessName != '__SystemSleep'
-              AND Timestamp >= {start} AND Timestamp <= {end}
-        ) p
-        WHERE p.Prev IS NULL OR p.ProcessName != p.Prev
-        GROUP BY p.ProcessName
-    """).ToListAsync();
+    var events = await db.SystemEvents
+        .Where(e => (e.EventType == "Sleep" || e.EventType == "Shutdown")
+            && e.Timestamp >= start && e.Timestamp <= end)
+        .ToListAsync();
 
-    var counts = new Dictionary<string, int>(rows.Count, StringComparer.OrdinalIgnoreCase);
-    foreach (var r in rows)
-        counts[r.ProcessName] = r.SwitchCount;
+    return events
+        .Select(e => (Start: e.Timestamp, End: e.Timestamp.AddSeconds(e.DurationSeconds), e.DurationSeconds))
+        .ToList();
+}
+
+// Excludes FocusChanges whose timestamp falls within any off period.
+static List<FocusChange> ExcludeOffPeriods(List<FocusChange> records, List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
+{
+    if (offPeriods.Count == 0) return records;
+    return records
+        .Where(f => !offPeriods.Any(p => f.Timestamp >= p.Start && f.Timestamp < p.End))
+        .ToList();
+}
+
+// Computes merge-same-process switch counts from an in-memory list.
+// Only counts transitions where ProcessName differs from the previous row.
+static Dictionary<string, int> ComputeAdjustedSwitchCounts(List<FocusChange> records)
+{
+    var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    string? prev = null;
+    foreach (var r in records.OrderBy(r => r.Timestamp))
+    {
+        if (r.ProcessName != prev)
+            counts[r.ProcessName] = counts.GetValueOrDefault(r.ProcessName) + 1;
+        prev = r.ProcessName;
+    }
     return counts;
 }
 
@@ -426,9 +423,9 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
     });
 });
 
-// Nuclear option: deletes ALL records from all tables and VACUUMs.
-// Requires ?confirm=true as a safety check — prevents accidental data loss.
-// The database schema is preserved; only rows are deleted.
+// Deletes ALL records from all tables and VACUUMs.
+// Requires ?confirm=true to prevent accidental data loss.
+// Database schema is preserved; only rows are deleted.
 app.MapPost("/api/db/reset", async (bool? confirm, AppDbContext db) =>
 {
     if (confirm != true)
@@ -483,6 +480,20 @@ Application.SetCompatibleTextRenderingDefault(false);
 var silent = args.Any(a => a is "--autostart" or "--silent");
 Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: !silent));
 
+// Record clean shutdown so HeartbeatService can distinguish shutdown from sleep on next startup.
+try
+{
+    using var shutdownScope = app.Services.CreateScope();
+    var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
+    shutdownDb.SystemEvents.Add(new SystemEvent
+    {
+        EventType = "Shutdown",
+        Timestamp = DateTime.UtcNow
+    });
+    await shutdownDb.SaveChangesAsync();
+}
+catch (Exception ex) { Console.WriteLine($"Failed to record shutdown: {ex.Message}"); }
+
 // When Application.Run returns (user clicked Exit), signal the web host to stop.
 await app.StopAsync();
 try { await webTask; } catch (OperationCanceledException) { }
@@ -500,9 +511,3 @@ internal sealed class DbStatsRow
     public DateTime? OldestRecord { get; set; }
 }
 
-// Type for the ComputeAdjustedSwitchCounts SQL query.
-internal sealed class AdjustedSwitchRow
-{
-    public string ProcessName { get; set; } = string.Empty;
-    public int SwitchCount { get; set; }
-}
