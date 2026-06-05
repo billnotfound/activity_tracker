@@ -58,7 +58,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<MediaSessionRecord>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasIndex(x => x.Timestamp);      // ORDER BY Timestamp DESC
+            e.HasIndex(x => x.StartTime);      // ORDER BY StartTime DESC
+            e.HasIndex(x => x.EndTime);        // WHERE EndTime IS NULL (active session)
         });
 
         modelBuilder.Entity<WindowSession>(e =>

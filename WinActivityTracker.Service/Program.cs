@@ -132,6 +132,21 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await db.Database.EnsureCreatedAsync();
         await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;PRAGMA cache_size=-2000");
+
+    // Migrate MediaSessionRecords from point-in-time (Timestamp) to session-based (StartTime + EndTime).
+    try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE MediaSessionRecords RENAME COLUMN Timestamp TO StartTime"); }
+    catch { /* already migrated or new install */ }
+    try { await db.Database.ExecuteSqlRawAsync("ALTER TABLE MediaSessionRecords ADD COLUMN EndTime TEXT NULL"); }
+    catch { /* already migrated or new install */ }
+    // Backfill old point-in-time records with estimated durations.
+    // For each record, EndTime = the next chronological record's StartTime.
+    // ISO 8601 TEXT timestamps sort lexicographically in chronological order,
+    // so MIN(StartTime) WHERE StartTime > this.StartTime gives the next record.
+    // COALESCE falls back to StartTime for the last record (no next).
+    // This runs before trackers start, so there are no active sessions (EndTime IS NULL).
+    try { await db.Database.ExecuteSqlRawAsync(
+        "UPDATE MediaSessionRecords SET EndTime = COALESCE((SELECT MIN(m2.StartTime) FROM MediaSessionRecords m2 WHERE m2.StartTime > MediaSessionRecords.StartTime), StartTime) WHERE EndTime IS NULL OR EndTime = StartTime"); }
+    catch { }
 }
 
 // ===== API Endpoints =====
@@ -346,22 +361,37 @@ app.MapGet("/api/title-rules", () =>
     return Results.Ok(n.GetRules());
 });
 
-app.MapGet("/api/media/history", async (int? limit, AppDbContext db) =>
+app.MapGet("/api/media/history", async (int? limit, string? from, string? to, AppDbContext db) =>
 {
-    var data = await db.MediaSessionRecords
-        .OrderByDescending(m => m.Timestamp)
-        .Take(limit ?? 20)
-        .Select(m => new
-        {
-            m.Timestamp,
-            m.AppName,
-            m.Title,
-            m.Artist,
-            m.PlaybackStatus
-        })
-        .ToListAsync();
+    var query = db.MediaSessionRecords.AsQueryable();
 
-    return Results.Ok(data);
+    if (from != null && DateOnly.TryParse(from, out var fromDate))
+    {
+        var start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        query = query.Where(m => m.StartTime >= start);
+    }
+    if (to != null && DateOnly.TryParse(to, out var toDate))
+    {
+        var end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
+        query = query.Where(m => m.StartTime <= end);
+    }
+
+    var data = await query
+        .OrderByDescending(m => m.StartTime)
+        .Take(limit ?? 50)
+        .ToListAsync();
+    data.Reverse();  // chronological order for frontend
+
+    return Results.Ok(data.Select(m => new
+    {
+        m.Id,
+        m.StartTime,
+        m.EndTime,
+        m.AppName,
+        m.Title,
+        m.Artist,
+        m.PlaybackStatus
+    }));
 });
 
 // Database statistics — single combined query instead of 6 round trips.
@@ -410,7 +440,7 @@ app.MapPost("/api/db/cleanup", async (int? days, AppDbContext db, SettingsServic
     var deletedSessions = await db.WindowSessions.Where(w => w.OpenTime < cutoff).ExecuteDeleteAsync();
     var deletedProcesses = await db.ProcessSnapshots.Where(p => p.Timestamp < cutoff).ExecuteDeleteAsync();
     var deletedProcSessions = await db.ProcessSessions.Where(p => p.StartTime < cutoff).ExecuteDeleteAsync();
-    var deletedMedia = await db.MediaSessionRecords.Where(m => m.Timestamp < cutoff).ExecuteDeleteAsync();
+    var deletedMedia = await db.MediaSessionRecords.Where(m => m.StartTime < cutoff).ExecuteDeleteAsync();
     var deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
 
     await db.Database.ExecuteSqlRawAsync("VACUUM");

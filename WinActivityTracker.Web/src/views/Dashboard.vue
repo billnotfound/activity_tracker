@@ -51,12 +51,15 @@
         <div class="card mb-3">
           <div class="card-header">统计概览
             <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠/关机 {{ fmtDuration(totalSleepSeconds) }}</small>
+            <button class="btn btn-sm btn-outline-secondary float-end" @click="toggleSort" title="切换排序">
+              {{ sortAsc ? '↑ 升序' : '↓ 降序' }}
+            </button>
           </div>
           <div class="card-body" style="max-height:400px;overflow-y:auto">
             <table class="table table-sm table-striped">
               <thead><tr><th>程序</th><th>总时长</th><th>切换次数</th></tr></thead>
               <tbody>
-                <tr v-for="d in summary" :key="d.processName">
+                <tr v-for="d in sortedSummary" :key="d.processName">
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ fmtDuration(d.totalSeconds) }}</td>
                   <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
@@ -74,14 +77,14 @@
             <table class="table table-sm mb-0">
               <thead><tr><th>持续</th><th>状态</th><th>歌曲</th><th>艺术家</th></tr></thead>
               <tbody>
-                <tr v-for="m in displayMedia" :key="m.id || m.timestamp"
+                <tr v-for="m in displayMedia.slice().reverse()" :key="m.id || m.startTime"
                   :style="{borderLeft:'4px solid '+(m.playbackStatus==='Playing'?'#198754':'#dee2e6')}">
                   <td>{{ m.durationFmt }}</td>
                   <td>{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</td>
                   <td>{{ m.title }}</td>
                   <td>{{ m.artist }}</td>
                 </tr>
-                <tr v-if="!media.length"><td colspan="4" class="text-muted">暂无数据</td></tr>
+                <tr v-if="!displayMedia.length"><td colspan="4" class="text-muted">暂无数据</td></tr>
               </tbody>
             </table>
           </div>
@@ -116,9 +119,11 @@ const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
 const loading = ref(false)
+const sortAsc = ref(false)
 
 function setPeriod(p) { period.value = p; clearInterval(timer); timer = setInterval(loadSummary, 2000); loadSummary() }
 function onPickDate() { period.value = 'today'; clearInterval(timer); timer = setInterval(loadSummary, 2000); loadSummary() }
+function toggleSort() { sortAsc.value = !sortAsc.value }
 
 function periodRange() {
   const now = new Date()
@@ -132,37 +137,58 @@ function periodRange() {
   }
 }
 
-// Duration computed as gap to next record (or now for latest).
+// Duration computed from session StartTime/EndTime (or now for active sessions).
 const mediaWithDuration = computed(() => {
-  const list = [...media.value].reverse()
   const now = Date.now()
-  const r = list.map((m, i) => {
-    const t1 = parseUtcTs(m.timestamp)?.getTime() || now
-    const t2 = i + 1 < list.length
-      ? (parseUtcTs(list[i + 1].timestamp)?.getTime() || now)
-      : now
-    const sec = Math.max(1, Math.round((t2 - t1) / 1000))
+  return media.value.map(m => {
+    const start = parseUtcTs(m.startTime)?.getTime() || now
+    const end = m.endTime ? (parseUtcTs(m.endTime)?.getTime() || now) : now
+    const sec = Math.max(1, Math.round((end - start) / 1000))
     return { ...m, durationSec: sec, durationFmt: fmtShortDur(sec) }
   })
-  return r.reverse()
 })
-const mediaTimeline = computed(() => {
-  const total = mediaWithDuration.value.reduce((s,m)=>s+m.durationSec,0)||1
-  return mediaWithDuration.value.map(m=>({...m, pct: Math.max(1,(m.durationSec/total)*100)}))
+
+// Merge consecutive records with same title+status (handles restart/wake edge cases).
+const mergedMedia = computed(() => {
+  const list = mediaWithDuration.value
+  if (!list.length) return []
+  const merged = []
+  let cur = { ...list[0] }
+  for (let i = 1; i < list.length; i++) {
+    const item = list[i]
+    if (cur.title === item.title && cur.playbackStatus === item.playbackStatus) {
+      cur.durationSec += item.durationSec
+      cur.durationFmt = fmtShortDur(cur.durationSec)
+      if (item.endTime) cur.endTime = item.endTime
+    } else {
+      merged.push(cur)
+      cur = { ...item }
+    }
+  }
+  merged.push(cur)
+  return merged
 })
+
 const displayMedia = computed(() =>
-  mediaTimeline.value.filter(m => m.playbackStatus !== 'SystemSleep')
+  mergedMedia.value.filter(m => m.playbackStatus !== 'SystemSleep')
 )
+
+const sortedSummary = computed(() => {
+  const list = [...summary.value]
+  list.sort((a, b) => sortAsc.value
+    ? a.totalSeconds - b.totalSeconds
+    : b.totalSeconds - a.totalSeconds)
+  return list
+})
 
 
 // Merge overlapping Playing intervals from ALL apps into non-overlapping ranges.
-// Uses mediaWithDuration which already has computed time spans per record.
 const totalListenFmt = computed(() => {
-  const playing = mediaWithDuration.value.filter(m => m.playbackStatus === 'Playing')
+  const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing')
   if (!playing.length) return '0s'
   // Build intervals: [timestamp, timestamp + duration] in ms, sorted by start
   const intervals = playing.map(m => {
-    const t = parseUtcTs(m.timestamp)?.getTime() || 0
+    const t = parseUtcTs(m.startTime)?.getTime() || 0
     return [t, t + m.durationSec * 1000]
   }).sort((a, b) => a[0] - b[0])
   const merged = []
@@ -221,7 +247,8 @@ async function fetchSummary() {
 
 async function fetchMedia() {
   try {
-    const r = await fetch(`${apiBase}/api/media/history?limit=20`)
+    const [fromDate, toDate] = periodRange()
+    const r = await fetch(`${apiBase}/api/media/history?limit=50&from=${fromDate}&to=${toDate}`)
     if (!r.ok) throw new Error(`API ${r.status}`)
     media.value = await r.json()
   } catch (e) { console.error(e) }
