@@ -66,6 +66,7 @@ public class ProcessNameCache
 
     /// <summary>
     /// Returns all cached PID→Name entries. Call RefreshAll() first to populate.
+    /// ConcurrentDictionary's enumerator is a thread-safe snapshot — no allocation.
     /// </summary>
-    public Dictionary<int, string> Snapshot => new(_cache);
+    public ConcurrentDictionary<int, string> Snapshot => _cache;
 }

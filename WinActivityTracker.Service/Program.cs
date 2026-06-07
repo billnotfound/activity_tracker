@@ -12,6 +12,7 @@ using WinActivityTracker.Service.Native;
 
 Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+Application.EnableVisualStyles();
 
 // ===== Pre-flight: single-instance guard, port, console redirect =====
 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -75,6 +76,8 @@ builder.Services.AddSingleton<ProcessNameCache>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
 builder.Services.AddSingleton<IdleDetector>();
+builder.Services.AddSingleton<WriteQueue>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<WriteQueue>());
 builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
@@ -127,9 +130,29 @@ if (!Environment.UserInteractive)
 
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
 var webTask = Task.Run(() => app.RunAsync());
-await Task.Delay(500);
 
-Application.EnableVisualStyles();
+// Poll /api/status until the web host is actually ready, up to 300ms.
+using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(50) };
+var deadline = DateTime.UtcNow.AddMilliseconds(300);
+var ready = false;
+while (DateTime.UtcNow < deadline)
+{
+    try
+    {
+        var resp = await http.GetAsync($"http://localhost:{apiPort}/api/status");
+        if (resp.IsSuccessStatusCode) { ready = true; break; }
+    }
+    catch { /* not ready */ }
+    await Task.Delay(TimeSpan.FromMilliseconds(3));
+}
+
+if (!ready)
+{
+    Console.Error.WriteLine("WARNING: API did not respond within 300ms — startup may be slow.");
+    MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
+        "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+}
+
 Application.SetCompatibleTextRenderingDefault(false);
 var silent = args.Any(a => a is "--autostart" or "--silent");
 Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: !silent));

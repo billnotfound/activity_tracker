@@ -139,9 +139,12 @@ public class MediaSessionTracker : BackgroundService
 
             _logger.LogDebug("Media: {Artist} - {Title} [{Status}]", artist, title, status);
         }
-        catch (InvalidCastException)
+        catch (Exception ex) when (ex is InvalidCastException
+            or System.Runtime.InteropServices.InvalidComObjectException
+            or System.Runtime.InteropServices.COMException
+            or System.Runtime.InteropServices.SEHException)
         {
-            _logger.LogDebug("MediaSessionTracker: WinRT not ready, retrying next cycle");
+            _logger.LogDebug(ex, "MediaSessionTracker: WinRT not ready, retrying next cycle");
         }
     }
 

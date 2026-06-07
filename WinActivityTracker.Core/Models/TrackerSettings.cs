@@ -36,7 +36,7 @@ public class TrackerSettings
     public List<string> ExcludedProcesses { get; set; } = [];
 
     // /api/db/cleanup deletes records older than this (days). Also used as default for the ?days= parameter.
-    public int DataRetentionDays { get; set; } = 90;
+    public int DataRetentionDays { get; set; } = 160;
 
     // Reserved: when true, cleanup runs automatically on a daily schedule. Not yet wired.
     public bool AutoCleanup { get; set; } = true;

@@ -15,6 +15,7 @@ namespace WinActivityTracker.Core.Trackers;
 public class WindowTracker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly WriteQueue _writeQueue;
     private readonly IdleDetector _idleDetector;
     private readonly SettingsService _settings;
     private readonly ProcessNameCache _processCache;
@@ -36,10 +37,12 @@ public class WindowTracker : BackgroundService
 
     [ThreadStatic] private static StringBuilder? t_normalizeBuf;
 
-    public WindowTracker(IServiceScopeFactory scopeFactory, IdleDetector idleDetector,
-        SettingsService settings, ProcessNameCache processCache, ILogger<WindowTracker> logger)
+    public WindowTracker(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
+        IdleDetector idleDetector, SettingsService settings, ProcessNameCache processCache,
+        ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
+        _writeQueue = writeQueue;
         _idleDetector = idleDetector;
         _settings = settings;
         _processCache = processCache;
@@ -62,7 +65,7 @@ public class WindowTracker : BackgroundService
                         (now - _lastPollTime).TotalSeconds);
                     if (_settings.Settings.TrackingEnabled)
                     {
-                        await SaveFocusChange(_lastPollTime);
+                        SaveFocusChange(_lastPollTime);
                         _currentProcess = string.Empty;
                         _currentTitle = string.Empty;
                         _focusStart = now;
@@ -82,7 +85,7 @@ public class WindowTracker : BackgroundService
                 if (isIdle && !_wasIdle)
                 {
                     _logger.LogDebug("User went idle");
-                    await SaveFocusChange();
+                    SaveFocusChange();
                     _wasIdle = true;
                 }
                 else if (!isIdle)
@@ -121,7 +124,7 @@ public class WindowTracker : BackgroundService
 
         if (processName != _currentProcess || title != _currentTitle)
         {
-            _ = SaveFocusChange();
+            SaveFocusChange();
 
             _currentProcess = processName;
             _currentTitle = title;
@@ -131,7 +134,7 @@ public class WindowTracker : BackgroundService
         }
     }
 
-    private async Task SaveFocusChange(DateTime? endTime = null)
+    private void SaveFocusChange(DateTime? endTime = null)
     {
         var process = _currentProcess;
         var title = _currentTitle;
@@ -146,18 +149,16 @@ public class WindowTracker : BackgroundService
         _currentProcess = string.Empty;
         _currentTitle = string.Empty;
 
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-        db.FocusChanges.Add(new FocusChange
+        _writeQueue.TryWrite(db =>
         {
-            Timestamp = start,
-            ProcessName = process,
-            WindowTitle = title,
-            DurationSeconds = duration
+            db.FocusChanges.Add(new FocusChange
+            {
+                Timestamp = start,
+                ProcessName = process,
+                WindowTitle = title,
+                DurationSeconds = duration
+            });
         });
-
-        await db.SaveChangesAsync();
     }
 
     private async Task SyncWindowSessions()

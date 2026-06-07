@@ -14,6 +14,9 @@ public static class FocusEndpoints
 
     private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db)
     {
+        if (date != null && !DateOnly.TryParse(date, out _))
+            return Results.BadRequest(new { error = "Invalid date format, use yyyy-MM-dd" });
+
         var targetDate = date != null
             ? DateOnly.Parse(date)
             : DateOnly.FromDateTime(DateTime.Now);
@@ -36,11 +39,10 @@ public static class FocusEndpoints
 
     private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end)
     {
-        // Off periods (sleep/shutdown) — always just a few rows.
         var offPeriods = await GetOffPeriods(db, start, end);
 
-        // GroupBy + aggregation in SQL — returns ~30 rows instead of 10K+.
         var data = await db.FocusChanges
+            .AsNoTracking()
             .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
             .Where(f => f.Timestamp >= start && f.Timestamp <= end)
             .GroupBy(f => f.ProcessName)
@@ -53,8 +55,6 @@ public static class FocusEndpoints
             .OrderByDescending(x => x.TotalSeconds)
             .ToListAsync();
 
-        // Adjusted switch counts: merge consecutive same-process switches.
-        // Only load Timestamp+ProcessName (not the full entity) to keep this lightweight.
         var adj = await ComputeAdjustedSwitchCounts(db, start, end, offPeriods);
 
         var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
@@ -76,6 +76,7 @@ public static class FocusEndpoints
         AppDbContext db, DateTime start, DateTime end)
     {
         var events = await db.SystemEvents
+            .AsNoTracking()
             .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
                 && e.Timestamp >= start && e.Timestamp <= end)
             .ToListAsync();
@@ -89,23 +90,24 @@ public static class FocusEndpoints
         AppDbContext db, DateTime start, DateTime end,
         List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
     {
-        var timestamps = await db.FocusChanges
+        // Exclude records whose timestamp falls within a sleep/shutdown window,
+        // pushed to SQL as WHERE clauses. Sleep events are rare, so this is cheap.
+        IQueryable<FocusChange> query = db.FocusChanges
+            .AsNoTracking()
             .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+            .Where(f => f.Timestamp >= start && f.Timestamp <= end);
+
+        foreach (var p in offPeriods)
+            query = query.Where(f => !(f.Timestamp >= p.Start && f.Timestamp < p.End));
+
+        var timestamps = await query
             .OrderBy(f => f.Timestamp)
             .Select(f => new { f.Timestamp, f.ProcessName })
             .ToListAsync();
 
-        // Exclude records whose timestamp falls within a sleep/shutdown window.
-        var filtered = offPeriods.Count == 0
-            ? timestamps
-            : timestamps
-                .Where(t => !offPeriods.Any(p => t.Timestamp >= p.Start && t.Timestamp < p.End))
-                .ToList();
-
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         string? prev = null;
-        foreach (var r in filtered)
+        foreach (var r in timestamps)
         {
             if (r.ProcessName != prev)
                 counts[r.ProcessName] = counts.GetValueOrDefault(r.ProcessName) + 1;

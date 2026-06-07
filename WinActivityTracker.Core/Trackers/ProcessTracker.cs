@@ -19,6 +19,7 @@ public class ProcessTracker : BackgroundService
     private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
 
     private readonly HashSet<int> _reusablePids = new();
+    private readonly HashSet<int> _reusableVisiblePids = new();
     private readonly List<(string Name, int Id)> _reusableBg = new();
     private readonly List<long> _reusableGoneIds = new();
     private readonly List<int> _reusableGonePids = new();
@@ -73,12 +74,19 @@ public class ProcessTracker : BackgroundService
         var processMap = _processCache.Snapshot;
 
         // Find PIDs with visible top-level windows.
-        var visiblePids = GetVisibleWindowPids();
+        _reusableVisiblePids.Clear();
+        NativeMethods.EnumWindows((hWnd, _) =>
+        {
+            if (!NativeMethods.IsWindowVisible(hWnd)) return true;
+            NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
+            if (pid != 0) _reusableVisiblePids.Add((int)pid);
+            return true;
+        }, IntPtr.Zero);
 
         _reusableBg.Clear();
         foreach (var (pid, name) in processMap)
         {
-            if (!visiblePids.Contains(pid))
+            if (!_reusableVisiblePids.Contains(pid))
                 _reusableBg.Add((name, pid));
         }
 
@@ -139,18 +147,5 @@ public class ProcessTracker : BackgroundService
             await db.SaveChangesAsync();
         }
         _runningProcesses.Clear();
-    }
-
-    private static HashSet<int> GetVisibleWindowPids()
-    {
-        var pids = new HashSet<int>();
-        NativeMethods.EnumWindows((hWnd, _) =>
-        {
-            if (!NativeMethods.IsWindowVisible(hWnd)) return true;
-            NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (pid != 0) pids.Add((int)pid);
-            return true;
-        }, IntPtr.Zero);
-        return pids;
     }
 }

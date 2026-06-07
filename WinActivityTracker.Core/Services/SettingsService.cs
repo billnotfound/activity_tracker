@@ -36,7 +36,7 @@ public class SettingsService
             "// 全屏/最大化窗口是否绕过空闲检测。打游戏/看视频时不会因无操作而暂停追踪。"
         },
         ["MergeSameProcessSwitches"] = new[] {
-            "// 同进程连续切换是否合并计数。Firefox 切 3 个 tab 只算 1 次切换。"
+            "// 同进程连续切换是否合并计数。浏览器 切 3 个 tab 只算 1 次切换。"
         },
         ["ExcludedProcesses"] = new[] {
             "// ===== 进程排除 =====",
