@@ -105,4 +105,38 @@ public static class NativeMethods
         public uint cbSize;
         public uint dwTime;
     }
+
+    // ===== Process enumeration via CreateToolhelp32Snapshot =====
+    // Avoids Process.GetProcesses() — no managed Process objects, no kernel handles.
+
+    public const uint TH32CS_SNAPPROCESS = 0x00000002;
+    public const uint TH32CS_SNAPNOHEAPS = 0x40000000;
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool Process32First(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool Process32Next(IntPtr hSnapshot, ref PROCESSENTRY32 lppe);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    public struct PROCESSENTRY32
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
 }

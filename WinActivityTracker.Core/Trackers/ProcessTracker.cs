@@ -1,9 +1,9 @@
-using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Interop;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 
@@ -13,22 +13,23 @@ public class ProcessTracker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SettingsService _settings;
+    private readonly ProcessNameCache _processCache;
     private readonly ILogger<ProcessTracker> _logger;
 
-    // PID → (dbId, processName) for session-based tracking.
     private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
 
-    // Reusable collections cleared each cycle.
     private readonly HashSet<int> _reusablePids = new();
     private readonly List<(string Name, int Id)> _reusableBg = new();
     private readonly List<long> _reusableGoneIds = new();
     private readonly List<int> _reusableGonePids = new();
     private readonly List<(int Pid, string Name, Models.ProcessSession Session)> _reusableNewSessions = new();
 
-    public ProcessTracker(IServiceScopeFactory scopeFactory, SettingsService settings, ILogger<ProcessTracker> logger)
+    public ProcessTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
+        ProcessNameCache processCache, ILogger<ProcessTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
+        _processCache = processCache;
         _logger = logger;
     }
 
@@ -67,9 +68,20 @@ public class ProcessTracker : BackgroundService
         var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
 
-        GetBackgroundProcesses(_reusableBg, _reusablePids);
+        // Refresh cache via snapshot API (zero managed Process objects).
+        _processCache.RefreshAll();
+        var processMap = _processCache.Snapshot;
 
-        // Rebuild _reusablePids with actual background PIDs for the gone-check below.
+        // Find PIDs with visible top-level windows.
+        var visiblePids = GetVisibleWindowPids();
+
+        _reusableBg.Clear();
+        foreach (var (pid, name) in processMap)
+        {
+            if (!visiblePids.Contains(pid))
+                _reusableBg.Add((name, pid));
+        }
+
         _reusablePids.Clear();
         foreach (var (_, pid) in _reusableBg) _reusablePids.Add(pid);
 
@@ -129,32 +141,16 @@ public class ProcessTracker : BackgroundService
         _runningProcesses.Clear();
     }
 
-    // Fills reusable lists instead of returning new allocations each cycle.
-    private static void GetBackgroundProcesses(List<(string Name, int Id)> result, HashSet<int> knownPids)
+    private static HashSet<int> GetVisibleWindowPids()
     {
-        result.Clear();
-        knownPids.Clear();
-
-        var allProcs = Process.GetProcesses();
-        try
+        var pids = new HashSet<int>();
+        NativeMethods.EnumWindows((hWnd, _) =>
         {
-            foreach (var proc in allProcs)
-            {
-                try { if (proc.MainWindowHandle != IntPtr.Zero) knownPids.Add(proc.Id); } catch { }
-            }
-            foreach (var proc in allProcs)
-            {
-                try
-                {
-                    if (!knownPids.Contains(proc.Id))
-                        result.Add((proc.ProcessName, proc.Id));
-                }
-                catch { }
-            }
-        }
-        finally
-        {
-            foreach (var proc in allProcs) { try { proc.Dispose(); } catch { } }
-        }
+            if (!NativeMethods.IsWindowVisible(hWnd)) return true;
+            NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
+            if (pid != 0) pids.Add((int)pid);
+            return true;
+        }, IntPtr.Zero);
+        return pids;
     }
 }

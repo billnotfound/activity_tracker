@@ -73,7 +73,7 @@ onMounted(async () => {
       const s = await r.json()
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
     }
-  } catch {}
+  } catch (e) { console.error('Failed to load settings for history:', e) }
   await loadData()
 })
 

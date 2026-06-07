@@ -115,9 +115,10 @@ function toggleSort() {
 
 async function loadTimeline() {
   try {
-    const r = await fetch(`${apiBase}/api/windows/timeline?from=${fromTime.value}&to=${toTime.value}`)
+    const r = await fetch(`${apiBase}/api/windows/timeline?from=${fromTime.value}&to=${toTime.value}&limit=2000`)
     if (!r.ok) throw new Error(`API ${r.status}`)
-    timeline.value = await r.json()
+    const resp = await r.json()
+    timeline.value = resp.data || resp
     error.value = ''
   } catch (e) { console.error(e); error.value = '加载时间线失败: ' + e.message }
 }
@@ -127,7 +128,7 @@ async function loadWindows() {
     const r = await fetch(`${apiBase}/api/windows/current`)
     if (!r.ok) throw new Error(`API ${r.status}`)
     windows.value = await r.json()
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error('Failed to load windows:', e) }
 }
 
 

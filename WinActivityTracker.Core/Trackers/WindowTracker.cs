@@ -1,16 +1,3 @@
-// Core tracker: monitors foreground window and all visible top-level windows.
-//
-// Every WindowPollSeconds (default 3s):
-//   1. Checks idle via IdleDetector
-//   2. If not idle, gets foreground window (GetForegroundWindow)
-//   3. If foreground changed, writes a FocusChange for the previous window
-//   4. Syncs visible windows as WindowSession rows
-//
-// Focus duration is calculated retroactively: when focus leaves app A for app B,
-// app A's FocusChange is inserted with DurationSeconds = time spent on A.
-//
-// Excluded processes (from settings) are filtered from both focus tracking and
-// window session enumeration.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -30,35 +17,32 @@ public class WindowTracker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IdleDetector _idleDetector;
     private readonly SettingsService _settings;
+    private readonly ProcessNameCache _processCache;
     private readonly ILogger<WindowTracker> _logger;
 
-    // Tracks the CURRENT foreground window state. When these change, the OLD session is persisted.
     private string _currentProcess = string.Empty;
     private string _currentTitle = string.Empty;
     private DateTime _focusStart = DateTime.UtcNow;
     private DateTime _lastPollTime = DateTime.UtcNow;
     private bool _wasIdle;
 
-    // Window session tracking: HWND → (dbId, process, title).
-    // Each visible window gets ONE WindowSession row in the DB. When the window
-    // disappears, CloseTime is updated. This replaces the old point-in-time snapshots.
     private readonly Dictionary<IntPtr, (long DbId, string Process, string Title)> _openWindows = new();
 
-    // Reusable collections to reduce per-cycle allocations.
     private readonly List<(IntPtr Hwnd, string ProcessName, string Title, bool IsFocused)> _reusableWindows = new();
     private readonly HashSet<IntPtr> _reusableHwnds = new();
     private readonly List<(IntPtr Hwnd, Models.WindowSession Session, string Process, string Title)> _reusablePendingAdds = new();
     private readonly List<long> _reusableIdsToClose = new();
     private readonly List<IntPtr> _reusableGoneHwnds = new();
 
-    // Reusable StringBuilder — [ThreadStatic] avoids lock contention.
     [ThreadStatic] private static StringBuilder? t_normalizeBuf;
 
-    public WindowTracker(IServiceScopeFactory scopeFactory, IdleDetector idleDetector, SettingsService settings, ILogger<WindowTracker> logger)
+    public WindowTracker(IServiceScopeFactory scopeFactory, IdleDetector idleDetector,
+        SettingsService settings, ProcessNameCache processCache, ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _idleDetector = idleDetector;
         _settings = settings;
+        _processCache = processCache;
         _logger = logger;
     }
 
@@ -78,9 +62,6 @@ public class WindowTracker : BackgroundService
                         (now - _lastPollTime).TotalSeconds);
                     if (_settings.Settings.TrackingEnabled)
                     {
-                        // Close the pre-sleep focus session using _lastPollTime as the
-                        // approximate end (at most 3s before actual sleep). HeartbeatService
-                        // handles the __SystemSleep FocusChange and SystemEvents table.
                         await SaveFocusChange(_lastPollTime);
                         _currentProcess = string.Empty;
                         _currentTitle = string.Empty;
@@ -132,13 +113,8 @@ public class WindowTracker : BackgroundService
         var title = GetWindowText(hWnd);
         if (string.IsNullOrEmpty(title)) return;
 
-        string processName;
-        try
-        {
-            using var proc = Process.GetProcessById((int)pid);
-            processName = proc.ProcessName;
-        }
-        catch { return; }
+        var processName = _processCache.GetName((int)pid);
+        if (processName == null) return;
 
         if (_settings.Settings.ExcludedProcesses.Contains(processName, StringComparer.OrdinalIgnoreCase))
             return;
@@ -191,8 +167,7 @@ public class WindowTracker : BackgroundService
         var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
 
-        var processMap = BuildProcessNameMap();
-        EnumerateVisibleWindowsInto(_reusableWindows, processMap);
+        EnumerateVisibleWindowsInto(_reusableWindows, _processCache);
 
         _reusableHwnds.Clear();
         _reusablePendingAdds.Clear();
@@ -261,10 +236,9 @@ public class WindowTracker : BackgroundService
         _openWindows.Clear();
     }
 
-    // Fills the reusable list — avoids new list allocation each poll cycle.
     private static void EnumerateVisibleWindowsInto(
         List<(IntPtr Hwnd, string ProcessName, string Title, bool IsFocused)> results,
-        Dictionary<int, string> processMap)
+        ProcessNameCache cache)
     {
         results.Clear();
         var foregroundHwnd = NativeMethods.GetForegroundWindow();
@@ -278,18 +252,17 @@ public class WindowTracker : BackgroundService
             if (string.IsNullOrEmpty(title)) return true;
 
             NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (!processMap.TryGetValue((int)pid, out var processName)) return true;
+            var processName = cache.GetName((int)pid);
+            if (processName == null) return true;
 
             results.Add((hWnd, processName, title, hWnd == foregroundHwnd));
             return true;
         }, IntPtr.Zero);
     }
 
-    // Static so it can be called from API endpoints (GET /api/windows/current)
-    // without needing a WindowTracker instance.
-    public static List<(string ProcessName, string Title, bool IsFocused)> EnumerateVisibleWindows()
+    public static List<(string ProcessName, string Title, bool IsFocused)> EnumerateVisibleWindows(
+        ProcessNameCache cache)
     {
-        var map = BuildProcessNameMap();
         var results = new List<(string, string, bool)>();
         var foregroundHwnd = NativeMethods.GetForegroundWindow();
 
@@ -302,7 +275,8 @@ public class WindowTracker : BackgroundService
             if (string.IsNullOrEmpty(title)) return true;
 
             NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            if (!map.TryGetValue((int)pid, out var processName)) return true;
+            var processName = cache.GetName((int)pid);
+            if (processName == null) return true;
 
             results.Add((processName, title, hWnd == foregroundHwnd));
             return true;
@@ -311,38 +285,6 @@ public class WindowTracker : BackgroundService
         return results;
     }
 
-    // Cached PID→Name snapshot. Returns the dictionary directly rather than
-    // creating a copy — callers that only read it don't need their own copy.
-    private static (Dictionary<int, string> Map, DateTime Timestamp) s_cachedProcessMap;
-    private static readonly object s_processMapLock = new();
-
-    private static Dictionary<int, string> BuildProcessNameMap()
-    {
-        var now = DateTime.UtcNow;
-        Dictionary<int, string> map;
-        lock (s_processMapLock)
-        {
-            if ((now - s_cachedProcessMap.Timestamp).TotalSeconds < 2 && s_cachedProcessMap.Map.Count > 0)
-                return s_cachedProcessMap.Map;
-        }
-
-        map = new Dictionary<int, string>();
-        try
-        {
-            var procs = Process.GetProcesses();
-            foreach (var p in procs)
-            {
-                try { map[p.Id] = p.ProcessName; } catch { }
-                try { p.Dispose(); } catch { }
-            }
-        }
-        catch { }
-
-        lock (s_processMapLock) { s_cachedProcessMap = (map, now); }
-        return map;
-    }
-
-    // Returns true if the foreground window is maximized or fullscreen.
     private static bool IsForegroundFullscreen()
     {
         var hWnd = NativeMethods.GetForegroundWindow();
@@ -371,8 +313,6 @@ public class WindowTracker : BackgroundService
         return false;
     }
 
-    // Strips Braille Patterns (U+2800–U+28FF) used as terminal progress spinners.
-    // Uses a [ThreadStatic] pooled StringBuilder to avoid per-call allocation.
     private static string NormalizeTitle(string title)
     {
         if (string.IsNullOrEmpty(title)) return title;

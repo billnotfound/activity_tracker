@@ -169,7 +169,8 @@ public partial class StatusWindow : Form
                     var tlResp = await _http.GetAsync($"{_apiBase}/api/windows/timeline?from={DateTime.Now:yyyy-MM-dd}T00:00:00&to={DateTime.Now:yyyy-MM-dd}T23:59:59");
                     if (tlResp.IsSuccessStatusCode)
                     {
-                        var timeline = await tlResp.Content.ReadFromJsonAsync<List<TimelineItem>>();
+                        var tlWrapped = await tlResp.Content.ReadFromJsonAsync<TimelineResponse>();
+                        var timeline = tlWrapped?.Data;
                         if (timeline != null)
                         {
                             string prev = "";
@@ -239,4 +240,5 @@ public partial class StatusWindow : Form
     private record SummaryResponse(List<SummaryItem> Items, double TotalSleepSeconds);
     private record SummaryItem(string ProcessName, double TotalSeconds, int SwitchCount);
     private record TimelineItem(string ProcessName, double DurationSeconds);
+    private record TimelineResponse(List<TimelineItem> Data, long Total, int Offset, int Limit);
 }

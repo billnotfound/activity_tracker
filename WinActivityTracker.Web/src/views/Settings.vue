@@ -261,7 +261,7 @@ async function loadDbStats() {
   try {
     const r = await fetch(`${apiBase}/api/db/stats`)
     if (r.ok) dbStats.value = await r.json()
-  } catch {}
+  } catch (e) { console.error('Failed to load DB stats:', e) }
 }
 
 async function runCleanup() {
@@ -270,7 +270,7 @@ async function runCleanup() {
   try {
     const r = await fetch(`${apiBase}/api/db/cleanup?days=${form.dataRetentionDays}`, { method: 'POST' })
     if (r.ok) cleanupResult.value = await r.json()
-  } catch {}
+  } catch (e) { console.error('Cleanup failed:', e) }
   cleaning.value = false
   await loadDbStats()
 }
@@ -281,7 +281,7 @@ async function runReset() {
   try {
     const r = await fetch(`${apiBase}/api/db/reset?confirm=true`, { method: 'POST' })
     if (r.ok) resetResult.value = await r.json()
-  } catch {}
+  } catch (e) { console.error('Reset failed:', e) }
   resetting.value = false
   resetConfirm.value = false
   await loadDbStats()

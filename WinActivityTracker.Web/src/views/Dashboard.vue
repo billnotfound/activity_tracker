@@ -214,7 +214,7 @@ onMounted(async () => {
       const s = await r.json()
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
     }
-  } catch {}
+  } catch (e) { console.error('Failed to load settings for dashboard:', e) }
   await loadSummary()
   timer = setInterval(loadSummary, 2000)
 })

@@ -1,10 +1,3 @@
-// Singleton service that loads/saves TrackerSettings from a commented JSON file.
-// Trackers inject this and read Settings on each poll, so PUT /api/settings takes effect immediately.
-//
-// JSON COMMENTS: settings.json is written with // comment lines so users can understand
-// and hand-edit the file in Notepad. On load, comment lines are stripped before parsing.
-//
-// File path: %LOCALAPPDATA%\WinActivityTracker\settings.json
 using System.Text;
 using System.Text.Json;
 using WinActivityTracker.Core.Models;
@@ -17,9 +10,56 @@ public class SettingsService
     private TrackerSettings _settings = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
 
-    // The current settings. Trackers read this on every poll cycle.
-    // Replacing the entire object reference would break the live-update contract,
-    // so Update() mutates fields in-place.
+    // Map of JSON property paths to their // comment lines.
+    // Add entries here when adding new properties to TrackerSettings.
+    private static readonly Dictionary<string, string[]> PropertyComments = new()
+    {
+        ["TrackingEnabled"] = new[] {
+            "// ===== 追踪控制 =====",
+            "// 主开关 — false 时所有追踪器暂停，API 照常运行。相当于\"暂停\"功能。"
+        },
+        ["WindowPollSeconds"] = new[] {
+            "// ===== 轮询间隔 (秒) =====",
+            "// 窗口/焦点追踪轮询间隔。影响焦点切换检测精度。最小 1。"
+        },
+        ["ProcessPollSeconds"] = new[] {
+            "// 后台进程枚举间隔。枚举所有进程较耗性能，不建议低于 5。最小 5。"
+        },
+        ["MediaPollSeconds"] = new[] {
+            "// 媒体播放检测间隔。歌曲切换通常需要 3-5 秒，设太小无意义。最小 1。"
+        },
+        ["IdleThresholdMinutes"] = new[] {
+            "// ===== 空闲检测 =====",
+            "// 超过此分钟数无键鼠操作即判定为空闲，暂停焦点追踪。最小 1。"
+        },
+        ["FullscreenBypassIdle"] = new[] {
+            "// 全屏/最大化窗口是否绕过空闲检测。打游戏/看视频时不会因无操作而暂停追踪。"
+        },
+        ["MergeSameProcessSwitches"] = new[] {
+            "// 同进程连续切换是否合并计数。Firefox 切 3 个 tab 只算 1 次切换。"
+        },
+        ["ExcludedProcesses"] = new[] {
+            "// ===== 进程排除 =====",
+            "// 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。",
+            "// 示例: [\"explorer\", \"SearchApp\", \"TextInputHost\"]"
+        },
+        ["DataRetentionDays"] = new[] {
+            "// ===== 数据库 =====",
+            "// 数据库的默认保留天数。最小 1。"
+        },
+        ["ApiPort"] = new[] {
+            "// ===== 服务器 =====",
+            "// API 和 Web UI 的监听端口。修改后需重启生效。默认 5200。"
+        },
+        ["AutoCleanup"] = new[] {
+            "// 预留：true 时定期自动清理。尚未启用。"
+        },
+        ["AutoStartEnabled"] = new[] {
+            "// ===== 开机自启 =====",
+            "// 启动时从注册表同步。"
+        }
+    };
+
     public TrackerSettings Settings => _settings;
 
     public SettingsService()
@@ -30,9 +70,6 @@ public class SettingsService
         Load();
     }
 
-    // Falls back to defaults if the file is missing or corrupted.
-    // Comment lines (//) are stripped before JSON parsing.
-    // After loading, the file is re-saved to ensure commented format.
     private void Load()
     {
         try
@@ -40,8 +77,6 @@ public class SettingsService
             if (File.Exists(_filePath))
             {
                 var lines = File.ReadAllLines(_filePath);
-                // Strip // comments — each comment occupies its own line.
-                // Inline comments like "key": "value" // comment are NOT supported.
                 var jsonLines = lines
                     .Where(line => !line.TrimStart().StartsWith("//"))
                     .ToArray();
@@ -52,73 +87,62 @@ public class SettingsService
             {
                 _settings = new TrackerSettings();
             }
-            // Write commented JSON on first run and after migration from old format
             Save();
         }
-        catch
+        catch (JsonException ex)
         {
+            Console.Error.WriteLine($"Failed to parse settings.json: {ex.Message}. Using defaults.");
+            _settings = new TrackerSettings();
+        }
+        catch (IOException ex)
+        {
+            Console.Error.WriteLine($"Failed to read settings.json: {ex.Message}. Using defaults.");
             _settings = new TrackerSettings();
         }
     }
 
-    // Writes settings.json with // comment lines before each property.
-    // Uses manual StringBuilder formatting rather than JsonSerializer so we can
-    // intersperse comments. Numbers/strings are serialized via JsonSerializer for
-    // correct escaping.
     public void Save()
     {
-        var s = _settings;
-        var sb = new StringBuilder();
-        sb.AppendLine("{");
-        sb.AppendLine("  // ===== 追踪控制 =====");
-        sb.AppendLine("  // 主开关 — false 时所有追踪器暂停，API 照常运行。相当于\"暂停\"功能。");
-        sb.AppendLine($"  \"TrackingEnabled\": {JsonSerializer.Serialize(s.TrackingEnabled)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 轮询间隔 (秒) =====");
-        sb.AppendLine("  // 窗口/焦点追踪轮询间隔。影响焦点切换检测精度。最小 1。");
-        sb.AppendLine($"  \"WindowPollSeconds\": {JsonSerializer.Serialize(s.WindowPollSeconds)},");
-        sb.AppendLine("  // 后台进程枚举间隔。枚举所有进程较耗性能，不建议低于 5。最小 5。");
-        sb.AppendLine($"  \"ProcessPollSeconds\": {JsonSerializer.Serialize(s.ProcessPollSeconds)},");
-        sb.AppendLine("  // 媒体播放检测间隔。歌曲切换通常需要 3-5 秒，设太小无意义。最小 1。");
-        sb.AppendLine($"  \"MediaPollSeconds\": {JsonSerializer.Serialize(s.MediaPollSeconds)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 空闲检测 =====");
-        sb.AppendLine("  // 超过此分钟数无键鼠操作即判定为空闲，暂停焦点追踪。最小 1。");
-        sb.AppendLine($"  \"IdleThresholdMinutes\": {JsonSerializer.Serialize(s.IdleThresholdMinutes)},");
-        sb.AppendLine("  // 全屏/最大化窗口是否绕过空闲检测。打游戏/看视频时不会因无操作而暂停追踪。");
-        sb.AppendLine($"  \"FullscreenBypassIdle\": {JsonSerializer.Serialize(s.FullscreenBypassIdle)},");
-        sb.AppendLine("  // 同进程连续切换是否合并计数。Firefox 切 3 个 tab 只算 1 次切换。");
-        sb.AppendLine($"  \"MergeSameProcessSwitches\": {JsonSerializer.Serialize(s.MergeSameProcessSwitches)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 进程排除 =====");
-        sb.AppendLine("  // 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。谨慎操作。");
-        sb.AppendLine("  // 示例: [\"explorer\", \"SearchApp\", \"TextInputHost\"]");
-        sb.AppendLine($"  \"ExcludedProcesses\": {JsonSerializer.Serialize(s.ExcludedProcesses)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 数据库 =====");
-        sb.AppendLine("  //数据库的默认保留天数。最小 1。");
-        sb.AppendLine($"  \"DataRetentionDays\": {JsonSerializer.Serialize(s.DataRetentionDays)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 服务器 =====");
-        sb.AppendLine("  // API 和 Web UI 的监听端口。修改后需重启生效。默认 5200。");
-        sb.AppendLine($"  \"ApiPort\": {JsonSerializer.Serialize(s.ApiPort)},");
-        sb.AppendLine();
-        sb.AppendLine("  // ===== 开机自启 =====");
-        sb.AppendLine("  // 启动时从注册表同步。");
-        sb.AppendLine($"  \"AutoStartEnabled\": {JsonSerializer.Serialize(s.AutoStartEnabled)}");
-        sb.AppendLine("}");
-
-        File.WriteAllText(_filePath, sb.ToString());
+        var json = JsonSerializer.Serialize(_settings, _jsonOptions);
+        var commented = InjectComments(json);
+        File.WriteAllText(_filePath, commented);
     }
 
-    // Applies new settings with safety floors:
-    // - TrackingEnabled: passthrough (no floor)
-    // - Window poll min 1s to avoid CPU saturation
-    // - Process poll min 5s (enumeration is expensive with hundreds of processes)
-    // - Media poll min 1s
-    // - Idle threshold min 1 minute
-    // - Retention min 1 day (0 deletes all data)
-    // - ApiPort clamped to 1024-65535 range (well-known ports excluded)
+    /// <summary>
+    /// Serializes with JsonSerializer, then injects // comment lines before known properties.
+    /// Unknown properties (newly added to TrackerSettings but not yet in PropertyComments)
+    /// are preserved without comments rather than silently dropped.
+    /// </summary>
+    private static string InjectComments(string json)
+    {
+        var lines = json.Split('\n');
+        var result = new StringBuilder();
+        var firstProp = true;
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.Length > 2 && trimmed[0] == '"')
+            {
+                var endQuote = trimmed.IndexOf('"', 1);
+                if (endQuote > 1)
+                {
+                    var propName = trimmed.Substring(1, endQuote - 1);
+                    if (PropertyComments.TryGetValue(propName, out var comments))
+                    {
+                        if (!firstProp) result.AppendLine();
+                        foreach (var c in comments)
+                            result.AppendLine(c);
+                    }
+                }
+            }
+            firstProp = false;
+            result.AppendLine(line.TrimEnd('\r', '\n'));
+        }
+
+        return result.ToString().TrimEnd('\r', '\n') + Environment.NewLine;
+    }
+
     public void Update(TrackerSettings newSettings)
     {
         _settings.TrackingEnabled = newSettings.TrackingEnabled;
