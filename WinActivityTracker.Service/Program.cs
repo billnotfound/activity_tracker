@@ -131,15 +131,17 @@ if (!Environment.UserInteractive)
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
 var webTask = Task.Run(() => app.RunAsync());
 
-// Poll /api/status until the web host is actually ready, up to 300ms.
-using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(50) };
-var deadline = DateTime.UtcNow.AddMilliseconds(300);
+// Poll /api/status until Kestrel is actually accepting requests.
+// Use 127.0.0.1 to skip DNS resolution (localhost can be slow on some machines).
+// Timeout: 500ms total, matching ASP.NET Core typical cold-start time.
+using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(100) };
+var deadline = DateTime.UtcNow.AddMilliseconds(500);
 var ready = false;
 while (DateTime.UtcNow < deadline)
 {
     try
     {
-        var resp = await http.GetAsync($"http://localhost:{apiPort}/api/status");
+        var resp = await http.GetAsync($"http://127.0.0.1:{apiPort}/api/status");
         if (resp.IsSuccessStatusCode) { ready = true; break; }
     }
     catch { /* not ready */ }
@@ -148,7 +150,7 @@ while (DateTime.UtcNow < deadline)
 
 if (!ready)
 {
-    Console.Error.WriteLine("WARNING: API did not respond within 300ms — startup may be slow.");
+    Console.Error.WriteLine("WARNING: API did not respond within 500ms — startup may be slow.");
     MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
         "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 }

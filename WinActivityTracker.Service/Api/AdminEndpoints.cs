@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
+using WinActivityTracker.Service.Native;
 
 namespace WinActivityTracker.Service.Api;
 
@@ -31,7 +32,10 @@ public static class AdminEndpoints
 
     private static IResult PutSettings(TrackerSettings input, SettingsService settings)
     {
+        var oldAutoStart = settings.Settings.AutoStartEnabled;
         settings.Update(input);
+        if (input.AutoStartEnabled != oldAutoStart)
+            TrayApplicationContext.WriteRegistryAutoStart(input.AutoStartEnabled);
         return Results.Ok(settings.Settings);
     }
 
