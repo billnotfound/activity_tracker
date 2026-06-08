@@ -14,6 +14,9 @@ Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
 Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 Application.EnableVisualStyles();
 
+// Parse this early — must be before any MessageBox or Console output.
+var silent = args.Any(a => a is "--autostart" or "--silent");
+
 // ===== Pre-flight: single-instance guard, port, console redirect =====
 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 var trackerDir = Path.Combine(localAppData, "WinActivityTracker");
@@ -23,8 +26,10 @@ var myPid = Environment.ProcessId;
 var existing = System.Diagnostics.Process.GetProcessesByName("taskmonitor114");
 if (existing.Any(p => p.Id != myPid))
 {
-    MessageBox.Show("程序在运行中了。\n看看系统托盘不？",
-        "別急", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    if (!silent)
+        MessageBox.Show("程序在运行中了。\n看看系统托盘不？",
+            "別急", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    Console.Error.WriteLine("Another instance is already running.");
     return;
 }
 
@@ -56,8 +61,10 @@ try
 }
 catch (System.Net.Sockets.SocketException)
 {
-    MessageBox.Show($"端口 {apiPort} 已被占用。\n请修改设置中的端口或关闭占用程序后重试。",
-        "端口冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    if (!silent)
+        MessageBox.Show($"端口 {apiPort} 已被占用。\n请修改设置中的端口或关闭占用程序后重试。",
+            "端口冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    Console.Error.WriteLine($"Port {apiPort} is already in use.");
     return;
 }
 
@@ -151,12 +158,12 @@ while (DateTime.UtcNow < deadline)
 if (!ready)
 {
     Console.Error.WriteLine("WARNING: API did not respond within 500ms — startup may be slow.");
-    MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
-        "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+    if (!silent)
+        MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
+            "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 }
 
 Application.SetCompatibleTextRenderingDefault(false);
-var silent = args.Any(a => a is "--autostart" or "--silent");
 Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: !silent));
 
 // Record clean shutdown.

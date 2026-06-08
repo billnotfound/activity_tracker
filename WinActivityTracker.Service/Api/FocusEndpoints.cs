@@ -41,10 +41,16 @@ public static class FocusEndpoints
     {
         var offPeriods = await GetOffPeriods(db, start, end);
 
-        var data = await db.FocusChanges
-            .AsNoTracking()
-            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+        // Exclude records whose timestamp falls inside a sleep/shutdown window.
+        // Applied BEFORE GroupBy so TotalSeconds and SwitchCount both exclude sleep time.
+        var filtered = ExcludeOffPeriods(
+            db.FocusChanges
+                .AsNoTracking()
+                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
+                .Where(f => f.Timestamp >= start && f.Timestamp <= end),
+            offPeriods);
+
+        var data = await filtered
             .GroupBy(f => f.ProcessName)
             .Select(g => new
             {
@@ -86,21 +92,34 @@ public static class FocusEndpoints
             .ToList();
     }
 
+    /// <summary>
+    /// Adds WHERE clauses to exclude FocusChange records whose Timestamp falls
+    /// inside any sleep/shutdown window. Uses De Morgan's law:
+    ///   NOT (Timestamp >= Start AND Timestamp < End)
+    ///   = Timestamp < Start OR Timestamp >= End
+    /// Written as explicit OR so EF Core translates it reliably to SQLite.
+    /// </summary>
+    private static IQueryable<FocusChange> ExcludeOffPeriods(
+        IQueryable<FocusChange> query,
+        List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
+    {
+        foreach (var p in offPeriods)
+            query = query.Where(f => f.Timestamp < p.Start || f.Timestamp >= p.End);
+        return query;
+    }
+
     private static async Task<Dictionary<string, int>> ComputeAdjustedSwitchCounts(
         AppDbContext db, DateTime start, DateTime end,
         List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
     {
-        // Exclude records whose timestamp falls within a sleep/shutdown window,
-        // pushed to SQL as WHERE clauses. Sleep events are rare, so this is cheap.
-        IQueryable<FocusChange> query = db.FocusChanges
-            .AsNoTracking()
-            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end);
+        var filtered = ExcludeOffPeriods(
+            db.FocusChanges
+                .AsNoTracking()
+                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
+                .Where(f => f.Timestamp >= start && f.Timestamp <= end),
+            offPeriods);
 
-        foreach (var p in offPeriods)
-            query = query.Where(f => !(f.Timestamp >= p.Start && f.Timestamp < p.End));
-
-        var timestamps = await query
+        var timestamps = await filtered
             .OrderBy(f => f.Timestamp)
             .Select(f => new { f.Timestamp, f.ProcessName })
             .ToListAsync();

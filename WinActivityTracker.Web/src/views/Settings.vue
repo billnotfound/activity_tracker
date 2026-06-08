@@ -123,7 +123,7 @@
                 <tr><td>焦点变化记录</td><td>{{ dbStats.focusChanges?.toLocaleString() }}</td></tr>
                 <tr><td>窗口快照 (旧)</td><td>{{ dbStats.windowSnapshots?.toLocaleString() }}</td></tr>
                 <tr><td>窗口会话 (新)</td><td>{{ dbStats.windowSessions?.toLocaleString() }}</td></tr>
-                <tr><td>后台进程快照</td><td>{{ dbStats.processSnapshots?.toLocaleString() }}</td></tr>
+                <tr><td>后台进程会话</td><td>{{ dbStats.processSessions?.toLocaleString() }}</td></tr>
                 <tr><td>媒体记录</td><td>{{ dbStats.mediaRecords }}</td></tr>
                 <tr><td>最早记录</td><td>{{ fmtLocal(dbStats.oldestRecord) }}</td></tr>
               </table>
