@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
+using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Api;
 
@@ -12,7 +13,7 @@ public static class FocusEndpoints
         app.MapGet("/api/summary/range", GetRangeSummary);
     }
 
-    private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db)
+    private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db, TagService tagService)
     {
         if (date != null && !DateOnly.TryParse(date, out _))
             return Results.BadRequest(new { error = "Invalid date format, use yyyy-MM-dd" });
@@ -26,18 +27,18 @@ public static class FocusEndpoints
         var start = localStart.ToUniversalTime();
         var end = localEnd.ToUniversalTime();
 
-        return await BuildSummary(db, start, end);
+        return await BuildSummary(db, start, end, tagService);
     }
 
-    private static async Task<IResult> GetRangeSummary(DateTime from, DateTime to, AppDbContext db)
+    private static async Task<IResult> GetRangeSummary(DateTime from, DateTime to, AppDbContext db, TagService tagService)
     {
         var start = DateTime.SpecifyKind(from, DateTimeKind.Local).ToUniversalTime();
         var end = DateTime.SpecifyKind(to, DateTimeKind.Local).ToUniversalTime();
 
-        return await BuildSummary(db, start, end);
+        return await BuildSummary(db, start, end, tagService);
     }
 
-    private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end)
+    private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end, TagService tagService)
     {
         var offPeriods = await GetOffPeriods(db, start, end);
 
@@ -72,7 +73,8 @@ public static class FocusEndpoints
                 d.ProcessName,
                 d.TotalSeconds,
                 SwitchCount = d.SwitchCount,
-                AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount)
+                AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount),
+                Tag = tagService.ResolveTag(d.ProcessName, null)
             }).OrderByDescending(x => x.TotalSeconds),
             totalSleepSeconds = totalSleepSec
         });

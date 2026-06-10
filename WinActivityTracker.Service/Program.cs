@@ -7,65 +7,32 @@ using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Core.Trackers;
+using WinActivityTracker.Service;
 using WinActivityTracker.Service.Api;
 using WinActivityTracker.Service.Native;
 
-Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
-Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-Application.EnableVisualStyles();
+if (Environment.UserInteractive)
+{
+    Thread.CurrentThread.SetApartmentState(ApartmentState.Unknown);
+    Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+    Application.EnableVisualStyles();
+}
 
-// Parse this early — must be before any MessageBox or Console output.
 var silent = args.Any(a => a is "--autostart" or "--silent");
+var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 
-// ===== Pre-flight: single-instance guard, port, console redirect =====
 var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 var trackerDir = Path.Combine(localAppData, "WinActivityTracker");
 Directory.CreateDirectory(trackerDir);
 
-var myPid = Environment.ProcessId;
-var existing = System.Diagnostics.Process.GetProcessesByName("taskmonitor114");
-if (existing.Any(p => p.Id != myPid))
-{
-    if (!silent)
-        MessageBox.Show("程序在运行中了。\n看看系统托盘不？",
-            "別急", MessageBoxButtons.OK, MessageBoxIcon.Information);
-    Console.Error.WriteLine("Another instance is already running.");
-    return;
-}
-
-int apiPort = 5200;
 var settingsPath = Path.Combine(trackerDir, "settings.json");
-if (File.Exists(settingsPath))
-{
-    try
-    {
-        var raw = File.ReadAllText(settingsPath);
-        var clean = string.Join("\n", raw.Split('\n')
-            .Select(l => l.TrimStart())
-            .Where(l => !l.StartsWith("//")));
-        using var doc = System.Text.Json.JsonDocument.Parse(clean);
-        if (doc.RootElement.TryGetProperty("ApiPort", out var p) && p.TryGetInt32(out var v))
-            apiPort = Math.Clamp(v, 1024, 65535);
-    }
-    catch (System.Text.Json.JsonException ex)
-    {
-        Console.WriteLine($"Warning: failed to parse settings.json for port — {ex.Message}. Using default {apiPort}.");
-    }
-}
+var apiPort = ProgramStartup.ParsePortFromSettings(settingsPath);
 
-try
+// ===== Pre-flight checks (skipped in test mode) =====
+if (!isTesting)
 {
-    using var test = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, apiPort);
-    test.Start();
-    test.Stop();
-}
-catch (System.Net.Sockets.SocketException)
-{
-    if (!silent)
-        MessageBox.Show($"端口 {apiPort} 已被占用。\n请修改设置中的端口或关闭占用程序后重试。",
-            "端口冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    Console.Error.WriteLine($"Port {apiPort} is already in use.");
-    return;
+    if (!ProgramStartup.EnsureSingleInstance(silent)) return;
+    if (!ProgramStartup.IsPortAvailable(apiPort, silent)) return;
 }
 
 var mirror = new ConsoleMirror(Console.Out);
@@ -76,9 +43,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton(mirror);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxConcurrentConnections = 10);
 
-var dbPath = Path.Combine(trackerDir, "activity.db");
+var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
+    ?? Path.Combine(trackerDir, "activity.db");
 
 builder.Services.AddSingleton<SettingsService>();
+builder.Services.AddSingleton<TagService>();
+builder.Services.AddSingleton<TitleNormalizer>();
 builder.Services.AddSingleton<ProcessNameCache>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
@@ -108,19 +78,14 @@ if (serveSpa)
 }
 
 // ===== DB init =====
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.EnsureCreatedAsync();
-    await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;PRAGMA cache_size=-2000");
-    MigrateMediaSessions(db);
-}
+await ProgramStartup.InitializeDatabase(app.Services);
 
 // ===== API endpoints =====
 app.MapAdminEndpoints();
 app.MapFocusEndpoints();
 app.MapMediaEndpoints();
 app.MapWindowEndpoints();
+app.MapTagEndpoints();
 
 if (serveSpa && fp != null)
     app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });
@@ -138,9 +103,7 @@ if (!Environment.UserInteractive)
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
 var webTask = Task.Run(() => app.RunAsync());
 
-// Poll /api/status until Kestrel is actually accepting requests.
-// Use 127.0.0.1 to skip DNS resolution (localhost can be slow on some machines).
-// Timeout: 500ms total, matching ASP.NET Core typical cold-start time.
+// Poll /api/status until Kestrel is ready.
 using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(100) };
 var deadline = DateTime.UtcNow.AddMilliseconds(500);
 var ready = false;
@@ -182,31 +145,3 @@ catch (Exception ex) { Console.WriteLine($"Failed to record shutdown: {ex.Messag
 
 await app.StopAsync();
 try { await webTask; } catch (OperationCanceledException) { }
-
-// ===== Internal helpers =====
-static void MigrateMediaSessions(AppDbContext db)
-{
-    // Check current schema so we don't produce noisy EF Core failure logs.
-    var columns = db.Database.SqlQuery<ColumnInfo>($"""
-        SELECT name FROM pragma_table_info('MediaSessionRecords')
-    """).Select(c => c.Name).ToHashSet();
-
-    if (columns.Contains("Timestamp") && !columns.Contains("StartTime"))
-    {
-        db.Database.ExecuteSqlRaw(
-            "ALTER TABLE MediaSessionRecords RENAME COLUMN Timestamp TO StartTime");
-    }
-
-    if (!columns.Contains("EndTime"))
-    {
-        db.Database.ExecuteSqlRaw(
-            "ALTER TABLE MediaSessionRecords ADD COLUMN EndTime TEXT NULL");
-    }
-
-    db.Database.ExecuteSqlRaw(
-        "UPDATE MediaSessionRecords SET EndTime = COALESCE(" +
-        "(SELECT MIN(m2.StartTime) FROM MediaSessionRecords m2 WHERE m2.StartTime > MediaSessionRecords.StartTime), " +
-        "StartTime) WHERE EndTime IS NULL OR EndTime = StartTime");
-}
-
-internal sealed class ColumnInfo { public string Name { get; set; } = string.Empty; }

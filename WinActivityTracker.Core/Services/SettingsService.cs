@@ -9,6 +9,7 @@ public class SettingsService
     private readonly string _filePath;
     private TrackerSettings _settings = new();
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly object _lock = new();
 
     // Map of JSON property paths to their // comment lines.
     // Add entries here when adding new properties to TrackerSettings.
@@ -62,9 +63,10 @@ public class SettingsService
 
     public TrackerSettings Settings => _settings;
 
-    public SettingsService()
+    public SettingsService(string? directoryPath = null)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
+        var dir = directoryPath
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
         Directory.CreateDirectory(dir);
         _filePath = Path.Combine(dir, "settings.json");
         Load();
@@ -103,9 +105,12 @@ public class SettingsService
 
     public void Save()
     {
-        var json = JsonSerializer.Serialize(_settings, _jsonOptions);
-        var commented = InjectComments(json);
-        File.WriteAllText(_filePath, commented);
+        lock (_lock)
+        {
+            var json = JsonSerializer.Serialize(_settings, _jsonOptions);
+            var commented = InjectComments(json);
+            File.WriteAllText(_filePath, commented);
+        }
     }
 
     /// <summary>
@@ -145,18 +150,39 @@ public class SettingsService
 
     public void Update(TrackerSettings newSettings)
     {
-        _settings.TrackingEnabled = newSettings.TrackingEnabled;
-        _settings.FullscreenBypassIdle = newSettings.FullscreenBypassIdle;
-        _settings.MergeSameProcessSwitches = newSettings.MergeSameProcessSwitches;
-        _settings.WindowPollSeconds = Math.Max(1, newSettings.WindowPollSeconds);
-        _settings.ProcessPollSeconds = Math.Max(5, newSettings.ProcessPollSeconds);
-        _settings.MediaPollSeconds = Math.Max(1, newSettings.MediaPollSeconds);
-        _settings.IdleThresholdMinutes = Math.Max(1, newSettings.IdleThresholdMinutes);
-        _settings.ExcludedProcesses = newSettings.ExcludedProcesses ?? [];
-        _settings.DataRetentionDays = Math.Max(1, newSettings.DataRetentionDays);
-        _settings.AutoCleanup = newSettings.AutoCleanup;
-        _settings.ApiPort = Math.Clamp(newSettings.ApiPort, 1024, 65535);
-        _settings.AutoStartEnabled = newSettings.AutoStartEnabled;
-        Save();
+        lock (_lock)
+        {
+            _settings.TrackingEnabled = newSettings.TrackingEnabled;
+            _settings.FullscreenBypassIdle = newSettings.FullscreenBypassIdle;
+            _settings.MergeSameProcessSwitches = newSettings.MergeSameProcessSwitches;
+            _settings.WindowPollSeconds = Math.Max(1, newSettings.WindowPollSeconds);
+            _settings.ProcessPollSeconds = Math.Max(5, newSettings.ProcessPollSeconds);
+            _settings.MediaPollSeconds = Math.Max(1, newSettings.MediaPollSeconds);
+            _settings.IdleThresholdMinutes = Math.Max(1, newSettings.IdleThresholdMinutes);
+            _settings.ExcludedProcesses = newSettings.ExcludedProcesses ?? [];
+            _settings.DataRetentionDays = Math.Max(1, newSettings.DataRetentionDays);
+            _settings.AutoCleanup = newSettings.AutoCleanup;
+            _settings.ApiPort = Math.Clamp(newSettings.ApiPort, 1024, 65535);
+            _settings.AutoStartEnabled = newSettings.AutoStartEnabled;
+            Save();
+        }
+    }
+
+    public void SetTrackingEnabled(bool value)
+    {
+        lock (_lock)
+        {
+            _settings.TrackingEnabled = value;
+            Save();
+        }
+    }
+
+    public void SetAutoStartEnabled(bool value)
+    {
+        lock (_lock)
+        {
+            _settings.AutoStartEnabled = value;
+            Save();
+        }
     }
 }

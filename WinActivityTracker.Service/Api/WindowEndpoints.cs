@@ -28,7 +28,7 @@ public static class WindowEndpoints
     }
 
     private static async Task<IResult> GetTimeline(
-        DateTime? from, DateTime? to, int? limit, int? offset, AppDbContext db)
+        DateTime? from, DateTime? to, int? limit, int? offset, AppDbContext db, TagService tagService)
     {
         var start = from.HasValue
             ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
@@ -54,7 +54,8 @@ public static class WindowEndpoints
                 f.Timestamp,
                 f.ProcessName,
                 f.WindowTitle,
-                f.DurationSeconds
+                f.DurationSeconds,
+                Tag = tagService.ResolveTag(f.ProcessName, f.WindowTitle)
             })
             .ToListAsync();
 

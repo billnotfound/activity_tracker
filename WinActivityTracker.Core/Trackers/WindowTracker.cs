@@ -314,7 +314,7 @@ public class WindowTracker : BackgroundService
         return false;
     }
 
-    private static string NormalizeTitle(string title)
+    internal static string NormalizeTitle(string title)
     {
         if (string.IsNullOrEmpty(title)) return title;
 

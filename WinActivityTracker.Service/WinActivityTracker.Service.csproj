@@ -6,6 +6,13 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WinActivityTracker.Tests" />
+  </ItemGroup>
+
+  <PropertyGroup>
     <!-- Required for NotifyIcon, ContextMenuStrip, and StatusWindow -->
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>taskmonitor114</AssemblyName>

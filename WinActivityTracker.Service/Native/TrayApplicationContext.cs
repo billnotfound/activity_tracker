@@ -67,8 +67,7 @@ public class TrayApplicationContext : ApplicationContext
         toggleItem.Click += (_, _) =>
         {
             var s = _services.GetRequiredService<SettingsService>();
-            s.Settings.TrackingEnabled = !s.Settings.TrackingEnabled;
-            s.Save();
+            s.SetTrackingEnabled(!s.Settings.TrackingEnabled);
             toggleItem.Text = s.Settings.TrackingEnabled ? "暂停追踪" : "恢复追踪";
         };
         menu.Items.Add(toggleItem);
@@ -199,9 +198,7 @@ public class TrayApplicationContext : ApplicationContext
     private void ToggleAutoStart(bool enable)
     {
         WriteRegistryAutoStart(enable);
-        var settings = _services.GetRequiredService<SettingsService>();
-        settings.Settings.AutoStartEnabled = enable;
-        settings.Save();
+        _services.GetRequiredService<SettingsService>().SetAutoStartEnabled(enable);
     }
 
     // Writes/deletes the registry Run key. Also called by SettingsWindow.

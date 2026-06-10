@@ -214,14 +214,15 @@ public partial class StatusWindow : Form
     {
         var settings = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
         settings.Settings.TrackingEnabled = !settings.Settings.TrackingEnabled;
-        settings.Save();
         try
         {
             await _http.PutAsJsonAsync($"{_apiBase}/api/settings", settings.Settings);
         }
         catch (Exception ex)
         {
+            settings.Settings.TrackingEnabled = !settings.Settings.TrackingEnabled;
             System.Diagnostics.Debug.WriteLine($"ToggleTracking error: {ex.Message}");
+            return;
         }
         await RefreshData(services);
     }

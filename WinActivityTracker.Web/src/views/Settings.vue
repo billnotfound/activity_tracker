@@ -20,6 +20,14 @@
       <span v-if="saving" class="spinner-border spinner-border-sm ms-2"></span>
     </div>
 
+    <!-- Config file errors (hot-reload detects invalid JSON) -->
+    <div v-if="tagStatus.tags?.error" class="alert alert-danger small" role="alert">
+      <strong>tags.json 错误:</strong> {{ tagStatus.tags.error }}
+    </div>
+    <div v-if="tagStatus.titleRules?.error" class="alert alert-danger small" role="alert">
+      <strong>title_rules.json 错误:</strong> {{ tagStatus.titleRules.error }}
+    </div>
+
     <div class="row">
       <div class="col-lg-8">
         <div class="card mb-3">
@@ -185,6 +193,7 @@ const cleanupResult = ref(null)
 const resetConfirm = ref(false)
 const resetting = ref(false)
 const resetResult = ref(null)
+const tagStatus = ref({})
 const statusOk = ref(false)
 
 const statusClass = computed(() => statusOk.value ? 'alert-success' : 'alert-warning')
@@ -193,6 +202,7 @@ const statusText = computed(() => statusOk.value ? '已连接' : '未连接后�
 onMounted(async () => {
   await loadSettings()
   await loadDbStats()
+  await loadTagStatus()
 })
 
 async function loadSettings() {
@@ -285,6 +295,13 @@ async function runReset() {
   resetting.value = false
   resetConfirm.value = false
   await loadDbStats()
+}
+
+async function loadTagStatus() {
+  try {
+    const r = await fetch(`${apiBase}/api/tags/status`)
+    if (r.ok) tagStatus.value = await r.json()
+  } catch (e) { console.error('Failed to load tag status:', e) }
 }
 
 

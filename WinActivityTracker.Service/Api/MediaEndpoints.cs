@@ -58,9 +58,8 @@ public static class MediaEndpoints
         return Results.Ok(data);
     }
 
-    private static IResult GetTitleRules()
+    private static IResult GetTitleRules(TitleNormalizer normalizer)
     {
-        var n = new TitleNormalizer();
-        return Results.Ok(n.GetRules());
+        return Results.Ok(normalizer.GetRules());
     }
 }
