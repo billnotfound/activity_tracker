@@ -105,7 +105,7 @@ var webTask = Task.Run(() => app.RunAsync());
 
 // Poll /api/status until Kestrel is ready.
 using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(100) };
-var deadline = DateTime.UtcNow.AddMilliseconds(500);
+var deadline = DateTime.UtcNow.AddMilliseconds(800);
 var ready = false;
 while (DateTime.UtcNow < deadline)
 {
@@ -120,7 +120,7 @@ while (DateTime.UtcNow < deadline)
 
 if (!ready)
 {
-    Console.Error.WriteLine("WARNING: API did not respond within 500ms — startup may be slow.");
+    Console.Error.WriteLine("WARNING: API did not respond within 800ms — startup may be slow.");
     if (!silent)
         MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
             "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);

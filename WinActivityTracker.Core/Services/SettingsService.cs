@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using WinActivityTracker.Core.Models;
 
@@ -8,7 +9,11 @@ public class SettingsService
 {
     private readonly string _filePath;
     private TrackerSettings _settings = new();
-    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly JsonSerializerOptions _jsonOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
     private readonly object _lock = new();
 
     // Map of JSON property paths to their // comment lines.
@@ -95,11 +100,13 @@ public class SettingsService
         {
             Console.Error.WriteLine($"Failed to parse settings.json: {ex.Message}. Using defaults.");
             _settings = new TrackerSettings();
+            SaveDefaults();
         }
         catch (IOException ex)
         {
             Console.Error.WriteLine($"Failed to read settings.json: {ex.Message}. Using defaults.");
             _settings = new TrackerSettings();
+            SaveDefaults();
         }
     }
 
@@ -109,7 +116,9 @@ public class SettingsService
         {
             var json = JsonSerializer.Serialize(_settings, _jsonOptions);
             var commented = InjectComments(json);
-            File.WriteAllText(_filePath, commented);
+            var tmp = _filePath + ".tmp";
+            File.WriteAllText(tmp, commented);
+            File.Move(tmp, _filePath, overwrite: true);
         }
     }
 
@@ -184,5 +193,11 @@ public class SettingsService
             _settings.AutoStartEnabled = value;
             Save();
         }
+    }
+
+    private void SaveDefaults()
+    {
+        try { Save(); }
+        catch { /* Last-resort recovery: if even atomic save fails, give up silently. */ }
     }
 }

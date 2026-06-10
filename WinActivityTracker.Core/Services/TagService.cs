@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -37,7 +38,11 @@ public class TagService
                 new TagRule("小说", null,          "*晋江*"),
             };
             var json = JsonSerializer.Serialize(defaults,
-                new JsonSerializerOptions { WriteIndented = true });
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
             Directory.CreateDirectory(dir);
             File.WriteAllText(_filePath, json);
         }

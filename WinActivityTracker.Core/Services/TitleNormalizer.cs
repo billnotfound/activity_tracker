@@ -4,6 +4,7 @@
 // collapsing all tabs/windows into a single session.
 //
 // Hot-reload: checks File.GetLastWriteTimeUtc on each call.
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace WinActivityTracker.Core.Services;
@@ -35,7 +36,12 @@ public class TitleNormalizer
                 new { process = "WindowsTerminal", title = "Windows Terminal" },
                 new { process = "ApplicationFrameHost", title = "[UWP App]" },
             };
-            var json = JsonSerializer.Serialize(defaults, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(defaults,
+                new JsonSerializerOptions
+                {
+                    WriteIndented = true,
+                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                });
             Directory.CreateDirectory(dir);
             File.WriteAllText(_filePath, json);
         }
