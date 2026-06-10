@@ -88,13 +88,14 @@ public class SettingsService
                     .Where(line => !line.TrimStart().StartsWith("//"))
                     .ToArray();
                 var json = string.Join(Environment.NewLine, jsonLines);
-                _settings = JsonSerializer.Deserialize<TrackerSettings>(json) ?? new();
+                _settings = JsonSerializer.Deserialize<TrackerSettings>(json,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
             }
             else
             {
                 _settings = new TrackerSettings();
+                Save();
             }
-            Save();
         }
         catch (JsonException ex)
         {
