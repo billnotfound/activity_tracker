@@ -10,6 +10,7 @@
         <div class="navbar-nav">
           <router-link class="nav-link" to="/">仪表盘</router-link>
           <router-link class="nav-link" to="/history">历史</router-link>
+          <router-link class="nav-link" to="/tags">标签</router-link>
           <router-link class="nav-link" to="/timeline">时间线</router-link>
           <router-link class="nav-link" to="/settings">设置</router-link>
         </div>

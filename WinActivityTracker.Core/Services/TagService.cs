@@ -62,7 +62,8 @@ public class TagService
                 {
                     WriteIndented = true,
                     Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                    Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
                 });
             Directory.CreateDirectory(dir);
             File.WriteAllText(_filePath, json);
@@ -123,7 +124,8 @@ public class TagService
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
-        PropertyNameCaseInsensitive = true
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
     private List<TagRule> LoadFromFile()

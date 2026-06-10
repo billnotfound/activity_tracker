@@ -40,6 +40,11 @@ Console.SetOut(mirror);
 
 // ===== DI setup =====
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNameCaseInsensitive = true;
+    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
 builder.Services.AddSingleton(mirror);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxConcurrentConnections = 10);
 

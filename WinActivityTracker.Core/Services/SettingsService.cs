@@ -66,6 +66,16 @@ public class SettingsService
         }
     };
 
+    // Property names that can appear in settings.json (PascalCase).
+    // Used to detect new properties added in program updates.
+    private static readonly HashSet<string> KnownPropertyNames = new()
+    {
+        "TrackingEnabled", "FullscreenBypassIdle", "MergeSameProcessSwitches",
+        "WindowPollSeconds", "ProcessPollSeconds", "MediaPollSeconds",
+        "IdleThresholdMinutes", "ExcludedProcesses", "DataRetentionDays",
+        "AutoCleanup", "ApiPort", "AutoStartEnabled"
+    };
+
     public TrackerSettings Settings => _settings;
 
     public SettingsService(string? directoryPath = null)
@@ -83,13 +93,32 @@ public class SettingsService
         {
             if (File.Exists(_filePath))
             {
-                var lines = File.ReadAllLines(_filePath);
-                var jsonLines = lines
-                    .Where(line => !line.TrimStart().StartsWith("//"))
-                    .ToArray();
-                var json = string.Join(Environment.NewLine, jsonLines);
-                _settings = JsonSerializer.Deserialize<TrackerSettings>(json,
+                var raw = File.ReadAllText(_filePath);
+                var cleanJson = string.Join("\n", raw.Split('\n')
+                    .Select(l => l.TrimStart())
+                    .Where(l => !l.StartsWith("//")));
+                _settings = JsonSerializer.Deserialize<TrackerSettings>(cleanJson,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+
+                // Detect properties present in our code but missing from the file.
+                var fileKeys = ExtractJsonKeys(cleanJson);
+                var missingKeys = KnownPropertyNames
+                    .Where(k => !fileKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (missingKeys.Count > 0)
+                {
+                    // Merge: fill missing properties with defaults.
+                    var defaults = new TrackerSettings();
+                    foreach (var key in missingKeys)
+                        ApplyDefault(key, defaults);
+
+                    // Write with an update banner at the top.
+                    var dateMark = DateTime.Now.ToString("yyyy-MM-dd");
+                    var keyList = string.Join(", ", missingKeys);
+                    var banner = $"// ===== 版本更新 {dateMark} — 新增设置: {keyList} =====";
+                    Save(banner);
+                }
             }
             else
             {
@@ -111,16 +140,84 @@ public class SettingsService
         }
     }
 
-    public void Save()
+    /// <summary>
+    /// Applies the default value for a single property key to _settings.
+    /// Mirrors the property list in TrackerSettings.
+    /// </summary>
+    private void ApplyDefault(string key, TrackerSettings defaults)
+    {
+        switch (key)
+        {
+            case "TrackingEnabled": _settings.TrackingEnabled = defaults.TrackingEnabled; break;
+            case "FullscreenBypassIdle": _settings.FullscreenBypassIdle = defaults.FullscreenBypassIdle; break;
+            case "MergeSameProcessSwitches": _settings.MergeSameProcessSwitches = defaults.MergeSameProcessSwitches; break;
+            case "WindowPollSeconds": _settings.WindowPollSeconds = defaults.WindowPollSeconds; break;
+            case "ProcessPollSeconds": _settings.ProcessPollSeconds = defaults.ProcessPollSeconds; break;
+            case "MediaPollSeconds": _settings.MediaPollSeconds = defaults.MediaPollSeconds; break;
+            case "IdleThresholdMinutes": _settings.IdleThresholdMinutes = defaults.IdleThresholdMinutes; break;
+            case "ExcludedProcesses": _settings.ExcludedProcesses = defaults.ExcludedProcesses; break;
+            case "DataRetentionDays": _settings.DataRetentionDays = defaults.DataRetentionDays; break;
+            case "AutoCleanup": _settings.AutoCleanup = defaults.AutoCleanup; break;
+            case "ApiPort": _settings.ApiPort = defaults.ApiPort; break;
+            case "AutoStartEnabled": _settings.AutoStartEnabled = defaults.AutoStartEnabled; break;
+        }
+    }
+
+    /// <summary>
+    /// Extracts top-level JSON property names from a JSON string.
+    /// Handles both PascalCase and camelCase.
+    /// </summary>
+    private static HashSet<string> ExtractJsonKeys(string json)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var lines = json.Split('\n');
+        foreach (var line in lines)
+        {
+            var trimmed = line.TrimStart();
+            if (trimmed.Length > 2 && trimmed[0] == '"')
+            {
+                var endQuote = trimmed.IndexOf('"', 1);
+                if (endQuote > 1)
+                    keys.Add(trimmed.Substring(1, endQuote - 1));
+            }
+        }
+        return keys;
+    }
+
+    public void Save(string? headerBanner = null)
     {
         lock (_lock)
         {
-            var json = JsonSerializer.Serialize(_settings, _jsonOptions);
-            var commented = InjectComments(json);
+            var newJson = JsonSerializer.Serialize(_settings, _jsonOptions);
+            var newCommented = InjectComments(newJson);
+            if (headerBanner != null)
+                newCommented = headerBanner + "\n" + newCommented;
+
+            // Compare data with existing file — skip write if identical.
+            if (File.Exists(_filePath))
+            {
+                var oldData = StripComments(File.ReadAllText(_filePath));
+                var newData = StripComments(newCommented);
+                if (oldData == newData) return;
+
+                // Keep a backup before overwriting.
+                var bak = _filePath + ".bak";
+                try { File.Copy(_filePath, bak, overwrite: true); } catch { }
+            }
+
             var tmp = _filePath + ".tmp";
-            File.WriteAllText(tmp, commented);
+            File.WriteAllText(tmp, newCommented);
             File.Move(tmp, _filePath, overwrite: true);
         }
+    }
+
+    private static string StripComments(string text)
+    {
+        var lines = text.Split('\n');
+        var kept = lines
+            .Where(l => !l.TrimStart().StartsWith("//"))
+            .Select(l => l.TrimEnd('\r', '\n').TrimEnd());
+        return string.Join("", kept.Where(l => l.Length > 0));
     }
 
     /// <summary>

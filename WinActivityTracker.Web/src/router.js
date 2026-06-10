@@ -14,6 +14,7 @@ import Dashboard from './views/Dashboard.vue'
 import History from './views/History.vue'
 import Timeline from './views/Timeline.vue'
 import Settings from './views/Settings.vue'
+import Tags from './views/Tags.vue'
 
 export default createRouter({
   history: createWebHistory(),
@@ -21,6 +22,7 @@ export default createRouter({
     { path: '/', component: Dashboard },
     { path: '/history', component: History },
     { path: '/timeline', component: Timeline },
+    { path: '/tags', component: Tags },
     { path: '/settings', component: Settings },
   ]
 })
