@@ -102,6 +102,35 @@
         </div>
 
         <div class="card mb-3">
+          <div class="card-header">文件路径 <span class="text-muted">(重启后生效)</span></div>
+          <div class="card-body">
+            <div class="mb-3">
+              <label class="form-label">配置目录 <small class="text-muted">— settings.json, tags.json, title_rules.json</small></label>
+              <div class="input-group">
+                <input type="text" class="form-control form-control-sm" v-model="pathForm.configDir"
+                  :placeholder="pathCurrent.configDir" />
+                <button class="btn btn-outline-secondary btn-sm" type="button" @click="pathForm.configDir = ''">重置</button>
+              </div>
+              <div class="form-text">当前: {{ pathCurrent.configDir }}</div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">数据目录 <small class="text-muted">— activity.db</small></label>
+              <div class="input-group">
+                <input type="text" class="form-control form-control-sm" v-model="pathForm.dataDir"
+                  :placeholder="pathCurrent.dataDir" />
+                <button class="btn btn-outline-secondary btn-sm" type="button" @click="pathForm.dataDir = ''">重置</button>
+              </div>
+              <div class="form-text">当前: {{ pathCurrent.dataDir }}</div>
+            </div>
+            <button class="btn btn-outline-primary btn-sm" @click="savePaths" :disabled="savingPaths">
+              {{ savingPaths ? '保存中...' : '保存路径 (重启生效)' }}
+            </button>
+            <div v-if="pathSaved" class="alert alert-success small mt-2">{{ pathSaved }}</div>
+            <div v-if="pathError" class="alert alert-danger small mt-2">{{ pathError }}</div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
           <div class="card-header">数据库</div>
           <div class="card-body">
             <div class="mb-3">
@@ -194,6 +223,11 @@ const resetConfirm = ref(false)
 const resetting = ref(false)
 const resetResult = ref(null)
 const tagStatus = ref({})
+const pathCurrent = ref({ configDir: '', dataDir: '' })
+const pathForm = reactive({ configDir: '', dataDir: '' })
+const savingPaths = ref(false)
+const pathSaved = ref('')
+const pathError = ref('')
 const statusOk = ref(false)
 
 const statusClass = computed(() => statusOk.value ? 'alert-success' : 'alert-warning')
@@ -203,6 +237,7 @@ onMounted(async () => {
   await loadSettings()
   await loadDbStats()
   await loadTagStatus()
+  await loadPaths()
 })
 
 async function loadSettings() {
@@ -302,6 +337,42 @@ async function loadTagStatus() {
     const r = await fetch(`${apiBase}/api/tags/status`)
     if (r.ok) tagStatus.value = await r.json()
   } catch (e) { console.error('Failed to load tag status:', e) }
+}
+
+async function loadPaths() {
+  try {
+    const r = await fetch(`${apiBase}/api/paths`)
+    if (r.ok) {
+      const data = await r.json()
+      pathCurrent.value = { configDir: data.configDir, dataDir: data.dataDir }
+      pathForm.configDir = data.registry?.configDir || ''
+      pathForm.dataDir = data.registry?.dataDir || ''
+    }
+  } catch (e) { console.error('loadPaths:', e) }
+}
+
+async function savePaths() {
+  savingPaths.value = true
+  pathSaved.value = ''
+  pathError.value = ''
+  try {
+    const r = await fetch(`${apiBase}/api/paths`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        configDir: pathForm.configDir || null,
+        dataDir: pathForm.dataDir || null
+      })
+    })
+    if (r.ok) {
+      const data = await r.json()
+      pathSaved.value = data.message
+    } else {
+      const data = await r.json().catch(() => ({}))
+      pathError.value = data.error || `保存失败 (${r.status})`
+    }
+  } catch (e) { pathError.value = '无法连接后端: ' + e.message }
+  savingPaths.value = false
 }
 
 

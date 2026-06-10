@@ -13,6 +13,8 @@ public static class AdminEndpoints
         app.MapGet("/api/status", GetStatus);
         app.MapGet("/api/settings", GetSettings);
         app.MapPut("/api/settings", PutSettings);
+        app.MapGet("/api/paths", GetPaths);
+        app.MapPut("/api/paths", PutPaths);
         app.MapGet("/api/db/stats", GetDbStats);
         app.MapPost("/api/db/cleanup", RunCleanup);
         app.MapPost("/api/db/reset", RunReset);
@@ -37,6 +39,43 @@ public static class AdminEndpoints
         if (input.AutoStartEnabled != oldAutoStart)
             TrayApplicationContext.WriteRegistryAutoStart(input.AutoStartEnabled);
         return Results.Ok(settings.Settings);
+    }
+
+    private static IResult GetPaths(AppPaths appPaths)
+    {
+        var (regCfg, regData) = AppPaths.ReadRegistryValues();
+        return Results.Ok(new
+        {
+            configDir = appPaths.ConfigDir,
+            dataDir = appPaths.DataDir,
+            registry = new { configDir = regCfg, dataDir = regData },
+            message = "修改路径后需重启程序生效。下次启动时配置文件将自动迁移到新位置。"
+        });
+    }
+
+    private static IResult PutPaths(PathInput input)
+    {
+        if (!string.IsNullOrWhiteSpace(input.ConfigDir))
+        {
+            try { Directory.CreateDirectory(input.ConfigDir); }
+            catch (Exception ex) { return Results.BadRequest(new { error = $"无法创建配置目录: {ex.Message}" }); }
+        }
+        if (!string.IsNullOrWhiteSpace(input.DataDir))
+        {
+            try { Directory.CreateDirectory(input.DataDir); }
+            catch (Exception ex) { return Results.BadRequest(new { error = $"无法创建数据目录: {ex.Message}" }); }
+        }
+
+        AppPaths.WriteRegistry(
+            string.IsNullOrWhiteSpace(input.ConfigDir) ? null : input.ConfigDir.Trim(),
+            string.IsNullOrWhiteSpace(input.DataDir) ? null : input.DataDir.Trim());
+
+        return Results.Ok(new
+        {
+            message = "路径已保存到注册表。重启程序后生效，配置文件将自动迁移。",
+            configDir = input.ConfigDir,
+            dataDir = input.DataDir
+        });
     }
 
     private static async Task<IResult> GetDbStats(AppDbContext db)
@@ -144,6 +183,8 @@ public static class AdminEndpoints
         return Results.Ok(new { message = "VACUUM complete." });
     }
 }
+
+internal sealed record PathInput(string? ConfigDir, string? DataDir);
 
 internal sealed class DbStatsRow
 {

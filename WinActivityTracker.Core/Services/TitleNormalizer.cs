@@ -22,9 +22,11 @@ public class TitleNormalizer
 
     public string? ConfigError { get; private set; }
 
-    public TitleNormalizer()
+    public TitleNormalizer(AppPaths? appPaths = null)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
+        var dir = appPaths?.ConfigDir
+            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
         _filePath = Path.Combine(dir, "title_rules.json");
 
         if (!File.Exists(_filePath))

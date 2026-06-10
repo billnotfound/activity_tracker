@@ -21,11 +21,10 @@ if (Environment.UserInteractive)
 var silent = args.Any(a => a is "--autostart" or "--silent");
 var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 
-var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-var trackerDir = Path.Combine(localAppData, "WinActivityTracker");
-Directory.CreateDirectory(trackerDir);
+var appPaths = new AppPaths();
+appPaths.MigrateIfNeeded();
 
-var settingsPath = Path.Combine(trackerDir, "settings.json");
+var settingsPath = Path.Combine(appPaths.ConfigDir, "settings.json");
 var apiPort = ProgramStartup.ParsePortFromSettings(settingsPath);
 
 // ===== Pre-flight checks (skipped in test mode) =====
@@ -49,8 +48,9 @@ builder.Services.AddSingleton(mirror);
 builder.WebHost.ConfigureKestrel(o => o.Limits.MaxConcurrentConnections = 10);
 
 var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
-    ?? Path.Combine(trackerDir, "activity.db");
+    ?? Path.Combine(appPaths.DataDir, "activity.db");
 
+builder.Services.AddSingleton(appPaths);
 builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<TagService>();
 builder.Services.AddSingleton<TitleNormalizer>();

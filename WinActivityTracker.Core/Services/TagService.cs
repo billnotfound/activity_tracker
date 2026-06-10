@@ -23,9 +23,11 @@ public class TagService
         int Weight = 0,
         TagMode Mode = TagMode.Coexist);
 
-    public TagService(string? directoryPath = null)
+    public TagService(AppPaths? appPaths = null, string? directoryPath = null)
     {
         var dir = directoryPath
+            ?? appPaths?.ConfigDir
+            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
             ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "WinActivityTracker");

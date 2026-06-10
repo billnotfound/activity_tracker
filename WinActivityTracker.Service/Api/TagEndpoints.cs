@@ -22,14 +22,12 @@ public static class TagEndpoints
         app.MapPut("/api/tags/save", SaveTagRules);
     }
 
-    private static IResult GetTagStatus(TagService tagService, [FromServices] TitleNormalizer titleNormalizer)
+    private static IResult GetTagStatus(TagService tagService,
+        [FromServices] TitleNormalizer titleNormalizer,
+        [FromServices] AppPaths appPaths)
     {
-        var tagsPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WinActivityTracker", "tags.json");
-        var titleRulesPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WinActivityTracker", "title_rules.json");
+        var tagsPath = Path.Combine(appPaths.ConfigDir, "tags.json");
+        var titleRulesPath = Path.Combine(appPaths.ConfigDir, "title_rules.json");
 
         return Results.Ok(new
         {
@@ -73,10 +71,8 @@ public static class TagEndpoints
 
             rules = rules.Where(r => !r.Tag.StartsWith('_')).ToList();
 
-            var dir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WinActivityTracker");
-            var path = Path.Combine(dir, "tags.json");
+            var appPaths = request.HttpContext.RequestServices.GetRequiredService<AppPaths>();
+            var path = Path.Combine(appPaths.ConfigDir, "tags.json");
 
             var json = JsonSerializer.Serialize(rules, _saveOptions);
             var tmp = path + ".tmp";

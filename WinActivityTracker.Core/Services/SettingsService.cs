@@ -78,9 +78,11 @@ public class SettingsService
 
     public TrackerSettings Settings => _settings;
 
-    public SettingsService(string? directoryPath = null)
+    public SettingsService(AppPaths? appPaths = null, string? directoryPath = null)
     {
         var dir = directoryPath
+            ?? appPaths?.ConfigDir
+            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
         Directory.CreateDirectory(dir);
         _filePath = Path.Combine(dir, "settings.json");
