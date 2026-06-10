@@ -248,7 +248,9 @@ async function fetchSummary() {
 async function fetchMedia() {
   try {
     const [fromDate, toDate] = periodRange()
-    const r = await fetch(`${apiBase}/api/media/history?limit=50&from=${fromDate}&to=${toDate}`)
+    const limits = { today: 50, week: 200, month: 500, year: 2000, all: 5000 }
+    const limit = limits[period.value] || 50
+    const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`)
     if (!r.ok) throw new Error(`API ${r.status}`)
     media.value = await r.json()
   } catch (e) { console.error(e) }
