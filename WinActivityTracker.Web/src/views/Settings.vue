@@ -345,8 +345,8 @@ async function loadPaths() {
     if (r.ok) {
       const data = await r.json()
       pathCurrent.value = { configDir: data.configDir, dataDir: data.dataDir }
-      pathForm.configDir = data.registry?.configDir || ''
-      pathForm.dataDir = data.registry?.dataDir || ''
+      pathForm.configDir = data.registry?.configDir || data.configDir || ''
+      pathForm.dataDir = data.registry?.dataDir || data.dataDir || ''
     }
   } catch (e) { console.error('loadPaths:', e) }
 }
