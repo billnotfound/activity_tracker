@@ -55,7 +55,7 @@ public static class WindowEndpoints
                 f.ProcessName,
                 f.WindowTitle,
                 f.DurationSeconds,
-                Tag = tagService.ResolveTag(f.ProcessName, f.WindowTitle)
+                Tags = tagService.ResolveTags(f.ProcessName, f.WindowTitle)
             })
             .ToListAsync();
 
