@@ -1,5 +1,7 @@
 {
   "common.save": "Save",
+  "common.saving": "Saving...",
+  "common.delete": "Delete",
   "common.cancel": "Cancel",
   "common.loading": "Loading...",
   "common.pauseTracking": "Pause Tracking",
@@ -68,6 +70,18 @@
   "admin.cannotCreateDataDir": "Cannot create data directory: {0}",
   "admin.pathsSaved": "Paths saved to registry. Restart to apply; files will be auto-migrated.",
 
+  "tags.pageTitle": "Tag Rules",
+  "tags.tagsError": "tags.json error:",
+  "tags.card.ruleList": "Tag Rules ({count} total)",
+  "tags.unsavedCount": "{count} unsaved",
+  "tags.addRule": "+ Add Rule",
+  "tags.unsavedRule": "Unsaved new rule",
+  "tags.mode.coexist": "Coexist",
+  "tags.mode.overwrite": "Overwrite",
+  "tags.noRules": "No rules",
+  "tags.savedCount": "Saved {count} rules",
+  "tags.error.saveFailed": "Save failed ({status})",
+  "tags.error.backendUnreachable": "Cannot reach backend: {message}",
   "tags.rulesSaved": "tags.json saved. Hot-reload takes effect immediately.",
   "tags.jsonError": "JSON parse/serialize error: {0}",
 

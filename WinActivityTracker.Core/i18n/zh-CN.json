@@ -1,5 +1,7 @@
 {
   "common.save": "保存",
+  "common.saving": "保存中...",
+  "common.delete": "删除",
   "common.cancel": "取消",
   "common.loading": "加载中...",
   "common.pauseTracking": "暂停追踪",
@@ -68,6 +70,18 @@
   "admin.cannotCreateDataDir": "无法创建数据目录: {0}",
   "admin.pathsSaved": "路径已保存到注册表。重启程序后生效，配置文件将自动迁移。",
 
+  "tags.pageTitle": "标签规则",
+  "tags.tagsError": "tags.json 错误:",
+  "tags.card.ruleList": "标签规则列表 ({count} 条)",
+  "tags.unsavedCount": "{count} 条未保存",
+  "tags.addRule": "+ 新增",
+  "tags.unsavedRule": "未保存的新规则",
+  "tags.mode.coexist": "共存 (coexist)",
+  "tags.mode.overwrite": "覆盖 (overwrite)",
+  "tags.noRules": "暂无规则",
+  "tags.savedCount": "已保存 {count} 条规则",
+  "tags.error.saveFailed": "保存失败 ({status})",
+  "tags.error.backendUnreachable": "无法连接后端: {message}",
   "tags.rulesSaved": "tags.json 已保存，热重载即刻生效。",
   "tags.jsonError": "JSON 解析或序列化失败: {0}",
 
