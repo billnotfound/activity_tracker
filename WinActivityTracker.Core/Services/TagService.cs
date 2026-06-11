@@ -25,12 +25,7 @@ public class TagService
 
     public TagService(AppPaths? appPaths = null, string? directoryPath = null)
     {
-        var dir = directoryPath
-            ?? appPaths?.ConfigDir
-            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
-            ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WinActivityTracker");
+        var dir = AppPaths.ResolveConfigDir(appPaths, directoryPath);
         _filePath = Path.Combine(dir, "tags.json");
 
         if (!File.Exists(_filePath))
@@ -120,7 +115,7 @@ public class TagService
         }
         catch (Exception ex)
         {
-            ConfigError = $"tags.json 解析失败: {ex.Message}。已沿用旧配置。";
+            ConfigError = I18nService._("error.configParseFailed", "tags.json", ex.Message);
         }
     }
 

@@ -80,10 +80,7 @@ public class SettingsService
 
     public SettingsService(AppPaths? appPaths = null, string? directoryPath = null)
     {
-        var dir = directoryPath
-            ?? appPaths?.ConfigDir
-            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "WinActivityTracker");
+        var dir = AppPaths.ResolveConfigDir(appPaths, directoryPath);
         Directory.CreateDirectory(dir);
         _filePath = Path.Combine(dir, "settings.json");
         Load();

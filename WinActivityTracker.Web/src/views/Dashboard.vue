@@ -1,16 +1,5 @@
-﻿<!--
+<!--
   Dashboard view — today's usage overview. Auto-refreshes every 2s.
-  Features:
-    - Date picker to view any day's data
-    - Two Chart.js bar charts: focus duration and switch count (Top 10)
-    - Full data table with all tracked processes (scrollable)
-    - Recent media playback list (scrollable)
-
-  Chart lifecycle: created on first load, updated in-place on refresh.
-  fc.update('none') skips animation to avoid visual noise during polling.
-
-  Timezone: DB timestamps are UTC (EF Core strips DateTimeKind, so no 'Z' suffix).
-  The toLocal() helper appends 'Z' before parsing, ensuring correct local-time display.
 -->
 <template>
   <div>
@@ -22,7 +11,7 @@
             @click="setPeriod(p.key)">{{ p.label }}</button>
         </div>
         <input type="date" v-model="pickDate" class="form-control form-control-sm" style="width:150px"
-          @change="onPickDate" title="查询特定日期" />
+          @change="onPickDate" :title="t('dashboard.pickDateTitle')" />
       </div>
     </div>
 
@@ -34,13 +23,13 @@
     <div class="row">
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">焦点时长 Top 10</div>
+          <div class="card-header">{{ t('dashboard.card.focusDurationTop10') }}</div>
           <div class="card-body"><canvas ref="focusChart" height="300"></canvas></div>
         </div>
       </div>
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">焦点切换次数</div>
+          <div class="card-header">{{ t('dashboard.card.switchCount') }}</div>
           <div class="card-body"><canvas ref="switchChart" height="300"></canvas></div>
         </div>
       </div>
@@ -49,22 +38,22 @@
     <div class="row">
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">统计概览
-            <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠/关机 {{ fmtDuration(totalSleepSeconds) }}</small>
-            <button class="btn btn-sm btn-outline-secondary float-end" @click="toggleSort" title="切换排序">
-              {{ sortAsc ? '↑ 升序' : '↓ 降序' }}
+          <div class="card-header">{{ t('dashboard.card.overview') }}
+            <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">{{ t('dashboard.sleepOff', { duration: fmtDuration(totalSleepSeconds) }) }}</small>
+            <button class="btn btn-sm btn-outline-secondary float-end" @click="toggleSort" :title="t('dashboard.sortToggle')">
+              {{ sortAsc ? t('dashboard.sortAsc') : t('dashboard.sortDesc') }}
             </button>
           </div>
           <div class="card-body" style="max-height:400px;overflow-y:auto">
             <table class="table table-sm table-striped">
-              <thead><tr><th>程序</th><th>总时长</th><th>切换次数</th></tr></thead>
+              <thead><tr><th>{{ t('dashboard.table.process') }}</th><th>{{ t('dashboard.table.totalDuration') }}</th><th>{{ t('dashboard.table.switches') }}</th></tr></thead>
               <tbody>
                 <tr v-for="d in sortedSummary" :key="d.processName">
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ fmtDuration(d.totalSeconds) }}</td>
                   <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
                 </tr>
-                <tr v-if="!summary.length"><td colspan="3" class="text-muted">暂无数据</td></tr>
+                <tr v-if="!summary.length"><td colspan="3" class="text-muted">{{ t('dashboard.table.noData') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -72,10 +61,10 @@
       </div>
       <div class="col-md-6">
         <div class="card mb-3">
-          <div class="card-header">最近媒体播放 <small class="text-muted">总计听歌 {{ totalListenFmt }}</small></div>
+          <div class="card-header">{{ t('dashboard.card.recentMedia') }} <small class="text-muted">{{ t('dashboard.totalListen', { duration: totalListenFmt }) }}</small></div>
           <div class="card-body" style="max-height:400px;overflow-y:auto;padding:0">
             <table class="table table-sm mb-0">
-              <thead><tr><th>持续</th><th>状态</th><th>歌曲</th><th>艺术家</th></tr></thead>
+              <thead><tr><th>{{ t('dashboard.media.duration') }}</th><th>{{ t('dashboard.media.status') }}</th><th>{{ t('dashboard.media.song') }}</th><th>{{ t('dashboard.media.artist') }}</th></tr></thead>
               <tbody>
                 <tr v-for="m in displayMedia.slice().reverse()" :key="m.id || m.startTime"
                   :style="{borderLeft:'4px solid '+(m.playbackStatus==='Playing'?'#198754':'#dee2e6')}">
@@ -84,7 +73,7 @@
                   <td>{{ m.title }}</td>
                   <td>{{ m.artist }}</td>
                 </tr>
-                <tr v-if="!displayMedia.length"><td colspan="4" class="text-muted">暂无数据</td></tr>
+                <tr v-if="!displayMedia.length"><td colspan="4" class="text-muted">{{ t('dashboard.media.noData') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -97,23 +86,25 @@
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
 import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
+import { useI18n } from '../i18n/index.js'
 
 import { Chart, registerables } from 'chart.js'
 
 Chart.register(...registerables)
 
 const apiBase = inject('apiBase')
+const { t } = useI18n()
 
 const periods = [
-  { key: 'today', label: '当日' },
-  { key: 'week', label: '7天' },
-  { key: 'month', label: '1月' },
-  { key: 'year', label: '1年' },
-  { key: 'all', label: '全部' },
+  { key: 'today', label: t('dashboard.periods.today') },
+  { key: 'week', label: t('dashboard.periods.week') },
+  { key: 'month', label: t('dashboard.periods.month') },
+  { key: 'year', label: t('dashboard.periods.year') },
+  { key: 'all', label: t('dashboard.periods.all') },
 ]
 const period = ref('today')
 const pickDate = ref(toLocalDateString())
-const mergeSameProcess = ref(true)  // loaded from /api/settings
+const mergeSameProcess = ref(true)
 const summary = ref([])
 const totalSleepSeconds = ref(0)
 const media = ref([])
@@ -137,7 +128,6 @@ function periodRange() {
   }
 }
 
-// Duration computed from session StartTime/EndTime (or now for active sessions).
 const mediaWithDuration = computed(() => {
   const now = Date.now()
   return media.value.map(m => {
@@ -148,7 +138,6 @@ const mediaWithDuration = computed(() => {
   })
 })
 
-// Merge consecutive records with same title+status (handles restart/wake edge cases).
 const mergedMedia = computed(() => {
   const list = mediaWithDuration.value
   if (!list.length) return []
@@ -181,12 +170,9 @@ const sortedSummary = computed(() => {
   return list
 })
 
-
-// Merge overlapping Playing intervals from ALL apps into non-overlapping ranges.
 const totalListenFmt = computed(() => {
   const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing')
   if (!playing.length) return '0s'
-  // Build intervals: [timestamp, timestamp + duration] in ms, sorted by start
   const intervals = playing.map(m => {
     const t = parseUtcTs(m.startTime)?.getTime() || 0
     return [t, t + m.durationSec * 1000]
@@ -201,10 +187,9 @@ const totalListenFmt = computed(() => {
   return fmtShortDur(total)
 })
 
-// Template refs for the two canvas elements
 const focusChart = ref(null)
 const switchChart = ref(null)
-let fc = null, sc = null  // Chart.js instance references for destroy/recreate
+let fc = null, sc = null
 let timer = null
 
 onMounted(async () => {
@@ -242,7 +227,7 @@ async function fetchSummary() {
     totalSleepSeconds.value = Array.isArray(res) ? 0 : (res.totalSleepSeconds || 0)
     error.value = ''
     renderCharts(summary.value)
-  } catch (e) { console.error(e); error.value = '加载摘要失败: ' + e.message }
+  } catch (e) { console.error(e); error.value = t('dashboard.error.loadSummaryFailed', { message: e.message }) }
 }
 
 async function fetchMedia() {
@@ -269,7 +254,6 @@ function renderCharts(data) {
   const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
   const switchData = top.map(d => mergeSameProcess.value ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount)
 
-  // Update in-place to avoid flicker; create on first call
   if (fc) {
     fc.data.labels = labels
     fc.data.datasets[0].data = focusData
@@ -281,7 +265,7 @@ function renderCharts(data) {
       data: {
         labels,
         datasets: [{
-          label: '时长 (分钟)',
+          label: t('dashboard.chart.durationLabel'),
           data: focusData,
           backgroundColor: colors
         }]
@@ -290,7 +274,7 @@ function renderCharts(data) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, title: { display: true, text: '分钟' } } }
+        scales: { y: { beginAtZero: true, title: { display: true, text: t('dashboard.chart.durationAxis') } } }
       }
     })
   }
@@ -306,7 +290,7 @@ function renderCharts(data) {
       data: {
         labels,
         datasets: [{
-          label: '切换次数',
+          label: t('dashboard.chart.switchLabel'),
           data: switchData,
           backgroundColor: colors
         }]
@@ -315,10 +299,9 @@ function renderCharts(data) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { y: { beginAtZero: true, title: { display: true, text: '次数' } } }
+        scales: { y: { beginAtZero: true, title: { display: true, text: t('dashboard.chart.switchAxis') } } }
       }
     })
   }
 }
-
 </script>

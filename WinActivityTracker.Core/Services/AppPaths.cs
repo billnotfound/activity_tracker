@@ -44,14 +44,14 @@ public class AppPaths
     {
         if (!string.Equals(ConfigDir.TrimEnd('\\'), _defaultBase.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"[AppPaths] 配置路径已变更: {_defaultBase} → {ConfigDir}");
+            Console.WriteLine(I18nService._("appPaths.configDirChanged", _defaultBase, ConfigDir));
             MigrateDirectory(_defaultBase, ConfigDir, "*.json");
         }
 
         if (!string.Equals(DataDir.TrimEnd('\\'), _defaultBase.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
             && !string.Equals(DataDir.TrimEnd('\\'), ConfigDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"[AppPaths] 数据路径已变更: {_defaultBase} → {DataDir}");
+            Console.WriteLine(I18nService._("appPaths.dataDirChanged", _defaultBase, DataDir));
             MigrateDirectory(_defaultBase, DataDir, "*.db");
         }
     }
@@ -65,10 +65,24 @@ public class AppPaths
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[AppPaths] 无法创建目录 '{path}': {ex.Message}。回退到: {fallback}");
+            Console.Error.WriteLine(I18nService._("appPaths.cannotCreateDir", path, ex.Message, fallback));
             try { Directory.CreateDirectory(fallback); } catch { }
             return fallback;
         }
+    }
+
+    /// <summary>
+    /// Resolves config directory from the provider chain:
+    /// explicit path → AppPaths.ConfigDir → WTA_SETTINGS_DIR env var → default LOCALAPPDATA.
+    /// </summary>
+    public static string ResolveConfigDir(AppPaths? appPaths, string? explicitPath = null)
+    {
+        return explicitPath
+            ?? appPaths?.ConfigDir
+            ?? Environment.GetEnvironmentVariable("WTA_SETTINGS_DIR")
+            ?? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WinActivityTracker");
     }
 
     public static void WriteRegistry(string? configDir, string? dataDir)
@@ -112,7 +126,7 @@ public class AppPaths
     {
         if (!Directory.Exists(fromDir))
         {
-            Console.WriteLine($"[AppPaths] 源目录不存在，跳过迁移: {fromDir}");
+            Console.WriteLine(I18nService._("appPaths.sourceDirNotFound", fromDir));
             return;
         }
 
@@ -121,7 +135,7 @@ public class AppPaths
             try { Directory.CreateDirectory(toDir); }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[AppPaths] 无法创建目标目录 '{toDir}': {ex.Message}，跳过迁移。");
+                Console.Error.WriteLine(I18nService._("appPaths.cannotCreateTarget", toDir, ex.Message));
                 return;
             }
         }
@@ -132,18 +146,18 @@ public class AppPaths
             var dest = Path.Combine(toDir, Path.GetFileName(file));
             if (File.Exists(dest))
             {
-                Console.WriteLine($"[AppPaths] 跳过已存在文件: {Path.GetFileName(file)}");
+                Console.WriteLine(I18nService._("appPaths.fileExistsSkip", Path.GetFileName(file)));
                 continue;
             }
 
             try
             {
                 File.Move(file, dest);
-                Console.WriteLine($"[AppPaths] 已迁移: {Path.GetFileName(file)}");
+                Console.WriteLine(I18nService._("appPaths.fileMigrated", Path.GetFileName(file)));
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[AppPaths] 迁移失败 '{Path.GetFileName(file)}': {ex.Message}");
+                Console.Error.WriteLine(I18nService._("appPaths.migrationFailed", Path.GetFileName(file), ex.Message));
             }
         }
 
@@ -154,7 +168,7 @@ public class AppPaths
                 && Directory.GetDirectories(fromDir).Length == 0)
             {
                 Directory.Delete(fromDir);
-                Console.WriteLine($"[AppPaths] 已清理空目录: {fromDir}");
+                Console.WriteLine(I18nService._("appPaths.emptyDirCleaned", fromDir));
             }
         }
         catch { /* not critical */ }

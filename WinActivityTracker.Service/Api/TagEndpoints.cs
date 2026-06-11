@@ -80,17 +80,17 @@ public static class TagEndpoints
             File.Move(tmp, path, overwrite: true);
 
             response.StatusCode = 200;
-            await response.WriteAsJsonAsync(new { saved = rules.Count, message = "tags.json 已保存，热重载即刻生效。" });
+            await response.WriteAsJsonAsync(new { saved = rules.Count, message = I18nService._("tags.rulesSaved") });
         }
         catch (JsonException ex)
         {
             response.StatusCode = 400;
-            await response.WriteAsJsonAsync(new { error = $"JSON 解析或序列化失败: {ex.Message}" });
+            await response.WriteAsJsonAsync(new { error = I18nService._("tags.jsonError", ex.Message) });
         }
         catch (Exception ex)
         {
             response.StatusCode = 500;
-            await response.WriteAsJsonAsync(new { error = $"保存失败: {ex.Message}" });
+            await response.WriteAsJsonAsync(new { error = I18nService._("error.saveFailed", ex.Message) });
         }
     }
 }

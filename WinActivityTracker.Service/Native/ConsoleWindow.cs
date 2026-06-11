@@ -4,6 +4,8 @@
 //
 // Closing this window does NOT exit the application (it's just a Form).
 // All output is also tee'd to the original stdout for terminal visibility.
+using WinActivityTracker.Core.Services;
+
 namespace WinActivityTracker.Service.Native;
 
 public class ConsoleWindow : Form
@@ -16,7 +18,7 @@ public class ConsoleWindow : Form
     {
         _mirror = mirror;
 
-        Text = " 控制台 ";
+        Text = I18nService._("consoleWindow.title");
         Size = new Size(950, 600);
         MinimumSize = new Size(400, 300);
         StartPosition = FormStartPosition.CenterScreen;

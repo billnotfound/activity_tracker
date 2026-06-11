@@ -13,7 +13,6 @@ public sealed class WriteQueue : BackgroundService
     private readonly ILogger<WriteQueue> _logger;
 
     private const int BatchSize = 50;
-    private const int FlushIntervalMs = 50;
 
     public WriteQueue(IServiceScopeFactory scopeFactory, ILogger<WriteQueue> logger)
     {
@@ -28,47 +27,57 @@ public sealed class WriteQueue : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        var count = 0;
-        var lastFlush = Environment.TickCount64;
-
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var count = 0;
+
                 var op = await _channel.Reader.ReadAsync(stoppingToken);
                 op(db);
                 count++;
+
+                while (_channel.Reader.TryRead(out var next))
+                {
+                    next(db);
+                    count++;
+                    if (count >= BatchSize) break;
+                }
+
+                await db.SaveChangesAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-
-            while (_channel.Reader.TryRead(out var next))
+            catch (Exception ex)
             {
-                next(db);
-                count++;
-            }
-
-            var now = Environment.TickCount64;
-            if (count >= BatchSize || (now - lastFlush) >= FlushIntervalMs)
-            {
-                await db.SaveChangesAsync(stoppingToken);
-                count = 0;
-                lastFlush = now;
+                _logger.LogError(ex, "WriteQueue flush error");
             }
         }
 
-        // Drain any items still in the channel before final flush.
-        while (_channel.Reader.TryRead(out var lastOp))
+        // Final drain on shutdown
+        if (_channel.Reader.Count > 0)
         {
-            lastOp(db);
-            count++;
+            try
+            {
+                using var finalScope = _scopeFactory.CreateScope();
+                var finalDb = finalScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var count = 0;
+                while (_channel.Reader.TryRead(out var op))
+                {
+                    op(finalDb);
+                    count++;
+                }
+                if (count > 0)
+                    await finalDb.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WriteQueue final drain error");
+            }
         }
-
-        if (count > 0)
-            await db.SaveChangesAsync(CancellationToken.None);
     }
 }

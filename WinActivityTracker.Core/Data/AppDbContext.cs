@@ -1,5 +1,5 @@
 // EF Core context backed by SQLite. Database file path is configured in Service/Program.cs
-// and defaults to %LOCALAPPDATA%\WinActivityTracker\activity.db.
+// via AppPaths (default %LOCALAPPDATA%\WinActivityTracker\activity.db, overridable).
 // EnsureCreatedAsync() in Program.cs auto-creates tables on first run.
 // Indexes: Timestamp (all tables, for date-range queries), ProcessName (FocusChanges, for grouping),
 // and a unique composite on (Date, ProcessName) for DailySummaries upserts.

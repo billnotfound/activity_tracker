@@ -1,3 +1,13 @@
+import { messages } from '../i18n/index.js'
+
+function m(key, args = {}) {
+  let msg = messages[key]
+  if (msg === undefined) return key
+  for (const [k, v] of Object.entries(args))
+    msg = msg.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
+  return msg
+}
+
 // DB timestamps are UTC but may lack 'Z' suffix (EF Core strips DateTimeKind).
 // Append 'Z' so JS parses as UTC, then format in local time.
 export function parseUtcTs(ts) {
@@ -39,11 +49,11 @@ export function toLocalString(ts) {
   return d ? d.toLocaleString() : '-'
 }
 
-// Human-readable duration formatting (Chinese units)
+// Human-readable duration formatting (localized units)
 export function fmtDuration(s) {
-  if (s < 60) return `${s.toFixed(0)}秒`
-  if (s < 3600) return `${(s / 60).toFixed(1)}分钟`
-  return `${(s / 3600).toFixed(1)}小时`
+  if (s < 60) return m('time.seconds', { n: s.toFixed(0) })
+  if (s < 3600) return m('time.minutes', { n: (s / 60).toFixed(1) })
+  return m('time.hours', { n: (s / 3600).toFixed(1) })
 }
 
 export function fmtShortDur(s) {

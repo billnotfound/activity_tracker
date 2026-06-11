@@ -56,6 +56,7 @@ public class MediaSessionTracker : BackgroundService
                     using var gapScope = _scopeFactory.CreateScope();
                     var gapDb = gapScope.ServiceProvider.GetRequiredService<AppDbContext>();
                     await CloseCurrentSession(gapDb, _lastPollTime);
+                    await gapDb.SaveChangesAsync();
                 }
 
                 await PollMediaSession();
@@ -74,6 +75,7 @@ public class MediaSessionTracker : BackgroundService
             using var shutdownScope = _scopeFactory.CreateScope();
             var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
             await CloseCurrentSession(shutdownDb, DateTime.UtcNow);
+            await shutdownDb.SaveChangesAsync();
         }
         catch (Exception ex) { _logger.LogError(ex, "MediaSessionTracker shutdown cleanup error"); }
     }
@@ -98,6 +100,7 @@ public class MediaSessionTracker : BackgroundService
             if (session == null)
             {
                 await CloseCurrentSession(db, DateTime.UtcNow);
+                await db.SaveChangesAsync();
                 return;
             }
 
@@ -105,6 +108,7 @@ public class MediaSessionTracker : BackgroundService
             if (_settings.Settings.ExcludedProcesses.Contains(appName, StringComparer.OrdinalIgnoreCase))
             {
                 await CloseCurrentSession(db, DateTime.UtcNow);
+                await db.SaveChangesAsync();
                 return;
             }
 
@@ -112,6 +116,7 @@ public class MediaSessionTracker : BackgroundService
             if (props == null)
             {
                 await CloseCurrentSession(db, DateTime.UtcNow);
+                await db.SaveChangesAsync();
                 return;
             }
 
@@ -122,6 +127,7 @@ public class MediaSessionTracker : BackgroundService
             if (string.IsNullOrEmpty(title))
             {
                 await CloseCurrentSession(db, DateTime.UtcNow);
+                await db.SaveChangesAsync();
                 return;
             }
 
@@ -138,6 +144,8 @@ public class MediaSessionTracker : BackgroundService
             await StartNewSession(db, appName, title, artist, status, DateTime.UtcNow);
 
             _logger.LogDebug("Media: {Artist} - {Title} [{Status}]", artist, title, status);
+
+            await db.SaveChangesAsync();
         }
         catch (Exception ex) when (ex is InvalidCastException
             or System.Runtime.InteropServices.InvalidComObjectException
@@ -154,7 +162,6 @@ public class MediaSessionTracker : BackgroundService
 
         var s = await db.MediaSessionRecords.FindAsync(_currentSessionId.Value);
         if (s != null) s.EndTime = endTime;
-        await db.SaveChangesAsync();
 
         _currentSessionId = null;
         _currentAppName = string.Empty;
@@ -193,7 +200,6 @@ public class MediaSessionTracker : BackgroundService
         if (orphan != null)
         {
             orphan.EndTime = orphan.StartTime;
-            await db.SaveChangesAsync();
             _logger.LogDebug("MediaTracker: closed orphan session from previous run (Id={Id})", orphan.Id);
         }
     }

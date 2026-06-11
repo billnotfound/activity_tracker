@@ -2,41 +2,37 @@
   History view — query focus data over a custom date range.
   Aggregates all FocusChange records between two dates, grouped by process.
   Supports ascending/descending sort by duration.
-
-  Timezone: DB timestamps are UTC without 'Z' suffix (EF Core strips Kind).
-
-  The data table is scrollable (max-height: 600px) for long result sets.
 -->
 <template>
   <div>
     <div class="row mb-3">
       <div class="col-md-3">
-        <label class="form-label">开始日期</label>
+        <label class="form-label">{{ t('history.startDate') }}</label>
         <input type="date" v-model="fromDate" class="form-control" />
       </div>
       <div class="col-md-3">
-        <label class="form-label">结束日期</label>
+        <label class="form-label">{{ t('history.endDate') }}</label>
         <input type="date" v-model="toDate" class="form-control" />
       </div>
       <div class="col-md-2 d-flex align-items-end">
-        <button class="btn btn-primary" @click="loadData">查询</button>
+        <button class="btn btn-primary" @click="loadData">{{ t('common.query') }}</button>
       </div>
       <div class="col-md-2 d-flex align-items-end">
         <button class="btn btn-sm btn-outline-secondary" @click="toggleSort">
-          {{ sortAsc ? '↑ 时长升序' : '↓ 时长降序' }}
+          {{ sortAsc ? t('history.sortAsc') : t('history.sortDesc') }}
         </button>
       </div>
     </div>
 
     <div class="card mb-3">
-      <div class="card-header">时段汇总 <small class="text-muted">({{ data.length }} 个程序)</small>
-        <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">休眠/关机 {{ fmtDuration(totalSleepSeconds) }}</small>
+      <div class="card-header">{{ t('history.card.periodSummary') }} <small class="text-muted">{{ t('history.card.programCount', { count: data.length }) }}</small>
+        <small class="text-muted ms-2" v-if="totalSleepSeconds > 0">{{ t('history.sleepOff', { duration: fmtDuration(totalSleepSeconds) }) }}</small>
       </div>
       <div class="card-body" style="max-height:600px;overflow-y:auto">
         <div class="table-responsive">
           <table class="table table-striped table-hover">
             <thead>
-              <tr><th>程序</th><th>总时长</th><th>切换次数</th></tr>
+              <tr><th>{{ t('history.table.process') }}</th><th>{{ t('history.table.totalDuration') }}</th><th>{{ t('history.table.switches') }}</th></tr>
             </thead>
             <tbody>
               <tr v-for="d in sortedData" :key="d.processName">
@@ -44,7 +40,7 @@
                 <td>{{ fmtDuration(d.totalSeconds) }}</td>
                 <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
               </tr>
-              <tr v-if="!data.length"><td colspan="3" class="text-muted">暂无数据 — 请选择一个有数据的日期范围</td></tr>
+              <tr v-if="!data.length"><td colspan="3" class="text-muted">{{ t('history.noData') }}</td></tr>
             </tbody>
           </table>
         </div>
@@ -56,8 +52,10 @@
 <script setup>
 import { ref, inject, onMounted, computed } from 'vue'
 import { toLocalDateString, fmtDuration } from '../utils/time.js'
+import { useI18n } from '../i18n/index.js'
 
 const apiBase = inject('apiBase')
+const { t } = useI18n()
 
 const fromDate = ref(toLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
 const toDate = ref(toLocalDateString(new Date()))

@@ -25,7 +25,7 @@ public partial class SettingsWindow : Form
     {
         _settings = settings;
 
-        Text = " 设置 ";
+        Text = I18nService._("settingsWindow.title");
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(590, 760);
         Size = new Size(610, 780);
@@ -49,7 +49,7 @@ public partial class SettingsWindow : Form
         // --- Tracking checkbox ---
         _trackingCheck = new CheckBox
         {
-            Text = "启用追踪", AutoSize = true,
+            Text = I18nService._("settingsWindow.enableTracking"), AutoSize = true,
             Font = new Font("Microsoft YaHei UI", 9, FontStyle.Bold),
             Anchor = AnchorStyles.Left
         };
@@ -57,7 +57,7 @@ public partial class SettingsWindow : Form
 
         _mergeSwitchesCheck = new CheckBox
         {
-            Text = "同进程连续切换不计数", AutoSize = true,
+            Text = I18nService._("settingsWindow.mergeSwitches"), AutoSize = true,
             Anchor = AnchorStyles.Left, Margin = new Padding(0, 4, 0, 8)
         };
         main.Controls.Add(_mergeSwitchesCheck);
@@ -93,23 +93,23 @@ public partial class SettingsWindow : Form
 
         // --- Polling (3 rows → height ~136) ---
         {
-            var g = MakeGroup("轮询间隔 (秒)", 156);
+            var g = MakeGroup(I18nService._("settingsWindow.pollingGroup"), 156);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, "窗口/焦点轮询:", out _windowInterval, 1, 3600, 3);
-            AddRow(pan!, 1, "后台进程轮询:", out _processInterval, 5, 3600, 30);
-            AddRow(pan!, 2, "媒体播放检测:", out _mediaInterval, 1, 3600, 5);
+            AddRow(pan!, 0, I18nService._("settingsWindow.windowPollLabel"), out _windowInterval, 1, 3600, 3);
+            AddRow(pan!, 1, I18nService._("settingsWindow.processPollLabel"), out _processInterval, 5, 3600, 30);
+            AddRow(pan!, 2, I18nService._("settingsWindow.mediaPollLabel"), out _mediaInterval, 1, 3600, 5);
         }
 
         // --- Idle (1 row → height ~64) ---
         {
-            var g = MakeGroup("空闲检测", 78);
+            var g = MakeGroup(I18nService._("settingsWindow.idleGroup"), 78);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, "空闲判定阈值 (分钟):", out _idleThreshold, 1, 120, 2);
+            AddRow(pan!, 0, I18nService._("settingsWindow.idleThresholdLabel"), out _idleThreshold, 1, 120, 2);
         }
 
         // --- Exclusions (textbox → height ~58) ---
         {
-            var g = MakeGroup("进程排除 (逗号分隔，不区分大小写)", 78);
+            var g = MakeGroup(I18nService._("settingsWindow.exclusionsGroup"), 78);
             _excludedBox = new TextBox
             {
                 Font = new Font("Consolas", 9),
@@ -121,16 +121,16 @@ public partial class SettingsWindow : Form
 
         // --- Database (1 row → height ~58) ---
         {
-            var g = MakeGroup("数据库", 78);
+            var g = MakeGroup(I18nService._("common.database"), 78);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, "数据保留天数:", out _retentionDays, 1, 3650, 90);
+            AddRow(pan!, 0, I18nService._("settingsWindow.retentionLabel"), out _retentionDays, 1, 3650, 90);
         }
 
         // --- Server (1 row → height ~58) ---
         {
-            var g = MakeGroup("服务器 (重启后生效)", 78);
+            var g = MakeGroup(I18nService._("settingsWindow.serverGroup"), 78);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, "API 端口:", out _apiPortInput, 1024, 65535, 5200);
+            AddRow(pan!, 0, I18nService._("settingsWindow.apiPortLabel"), out _apiPortInput, 1024, 65535, 5200);
         }
 
         // --- Buttons ---
@@ -140,9 +140,9 @@ public partial class SettingsWindow : Form
                 AutoSize = true, FlowDirection = FlowDirection.LeftToRight,
                 Anchor = AnchorStyles.Left, Margin = new Padding(0, 12, 0, 0)
             };
-            var saveBtn = new Button { Text = "保存", Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
+            var saveBtn = new Button { Text = I18nService._("common.save"), Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10, FontStyle.Bold) };
             saveBtn.Click += (_, _) => SaveSettings();
-            var cancelBtn = new Button { Text = "取消", Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10) };
+            var cancelBtn = new Button { Text = I18nService._("common.cancel"), Size = new Size(120, 40), Font = new Font("Microsoft YaHei UI", 10) };
             cancelBtn.Click += (_, _) => Close();
             _statusLabel = new Label { Text = "", AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(12, 6, 0, 0) };
             btnPanel.Controls.Add(saveBtn);
@@ -181,7 +181,7 @@ public partial class SettingsWindow : Form
         s.DataRetentionDays = (int)_retentionDays.Value;
         s.ApiPort = (int)_apiPortInput.Value;
         _settings.Update(s);
-        _statusLabel.Text = "已保存";
+        _statusLabel.Text = I18nService._("settingsWindow.saved");
         _statusLabel.ForeColor = Color.DarkGreen;
     }
 

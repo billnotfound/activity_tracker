@@ -8,11 +8,11 @@
       <div class="container">
         <router-link class="navbar-brand" to="/">WinActivityTracker</router-link>
         <div class="navbar-nav">
-          <router-link class="nav-link" to="/">仪表盘</router-link>
-          <router-link class="nav-link" to="/history">历史</router-link>
-          <router-link class="nav-link" to="/tags">标签</router-link>
-          <router-link class="nav-link" to="/timeline">时间线</router-link>
-          <router-link class="nav-link" to="/settings">设置</router-link>
+          <router-link class="nav-link" to="/">{{ t('nav.dashboard') }}</router-link>
+          <router-link class="nav-link" to="/history">{{ t('nav.history') }}</router-link>
+          <router-link class="nav-link" to="/tags">{{ t('nav.tags') }}</router-link>
+          <router-link class="nav-link" to="/timeline">{{ t('nav.timeline') }}</router-link>
+          <router-link class="nav-link" to="/settings">{{ t('nav.settings') }}</router-link>
         </div>
       </div>
     </nav>
@@ -21,3 +21,8 @@
     </div>
   </div>
 </template>
+
+<script setup>
+import { useI18n } from './i18n/index.js'
+const { t } = useI18n()
+</script>

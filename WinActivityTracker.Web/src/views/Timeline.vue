@@ -1,31 +1,23 @@
-﻿<!--
+<!--
   Timeline view — focus change log + live window list. Auto-refreshes every 2s.
-  Features:
-    - Datetime-local pickers for precise time range filtering
-    - Focus change table (scrollable) showing every recorded window switch with duration
-    - Live "current windows" panel (scrollable) that auto-refreshes
-      (this panel uses the real-time /api/windows/current endpoint, not the DB)
-
-  Timezone: DB timestamps are UTC without 'Z' suffix (EF Core strips Kind).
-  toLocal() converts to local time; for datetime-local inputs we use local values directly.
 -->
 <template>
   <div>
     <div class="row mb-3">
       <div class="col-md-3">
-        <label class="form-label">开始时间</label>
+        <label class="form-label">{{ t('timeline.startTime') }}</label>
         <input type="datetime-local" v-model="fromTime" class="form-control" />
       </div>
       <div class="col-md-3">
-        <label class="form-label">结束时间</label>
+        <label class="form-label">{{ t('timeline.endTime') }}</label>
         <input type="datetime-local" v-model="toTime" class="form-control" />
       </div>
       <div class="col-md-2 d-flex align-items-end">
-        <button class="btn btn-primary" @click="loadTimeline">查询</button>
+        <button class="btn btn-primary" @click="loadTimeline">{{ t('common.query') }}</button>
       </div>
       <div class="col-md-2 d-flex align-items-end">
         <button class="btn btn-sm btn-outline-secondary" @click="toggleSort">
-          {{ sortAsc ? '↑ 时间升序' : '↓ 时间降序' }}
+          {{ sortAsc ? t('timeline.sortAsc') : t('timeline.sortDesc') }}
         </button>
       </div>
     </div>
@@ -38,11 +30,11 @@
     <div class="row">
       <div class="col-md-8">
         <div class="card mb-3">
-          <div class="card-header">焦点窗口时间线</div>
+          <div class="card-header">{{ t('timeline.card.focusTimeline') }}</div>
           <div class="card-body" style="max-height:600px;overflow-y:auto">
             <table class="table table-sm table-hover">
               <thead>
-                <tr><th>时间</th><th>程序</th><th>窗口标题</th><th>持续</th></tr>
+                <tr><th>{{ t('timeline.table.time') }}</th><th>{{ t('timeline.table.process') }}</th><th>{{ t('timeline.table.windowTitle') }}</th><th>{{ t('timeline.table.duration') }}</th></tr>
               </thead>
               <tbody>
                 <tr v-for="d in sortedTimeline" :key="d.timestamp + '|' + d.processName">
@@ -51,7 +43,7 @@
                   <td>{{ d.windowTitle }}</td>
                   <td>{{ d.durationSeconds.toFixed(1) }}s</td>
                 </tr>
-                <tr v-if="!timeline.length"><td colspan="4" class="text-muted">暂无数据 — 请切换到有活动的时间范围</td></tr>
+                <tr v-if="!timeline.length"><td colspan="4" class="text-muted">{{ t('timeline.noData') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -59,17 +51,17 @@
       </div>
       <div class="col-md-4">
         <div class="card mb-3">
-          <div class="card-header">当前可见窗口 <small class="text-muted">(每 2s 刷新)</small></div>
+          <div class="card-header">{{ t('timeline.card.visibleWindows') }} <small class="text-muted">{{ t('timeline.card.visibleWindowsRefresh') }}</small></div>
           <div class="card-body" style="max-height:600px;overflow-y:auto">
             <table class="table table-sm">
-              <thead><tr><th>程序</th><th>标题</th><th>焦点</th></tr></thead>
+              <thead><tr><th>{{ t('timeline.table.process') }}</th><th>{{ t('timeline.table.title') }}</th><th>{{ t('timeline.table.focus') }}</th></tr></thead>
               <tbody>
                 <tr v-for="w in windows" :key="w.processName + '|' + w.title" :class="{ 'table-primary': w.isFocused }">
                   <td>{{ w.processName }}</td>
                   <td>{{ w.title }}</td>
                   <td>{{ w.isFocused ? '✅' : '' }}</td>
                 </tr>
-                <tr v-if="!windows.length"><td colspan="3" class="text-muted">加载中...</td></tr>
+                <tr v-if="!windows.length"><td colspan="3" class="text-muted">{{ t('common.loading') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -82,16 +74,16 @@
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed } from 'vue'
 import { toLocalTime as toLocal, toLocalDatetimeString } from '../utils/time.js'
-
+import { useI18n } from '../i18n/index.js'
 
 const apiBase = inject('apiBase')
+const { t } = useI18n()
 
-// Default time range: last 1 hour (in local time)
 const fromTime = ref(toLocalDatetimeString(new Date(Date.now() - 3600000)))
 const toTime = ref(toLocalDatetimeString(new Date()))
 const timeline = ref([])
 const windows = ref([])
-const sortAsc = ref(true)  // true = oldest first, false = newest first
+const sortAsc = ref(true)
 const error = ref('')
 
 let timer = null
@@ -104,7 +96,6 @@ onMounted(() => {
 
 onUnmounted(() => clearInterval(timer))
 
-// API returns data ordered by Timestamp ASC. Just reverse for descending.
 const sortedTimeline = computed(() =>
   sortAsc.value ? timeline.value : [...timeline.value].reverse()
 )
@@ -120,7 +111,7 @@ async function loadTimeline() {
     const resp = await r.json()
     timeline.value = resp.data || resp
     error.value = ''
-  } catch (e) { console.error(e); error.value = '加载时间线失败: ' + e.message }
+  } catch (e) { console.error(e); error.value = t('timeline.error.loadFailed', { message: e.message }) }
 }
 
 async function loadWindows() {
@@ -130,6 +121,4 @@ async function loadWindows() {
     windows.value = await r.json()
   } catch (e) { console.error('Failed to load windows:', e) }
 }
-
-
 </script>

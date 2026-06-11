@@ -39,6 +39,7 @@ public class ProcessNameCache
     /// </summary>
     public void RefreshAll()
     {
+        _cache.Clear();
         var snapshot = NativeMethods.CreateToolhelp32Snapshot(
             NativeMethods.TH32CS_SNAPPROCESS | NativeMethods.TH32CS_SNAPNOHEAPS, 0);
         if (snapshot == IntPtr.Zero || snapshot == new IntPtr(-1))

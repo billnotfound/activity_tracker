@@ -24,6 +24,11 @@ var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 var appPaths = new AppPaths();
 appPaths.MigrateIfNeeded();
 
+// ===== I18n: detect language from OS (WinForms follows system, Web UI has its own picker) =====
+var lang = System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("zh")
+    ? "zh-CN" : "en-US";
+var i18n = new I18nService(lang);
+
 var settingsPath = Path.Combine(appPaths.ConfigDir, "settings.json");
 var apiPort = ProgramStartup.ParsePortFromSettings(settingsPath);
 
@@ -51,6 +56,7 @@ var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
     ?? Path.Combine(appPaths.DataDir, "activity.db");
 
 builder.Services.AddSingleton(appPaths);
+builder.Services.AddSingleton(i18n);
 builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<TagService>();
 builder.Services.AddSingleton<TitleNormalizer>();
@@ -127,8 +133,8 @@ if (!ready)
 {
     Console.Error.WriteLine("WARNING: API did not respond within 800ms — startup may be slow.");
     if (!silent)
-        MessageBox.Show("API 服务启动缓慢，可能存在问题。\n请检查端口占用或系统资源。",
-            "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        MessageBox.Show(I18nService._("program.startupSlowMessage"),
+            I18nService._("program.startupSlowTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
 }
 
 Application.SetCompatibleTextRenderingDefault(false);

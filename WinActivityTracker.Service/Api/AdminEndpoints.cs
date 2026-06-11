@@ -49,7 +49,7 @@ public static class AdminEndpoints
             configDir = appPaths.ConfigDir,
             dataDir = appPaths.DataDir,
             registry = new { configDir = regCfg, dataDir = regData },
-            message = "修改路径后需重启程序生效。下次启动时配置文件将自动迁移到新位置。"
+            message = I18nService._("admin.pathsChangeMessage")
         });
     }
 
@@ -58,12 +58,12 @@ public static class AdminEndpoints
         if (!string.IsNullOrWhiteSpace(input.ConfigDir))
         {
             try { Directory.CreateDirectory(input.ConfigDir); }
-            catch (Exception ex) { return Results.BadRequest(new { error = $"无法创建配置目录: {ex.Message}" }); }
+            catch (Exception ex) { return Results.BadRequest(new { error = I18nService._("admin.cannotCreateConfigDir", ex.Message) }); }
         }
         if (!string.IsNullOrWhiteSpace(input.DataDir))
         {
             try { Directory.CreateDirectory(input.DataDir); }
-            catch (Exception ex) { return Results.BadRequest(new { error = $"无法创建数据目录: {ex.Message}" }); }
+            catch (Exception ex) { return Results.BadRequest(new { error = I18nService._("admin.cannotCreateDataDir", ex.Message) }); }
         }
 
         AppPaths.WriteRegistry(
@@ -72,7 +72,7 @@ public static class AdminEndpoints
 
         return Results.Ok(new
         {
-            message = "路径已保存到注册表。重启程序后生效，配置文件将自动迁移。",
+            message = I18nService._("admin.pathsSaved"),
             configDir = input.ConfigDir,
             dataDir = input.DataDir
         });

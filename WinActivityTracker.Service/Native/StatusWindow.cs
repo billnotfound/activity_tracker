@@ -2,6 +2,8 @@
 // Uses TableLayoutPanel with Anchor — no hardcoded Y positions.
 using System.Net.Http.Json;
 
+using WinActivityTracker.Core.Services;
+
 namespace WinActivityTracker.Service.Native;
 
 public partial class StatusWindow : Form
@@ -20,7 +22,7 @@ public partial class StatusWindow : Form
     {
         _apiBase = $"http://localhost:{apiPort}";
 
-        Text = "状态";
+        Text = I18nService._("statusWindow.title");
         Size = new Size(560, 680);
         MinimumSize = new Size(440, 440);
         FormBorderStyle = FormBorderStyle.Sizable;
@@ -55,13 +57,13 @@ public partial class StatusWindow : Form
         {
             var g = new GroupBox
             {
-                Text = "当前焦点窗口", Height = 76,
+                Text = I18nService._("statusWindow.currentFocus"), Height = 76,
                 Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Top,
                 Margin = new Padding(0, 0, 0, 8)
             };
             _focusLabel = new Label
             {
-                Text = "加载中...", Font = new Font("Microsoft YaHei UI", 11, FontStyle.Bold),
+                Text = I18nService._("common.loading"), Font = new Font("Microsoft YaHei UI", 11, FontStyle.Bold),
                 Dock = DockStyle.Fill
             };
             g.Controls.Add(_focusLabel);
@@ -72,7 +74,7 @@ public partial class StatusWindow : Form
         {
             var g = new GroupBox
             {
-                Text = "今日焦点时长 Top 5",
+                Text = I18nService._("statusWindow.top5"),
                 Dock = DockStyle.Fill,
                 Margin = new Padding(0, 0, 0, 8)
             };
@@ -82,9 +84,9 @@ public partial class StatusWindow : Form
                 HeaderStyle = ColumnHeaderStyle.Nonclickable,
                 Font = new Font("Microsoft YaHei UI", 10)
             };
-            _topList.Columns.Add("程序", 200);
-            _topList.Columns.Add("时长", 120);
-            _topList.Columns.Add("切换", 80);
+            _topList.Columns.Add(I18nService._("common.process"), 200);
+            _topList.Columns.Add(I18nService._("common.duration"), 120);
+            _topList.Columns.Add(I18nService._("common.switches"), 80);
             g.Controls.Add(_topList);
             table.Controls.Add(g);
         }
@@ -108,7 +110,7 @@ public partial class StatusWindow : Form
 
             _statusLabel = new Label
             {
-                Text = "追踪状态: 检测中...", AutoSize = true,
+                Text = I18nService._("statusWindow.trackingStatus"), AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 10),
                 Margin = new Padding(0, 4, 16, 0)
             };
@@ -116,7 +118,7 @@ public partial class StatusWindow : Form
 
             _toggleButton = new Button
             {
-                Text = "暂停追踪", Size = new Size(120, 38),
+                Text = I18nService._("common.pauseTracking"), Size = new Size(120, 38),
                 Font = new Font("Microsoft YaHei UI", 9)
             };
             _toggleButton.Click += async (_, _) => await ToggleTracking(services);
@@ -124,7 +126,7 @@ public partial class StatusWindow : Form
 
             var topMostCheck = new CheckBox
             {
-                Text = "窗口置顶", Checked = true, AutoSize = true,
+                Text = I18nService._("statusWindow.alwaysOnTop"), Checked = true, AutoSize = true,
                 Font = new Font("Microsoft YaHei UI", 9),
                 Margin = new Padding(12, 6, 0, 0)
             };
@@ -149,7 +151,7 @@ public partial class StatusWindow : Form
                 var focused = windows?.FirstOrDefault(w => w.IsFocused);
                 _focusLabel.Text = focused != null
                     ? $"{focused.ProcessName} — {Truncate(focused.Title, 60)}"
-                    : "无焦点窗口";
+                    : I18nService._("statusWindow.noFocusWindow");
             }
 
             var sumResp = await _http.GetAsync($"{_apiBase}/api/summary/today");
@@ -158,7 +160,7 @@ public partial class StatusWindow : Form
                 var wrapped = await sumResp.Content.ReadFromJsonAsync<SummaryResponse>();
                 var summary = wrapped?.Items ?? [];
                 var totalOff = wrapped?.TotalSleepSeconds ?? 0;
-                _offLabel.Text = totalOff > 0 ? $"今日休眠/关机: {FmtDur(totalOff)}" : "";
+                _offLabel.Text = totalOff > 0 ? I18nService._("statusWindow.offDuration", FmtDur(totalOff)) : "";
                 var top5 = summary.Take(5).ToList();
 
                 // Load adjusted switch counts if merge is enabled
@@ -198,14 +200,14 @@ public partial class StatusWindow : Form
 
             var settings = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
             var enabled = settings.Settings.TrackingEnabled;
-            _statusLabel.Text = enabled ? "● 追踪运行中" : "○ 追踪已暂停";
+            _statusLabel.Text = enabled ? I18nService._("statusWindow.trackingRunning") : I18nService._("statusWindow.trackingPaused");
             _statusLabel.ForeColor = enabled ? Color.DarkGreen : Color.DarkOrange;
-            _toggleButton.Text = enabled ? "暂停追踪" : "恢复追踪";
+            _toggleButton.Text = enabled ? I18nService._("common.pauseTracking") : I18nService._("common.resumeTracking");
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"StatusWindow refresh error: {ex.Message}");
-            _statusLabel.Text = "⚠ 无响应";
+            _statusLabel.Text = I18nService._("statusWindow.noResponse");
             _statusLabel.ForeColor = Color.Red;
         }
     }
@@ -229,9 +231,9 @@ public partial class StatusWindow : Form
 
     private static string FmtDur(double s)
     {
-        if (s < 60) return $"{s:F0}秒";
-        if (s < 3600) return $"{s / 60:F1}分";
-        return $"{s / 3600:F1}时";
+        if (s < 60) return I18nService._("time.seconds", s.ToString("F0"));
+        if (s < 3600) return I18nService._("time.minutes", (s / 60).ToString("F1"));
+        return I18nService._("time.hours", (s / 3600).ToString("F1"));
     }
 
     private static string Truncate(string text, int n)

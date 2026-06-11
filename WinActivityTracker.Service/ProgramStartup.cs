@@ -1,6 +1,7 @@
 // Pre-flight checks for taskmonitor114 startup.
 // Extracted from Program.cs to keep the main entry point readable.
 using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace WinActivityTracker.Service;
@@ -18,8 +19,8 @@ internal static class ProgramStartup
         if (!existing.Any(p => p.Id != myPid)) return true;
 
         if (!silent)
-            MessageBox.Show("程序在运行中了。\n看看系统托盘不？",
-                "別急", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(I18nService._("programStartup.alreadyRunningMessage"),
+                I18nService._("programStartup.alreadyRunningTitle"), MessageBoxButtons.OK, MessageBoxIcon.Information);
         Console.Error.WriteLine("Another instance is already running.");
         return false;
     }
@@ -66,8 +67,8 @@ internal static class ProgramStartup
         catch (System.Net.Sockets.SocketException)
         {
             if (!silent)
-                MessageBox.Show($"端口 {port} 已被占用。\n请修改设置中的端口或关闭占用程序后重试。",
-                    "端口冲突", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show(I18nService._("programStartup.portInUseMessage", port),
+                    I18nService._("programStartup.portInUseTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
             Console.Error.WriteLine($"Port {port} is already in use.");
             return false;
         }

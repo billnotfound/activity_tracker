@@ -4,6 +4,7 @@
 
 Based on .NET and Vue.
 
-Database and settings are stored in `%LOCALAPPDATA%\WinActivityTracker`.
+Database and settings are stored in `%LOCALAPPDATA%\WinActivityTracker` by default. Paths
+can be customized via Web UI, registry (`HKCU\Software\WinActivityTracker`).
 
-Storage usage: 0.6M/Day. Contains ALL the tasks(PID, name, time), media(name, time).
+Storage usage: ~0.7 MB/Day. Tracks focus changes, window sessions, process sessions, and media playback.

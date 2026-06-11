@@ -1,9 +1,9 @@
 <template>
   <div>
-    <h4 class="mb-3">标签规则 <small class="text-muted">(tags.json 热重载)</small></h4>
+    <h4 class="mb-3">{{ t('tags.pageTitle') }}</h4>
 
     <div v-if="tagError" class="alert alert-danger small" role="alert">
-      <strong>tags.json 错误:</strong> {{ tagError }}
+      <strong>{{ t('tags.tagsError') }}</strong> {{ tagError }}
     </div>
     <div v-if="savedMsg" class="alert alert-success alert-dismissible fade show small" role="alert">
       {{ savedMsg }}
@@ -18,13 +18,13 @@
       <div class="col">
         <div class="card mb-3">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span>标签规则列表 <small class="text-muted">({{ rules.length }} 条
-              <span v-if="newCount">，{{ newCount }} 条未保存</span>)
-            </small></span>
+            <span>{{ t('tags.card.ruleList', { count: rules.length }) }}
+              <small class="text-muted"><span v-if="newCount">{{ t('tags.unsavedCount', { count: newCount }) }}</span></small>
+            </span>
             <div>
-              <button class="btn btn-sm btn-outline-secondary me-1" @click="addRule">+ 新增</button>
+              <button class="btn btn-sm btn-outline-secondary me-1" @click="addRule">{{ t('tags.addRule') }}</button>
               <button class="btn btn-sm btn-primary" @click="saveRules" :disabled="saving || !newCount">
-                {{ saving ? '保存中...' : '保存' }}
+                {{ saving ? t('common.saving') : t('common.save') }}
               </button>
             </div>
           </div>
@@ -43,7 +43,7 @@
               <tbody>
                 <tr v-for="(r, i) in rules" :key="i"
                   :class="{ 'table-warning': !r._saved }"
-                  :title="r._saved ? '' : '未保存的新规则'">
+                  :title="r._saved ? '' : t('tags.unsavedRule')">
                   <td><input v-model="r.tag" class="form-control form-control-sm" style="width:90px" /></td>
                   <td><input v-model="r.process" class="form-control form-control-sm" style="width:140px" placeholder="(any)" /></td>
                   <td><input v-model="r.titlePattern" class="form-control form-control-sm" style="width:160px" placeholder="(any)" /></td>
@@ -53,9 +53,9 @@
                       <option v-for="m in modes" :key="m.v" :value="m.v">{{ m.label }}</option>
                     </select>
                   </td>
-                  <td><button class="btn btn-sm btn-outline-danger" @click="rules.splice(i,1)" title="删除">✕</button></td>
+                  <td><button class="btn btn-sm btn-outline-danger" @click="rules.splice(i,1)" :title="t('common.delete')">✕</button></td>
                 </tr>
-                <tr v-if="!rules.length"><td colspan="6" class="text-muted text-center">暂无规则</td></tr>
+                <tr v-if="!rules.length"><td colspan="6" class="text-muted text-center">{{ t('tags.noRules') }}</td></tr>
               </tbody>
             </table>
           </div>
@@ -67,8 +67,10 @@
 
 <script setup>
 import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
+import { useI18n } from '../i18n/index.js'
 
 const apiBase = inject('apiBase')
+const { t } = useI18n()
 
 const rules = ref([])
 const lastTagsWrite = ref('')
@@ -77,8 +79,8 @@ const savedMsg = ref('')
 const saveError = ref('')
 const saving = ref(false)
 const modes = [
-  { v: 'Coexist', label: '共存 (coexist)' },
-  { v: 'Overwrite', label: '覆盖 (overwrite)' }
+  { v: 'Coexist', label: t('tags.mode.coexist') },
+  { v: 'Overwrite', label: t('tags.mode.overwrite') }
 ]
 
 const newCount = computed(() => rules.value.filter(r => !r._saved).length)
@@ -98,11 +100,9 @@ async function loadRules() {
     const newWrite = data.tags?.lastWrite || ''
     tagError.value = data.tags?.error || ''
 
-    // Skip refresh if file hasn't changed and we have data
     if (newWrite === lastTagsWrite.value && newWrite) return
     lastTagsWrite.value = newWrite
 
-    // Build server rule map, merge with unsaved local rules
     const serverRules = (data.tags?.rules || []).map(rule => ({
       tag: rule.tag || '',
       process: rule.process || '',
@@ -113,10 +113,8 @@ async function loadRules() {
     }))
     const serverKeys = new Set(serverRules.map(k => key(k)))
 
-    // Keep unsaved local rules that don't exist on server
     const unsaved = rules.value.filter(r => !r._saved && r.tag && !serverKeys.has(key(r)))
 
-    // Merge: all server rules + unsaved local rules
     rules.value = [...serverRules, ...unsaved]
   } catch (e) { console.error('loadRules:', e) }
 }
@@ -140,14 +138,14 @@ async function saveRules() {
     })
     if (r.ok) {
       const data = await r.json()
-      savedMsg.value = data.message || `已保存 ${data.saved} 条规则`
-      lastTagsWrite.value = '' // force next refresh
+      savedMsg.value = data.message || t('tags.savedCount', { count: data.saved })
+      lastTagsWrite.value = ''
       await loadRules()
     } else {
       const data = await r.json().catch(() => ({}))
-      saveError.value = data.error || `保存失败 (${r.status})`
+      saveError.value = data.error || t('tags.error.saveFailed', { status: r.status })
     }
-  } catch (e) { saveError.value = '无法连接后端: ' + e.message }
+  } catch (e) { saveError.value = t('tags.error.backendUnreachable', { message: e.message }) }
   saving.value = false
 }
 </script>

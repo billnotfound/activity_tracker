@@ -43,32 +43,32 @@ public class TrayApplicationContext : ApplicationContext
         var menu = new ContextMenuStrip();
 
         // --- Dashboard ---
-        var dashboardItem = new ToolStripMenuItem("打开仪表盘");
+        var dashboardItem = new ToolStripMenuItem(I18nService._("tray.openDashboard"));
         dashboardItem.Click += (_, _) => OpenUrl($"http://localhost:{_apiPort}");
         dashboardItem.Font = new Font(dashboardItem.Font, FontStyle.Bold);
         menu.Items.Add(dashboardItem);
 
         // --- Native Settings ---
-        var settingsItem = new ToolStripMenuItem("设置...");
+        var settingsItem = new ToolStripMenuItem(I18nService._("tray.settings"));
         settingsItem.Click += (_, _) => ShowSettingsWindow();
         menu.Items.Add(settingsItem);
 
         menu.Items.Add(new ToolStripSeparator());
 
         // --- Status window ---
-        var statusItem = new ToolStripMenuItem("显示状态窗口");
+        var statusItem = new ToolStripMenuItem(I18nService._("tray.showStatusWindow"));
         statusItem.Click += (_, _) => ShowStatusWindow();
         menu.Items.Add(statusItem);
 
         menu.Items.Add(new ToolStripSeparator());
 
         // --- Pause / Resume ---
-        var toggleItem = new ToolStripMenuItem("暂停追踪");
+        var toggleItem = new ToolStripMenuItem(I18nService._("common.pauseTracking"));
         toggleItem.Click += (_, _) =>
         {
             var s = _services.GetRequiredService<SettingsService>();
             s.SetTrackingEnabled(!s.Settings.TrackingEnabled);
-            toggleItem.Text = s.Settings.TrackingEnabled ? "暂停追踪" : "恢复追踪";
+            toggleItem.Text = s.Settings.TrackingEnabled ? I18nService._("common.pauseTracking") : I18nService._("common.resumeTracking");
         };
         menu.Items.Add(toggleItem);
 
@@ -77,7 +77,7 @@ public class TrayApplicationContext : ApplicationContext
         SyncAutoStartOnStartup();
 
         var settings = _services.GetRequiredService<SettingsService>();
-        var autoStartItem = new ToolStripMenuItem("开机自启") { Checked = settings.Settings.AutoStartEnabled };
+        var autoStartItem = new ToolStripMenuItem(I18nService._("tray.autoStart")) { Checked = settings.Settings.AutoStartEnabled };
         autoStartItem.Click += (_, _) =>
         {
             autoStartItem.Checked = !autoStartItem.Checked;
@@ -88,24 +88,24 @@ public class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
 
         // --- Console toggle (in-app window, not system console) ---
-        var consoleItem = new ToolStripMenuItem("显示控制台");
+        var consoleItem = new ToolStripMenuItem(I18nService._("tray.showConsole"));
         consoleItem.Click += (_, _) =>
         {
             if (_consoleWindow != null && !_consoleWindow.IsDisposed && _consoleWindow.Visible)
             {
                 _consoleWindow.Hide();
-                consoleItem.Text = "显示控制台";
+                consoleItem.Text = I18nService._("tray.showConsole");
             }
             else
             {
                 if (_consoleWindow == null || _consoleWindow.IsDisposed)
                 {
                     _consoleWindow = new ConsoleWindow(_apiPort, _services.GetRequiredService<ConsoleMirror>());
-                    _consoleWindow.FormClosed += (_, _) => consoleItem.Text = "显示控制台";
+                    _consoleWindow.FormClosed += (_, _) => consoleItem.Text = I18nService._("tray.showConsole");
                 }
                 _consoleWindow.Show();
                 _consoleWindow.Activate();
-                consoleItem.Text = "隐藏控制台";
+                consoleItem.Text = I18nService._("tray.hideConsole");
             }
         };
         menu.Items.Add(consoleItem);
@@ -113,7 +113,7 @@ public class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
 
         // --- Exit ---
-        var exitItem = new ToolStripMenuItem("退出");
+        var exitItem = new ToolStripMenuItem(I18nService._("tray.exit"));
         exitItem.Click += (_, _) =>
         {
             _trayIcon.Visible = false;
@@ -142,7 +142,7 @@ public class TrayApplicationContext : ApplicationContext
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"无法打开浏览器: {ex.Message}", "taskmonitor114",
+            MessageBox.Show(I18nService._("tray.cannotOpenBrowser", ex.Message), "taskmonitor114",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }

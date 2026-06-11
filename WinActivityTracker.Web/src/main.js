@@ -9,9 +9,14 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router.js'
+import { initI18n } from './i18n/index.js'
 
 const apiBase = window.location.hostname === 'localhost'
   ? ''  // Vite proxy handles /api -> :5200 in dev
   : `http://${window.location.hostname}:5200`
 
-createApp(App).use(router).provide('apiBase', apiBase).mount('#app')
+async function boot() {
+  await initI18n()
+  createApp(App).use(router).provide('apiBase', apiBase).mount('#app')
+}
+boot()
