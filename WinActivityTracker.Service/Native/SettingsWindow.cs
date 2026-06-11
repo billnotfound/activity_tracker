@@ -180,7 +180,7 @@ public partial class SettingsWindow : Form
         s.ExcludedProcesses = _excludedBox.Text.Split(',').Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
         s.DataRetentionDays = (int)_retentionDays.Value;
         s.ApiPort = (int)_apiPortInput.Value;
-        _settings.Update(s);
+        _settings.Save();
         _statusLabel.Text = I18nService._("settingsWindow.saved");
         _statusLabel.ForeColor = Color.DarkGreen;
     }

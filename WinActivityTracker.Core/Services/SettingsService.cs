@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -66,15 +67,27 @@ public class SettingsService
         }
     };
 
-    // Property names that can appear in settings.json (PascalCase).
-    // Used to detect new properties added in program updates.
-    private static readonly HashSet<string> KnownPropertyNames = new()
+    // Derived from TrackerSettings via reflection — always in sync.
+    private static readonly HashSet<string> KnownPropertyNames = new(
+        typeof(TrackerSettings).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.CanWrite)
+            .Select(p => p.Name));
+
+    // Property → (min, max) for integer settings. Only add properties that need clamping.
+    private static readonly Dictionary<string, (int Min, int Max)> IntConstraints = new()
     {
-        "TrackingEnabled", "FullscreenBypassIdle", "MergeSameProcessSwitches",
-        "WindowPollSeconds", "ProcessPollSeconds", "MediaPollSeconds",
-        "IdleThresholdMinutes", "ExcludedProcesses", "DataRetentionDays",
-        "AutoCleanup", "ApiPort", "AutoStartEnabled"
+        ["WindowPollSeconds"] = (1, int.MaxValue),
+        ["ProcessPollSeconds"] = (5, int.MaxValue),
+        ["MediaPollSeconds"] = (1, int.MaxValue),
+        ["IdleThresholdMinutes"] = (1, int.MaxValue),
+        ["DataRetentionDays"] = (1, int.MaxValue),
+        ["ApiPort"] = (1024, 65535),
     };
+
+    private static readonly PropertyInfo[] SettingProperties = typeof(TrackerSettings)
+        .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+        .Where(p => p.CanWrite)
+        .ToArray();
 
     public TrackerSettings Settings => _settings;
 
@@ -107,12 +120,10 @@ public class SettingsService
 
                 if (missingKeys.Count > 0)
                 {
-                    // Merge: fill missing properties with defaults.
                     var defaults = new TrackerSettings();
                     foreach (var key in missingKeys)
                         ApplyDefault(key, defaults);
 
-                    // Write with an update banner at the top.
                     var dateMark = DateTime.Now.ToString("yyyy-MM-dd");
                     var keyList = string.Join(", ", missingKeys);
                     var banner = $"// ===== 版本更新 {dateMark} — 新增设置: {keyList} =====";
@@ -139,33 +150,14 @@ public class SettingsService
         }
     }
 
-    /// <summary>
-    /// Applies the default value for a single property key to _settings.
-    /// Mirrors the property list in TrackerSettings.
-    /// </summary>
     private void ApplyDefault(string key, TrackerSettings defaults)
     {
-        switch (key)
-        {
-            case "TrackingEnabled": _settings.TrackingEnabled = defaults.TrackingEnabled; break;
-            case "FullscreenBypassIdle": _settings.FullscreenBypassIdle = defaults.FullscreenBypassIdle; break;
-            case "MergeSameProcessSwitches": _settings.MergeSameProcessSwitches = defaults.MergeSameProcessSwitches; break;
-            case "WindowPollSeconds": _settings.WindowPollSeconds = defaults.WindowPollSeconds; break;
-            case "ProcessPollSeconds": _settings.ProcessPollSeconds = defaults.ProcessPollSeconds; break;
-            case "MediaPollSeconds": _settings.MediaPollSeconds = defaults.MediaPollSeconds; break;
-            case "IdleThresholdMinutes": _settings.IdleThresholdMinutes = defaults.IdleThresholdMinutes; break;
-            case "ExcludedProcesses": _settings.ExcludedProcesses = defaults.ExcludedProcesses; break;
-            case "DataRetentionDays": _settings.DataRetentionDays = defaults.DataRetentionDays; break;
-            case "AutoCleanup": _settings.AutoCleanup = defaults.AutoCleanup; break;
-            case "ApiPort": _settings.ApiPort = defaults.ApiPort; break;
-            case "AutoStartEnabled": _settings.AutoStartEnabled = defaults.AutoStartEnabled; break;
-        }
+        var prop = typeof(TrackerSettings).GetProperty(key,
+            BindingFlags.Public | BindingFlags.Instance);
+        if (prop?.CanWrite == true)
+            prop.SetValue(_settings, prop.GetValue(defaults));
     }
 
-    /// <summary>
-    /// Extracts top-level JSON property names from a JSON string.
-    /// Handles both PascalCase and camelCase.
-    /// </summary>
     private static HashSet<string> ExtractJsonKeys(string json)
     {
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -192,14 +184,12 @@ public class SettingsService
             if (headerBanner != null)
                 newCommented = headerBanner + "\n" + newCommented;
 
-            // Compare data with existing file — skip write if identical.
             if (File.Exists(_filePath))
             {
                 var oldData = StripComments(File.ReadAllText(_filePath));
                 var newData = StripComments(newCommented);
                 if (oldData == newData) return;
 
-                // Keep a backup before overwriting.
                 var bak = _filePath + ".bak";
                 try { File.Copy(_filePath, bak, overwrite: true); } catch { }
             }
@@ -219,11 +209,6 @@ public class SettingsService
         return string.Join("", kept.Where(l => l.Length > 0));
     }
 
-    /// <summary>
-    /// Serializes with JsonSerializer, then injects // comment lines before known properties.
-    /// Unknown properties (newly added to TrackerSettings but not yet in PropertyComments)
-    /// are preserved without comments rather than silently dropped.
-    /// </summary>
     private static string InjectComments(string json)
     {
         var lines = json.Split('\n');
@@ -254,22 +239,43 @@ public class SettingsService
         return result.ToString().TrimEnd('\r', '\n') + Environment.NewLine;
     }
 
-    public void Update(TrackerSettings newSettings)
+    public void Update(JsonElement json)
     {
         lock (_lock)
         {
-            _settings.TrackingEnabled = newSettings.TrackingEnabled;
-            _settings.FullscreenBypassIdle = newSettings.FullscreenBypassIdle;
-            _settings.MergeSameProcessSwitches = newSettings.MergeSameProcessSwitches;
-            _settings.WindowPollSeconds = Math.Max(1, newSettings.WindowPollSeconds);
-            _settings.ProcessPollSeconds = Math.Max(5, newSettings.ProcessPollSeconds);
-            _settings.MediaPollSeconds = Math.Max(1, newSettings.MediaPollSeconds);
-            _settings.IdleThresholdMinutes = Math.Max(1, newSettings.IdleThresholdMinutes);
-            _settings.ExcludedProcesses = newSettings.ExcludedProcesses ?? [];
-            _settings.DataRetentionDays = Math.Max(1, newSettings.DataRetentionDays);
-            _settings.AutoCleanup = newSettings.AutoCleanup;
-            _settings.ApiPort = Math.Clamp(newSettings.ApiPort, 1024, 65535);
-            _settings.AutoStartEnabled = newSettings.AutoStartEnabled;
+            var propMap = SettingProperties.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var jsonProp in json.EnumerateObject())
+            {
+                if (!propMap.TryGetValue(jsonProp.Name, out var prop))
+                    continue;
+
+                object? value;
+                if (prop.PropertyType == typeof(int))
+                {
+                    value = jsonProp.Value.GetInt32();
+                    if (IntConstraints.TryGetValue(prop.Name, out var range))
+                        value = Math.Clamp((int)value, range.Min, range.Max);
+                }
+                else if (prop.PropertyType == typeof(bool))
+                {
+                    value = jsonProp.Value.GetBoolean();
+                }
+                else if (prop.PropertyType == typeof(List<string>))
+                {
+                    if (jsonProp.Value.ValueKind == JsonValueKind.Null)
+                        value = new List<string>();
+                    else
+                        value = JsonSerializer.Deserialize<List<string>>(jsonProp.Value.GetRawText())
+                                 ?? new List<string>();
+                }
+                else
+                {
+                    continue;
+                }
+
+                prop.SetValue(_settings, value);
+            }
             Save();
         }
     }

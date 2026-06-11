@@ -36,17 +36,18 @@ public sealed class WriteQueue : BackgroundService
                 var count = 0;
 
                 var op = await _channel.Reader.ReadAsync(stoppingToken);
-                op(db);
-                count++;
+                try { op(db); count++; }
+                catch (Exception ex) { _logger.LogError(ex, "WriteQueue op failed, skipping"); }
 
                 while (_channel.Reader.TryRead(out var next))
                 {
-                    next(db);
-                    count++;
+                    try { next(db); count++; }
+                    catch (Exception ex) { _logger.LogError(ex, "WriteQueue op failed, skipping"); }
                     if (count >= BatchSize) break;
                 }
 
-                await db.SaveChangesAsync(stoppingToken);
+                if (count > 0)
+                    await db.SaveChangesAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
@@ -68,8 +69,8 @@ public sealed class WriteQueue : BackgroundService
                 var count = 0;
                 while (_channel.Reader.TryRead(out var op))
                 {
-                    op(finalDb);
-                    count++;
+                    try { op(finalDb); count++; }
+                    catch (Exception ex) { _logger.LogError(ex, "WriteQueue final drain op failed, skipping"); }
                 }
                 if (count > 0)
                     await finalDb.SaveChangesAsync(CancellationToken.None);

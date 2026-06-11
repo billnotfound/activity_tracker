@@ -32,11 +32,18 @@ public static class FocusEndpoints
 
     private static async Task<IResult> GetRangeSummary(DateTime from, DateTime to, AppDbContext db, TagService tagService)
     {
-        var start = DateTime.SpecifyKind(from, DateTimeKind.Local).ToUniversalTime();
-        var end = DateTime.SpecifyKind(to, DateTimeKind.Local).ToUniversalTime();
+        var start = NormalizeToUtc(from);
+        var end = NormalizeToUtc(to);
 
         return await BuildSummary(db, start, end, tagService);
     }
+
+    private static DateTime NormalizeToUtc(DateTime dt) => dt.Kind switch
+    {
+        DateTimeKind.Utc => dt,
+        DateTimeKind.Local => dt.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(dt, DateTimeKind.Local).ToUniversalTime()
+    };
 
     private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end, TagService tagService)
     {

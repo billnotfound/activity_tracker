@@ -25,7 +25,18 @@
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
     <!-- Only Windows targets: win-x64 and win-x86. -->
     <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
+    <!-- Trimming is applied only for self-contained publish via publish.ps1 /p: flags.
+         Framework-dependent builds are NOT trimmed (blocked by NETSDK1102 + WinForms).
+         See publish.ps1 for the actual PublishTrimmed/TrimMode parameters. -->
   </PropertyGroup>
+
+  <!-- Preserve our assemblies when trimming — they use reflection (SettingsService,
+       I18nService, JSON serialization) and are tiny (~84 KB each) so there's
+       nothing to gain by trimming them. -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="WinActivityTracker.Core" />
+    <TrimmerRootAssembly Include="taskmonitor114" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WinActivityTracker.Core\WinActivityTracker.Core.csproj" />

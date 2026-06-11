@@ -150,7 +150,9 @@ public class MediaSessionTracker : BackgroundService
         catch (Exception ex) when (ex is InvalidCastException
             or System.Runtime.InteropServices.InvalidComObjectException
             or System.Runtime.InteropServices.COMException
-            or System.Runtime.InteropServices.SEHException)
+            or System.Runtime.InteropServices.SEHException
+            or TypeLoadException
+            or FileNotFoundException)
         {
             _logger.LogDebug(ex, "MediaSessionTracker: WinRT not ready, retrying next cycle");
         }

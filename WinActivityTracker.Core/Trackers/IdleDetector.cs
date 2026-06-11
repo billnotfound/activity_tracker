@@ -36,7 +36,9 @@ public class IdleDetector
         if (!NativeMethods.GetLastInputInfo(ref info))
             return IsIdle;
 
-        var idleMs = Environment.TickCount64 - info.dwTime;
+        // Use lower 32 bits so wrap matches GetLastInputInfo's 32-bit tick counter.
+        // uint subtraction naturally handles wraparound (unchecked context).
+        var idleMs = (uint)(Environment.TickCount64 & 0xFFFFFFFF) - info.dwTime;
         var thresholdMs = _settings.Settings.IdleThresholdMinutes * 60_000L;
         IsIdle = idleMs > thresholdMs;
         return IsIdle;

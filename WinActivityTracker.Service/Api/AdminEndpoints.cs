@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
@@ -32,12 +33,22 @@ public static class AdminEndpoints
     private static IResult GetSettings(SettingsService settings) =>
         Results.Ok(settings.Settings);
 
-    private static IResult PutSettings(TrackerSettings input, SettingsService settings)
+    private static async Task<IResult> PutSettings(HttpContext context, SettingsService settings)
     {
+        using var doc = await JsonDocument.ParseAsync(context.Request.Body);
+        var json = doc.RootElement;
+
         var oldAutoStart = settings.Settings.AutoStartEnabled;
-        settings.Update(input);
-        if (input.AutoStartEnabled != oldAutoStart)
-            TrayApplicationContext.WriteRegistryAutoStart(input.AutoStartEnabled);
+        settings.Update(json);
+
+        if (json.TryGetProperty("autoStartEnabled", out var autoProp)
+            || json.TryGetProperty("AutoStartEnabled", out autoProp))
+        {
+            var newAutoStart = autoProp.GetBoolean();
+            if (newAutoStart != oldAutoStart)
+                TrayApplicationContext.WriteRegistryAutoStart(newAutoStart);
+        }
+
         return Results.Ok(settings.Settings);
     }
 
