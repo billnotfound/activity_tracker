@@ -1,7 +1,5 @@
 // Live status window — current focus, Top 5, tracking controls.
 // Uses TableLayoutPanel with Anchor — no hardcoded Y positions.
-using System.Net.Http.Json;
-
 using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Native;

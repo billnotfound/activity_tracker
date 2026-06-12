@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
-using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Service.Native;
 
@@ -134,6 +133,8 @@ public static class AdminEndpoints
         var deletedMedia = await db.MediaSessionRecords.Where(m => m.StartTime < cutoff).ExecuteDeleteAsync();
         var deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
 
+        // ProcessIcons is a cache table, intentionally retained by cleanup.
+
         await db.Database.ExecuteSqlRawAsync("PRAGMA optimize");
 
         if (vacuum == true)
@@ -162,29 +163,34 @@ public static class AdminEndpoints
         if (confirm != true)
             return Results.BadRequest(new { error = "Set ?confirm=true to delete all data. This cannot be undone." });
 
-        var deletedFocus = await db.FocusChanges.ExecuteDeleteAsync();
-        var deletedWindows = await db.WindowSnapshots.ExecuteDeleteAsync();
-        var deletedSessions = await db.WindowSessions.ExecuteDeleteAsync();
-        var deletedProcesses = await db.ProcessSnapshots.ExecuteDeleteAsync();
-        var deletedProcSessions = await db.ProcessSessions.ExecuteDeleteAsync();
-        var deletedMedia = await db.MediaSessionRecords.ExecuteDeleteAsync();
-        var deletedSystemEvents = await db.SystemEvents.ExecuteDeleteAsync();
+        var tables = await db.Database.SqlQuery<string>($"""
+            SELECT name AS Value FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        """).ToListAsync();
+
+        var deleted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var table in tables)
+        {
+            var quoted = QuoteSqliteIdentifier(table);
+            var deleteSql = "DELETE FROM " + quoted;
+            deleted[table] = await db.Database.ExecuteSqlRawAsync(deleteSql);
+        }
+
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync("DELETE FROM sqlite_sequence");
+        }
+        catch
+        {
+            // sqlite_sequence exists only when AUTOINCREMENT tables have been created.
+        }
 
         await db.Database.ExecuteSqlRawAsync("VACUUM");
 
         return Results.Ok(new
         {
             message = "All data deleted. Database schema preserved.",
-            deleted = new
-            {
-                focusChanges = deletedFocus,
-                windowSnapshots = deletedWindows,
-                windowSessions = deletedSessions,
-                processSnapshots = deletedProcesses,
-                processSessions = deletedProcSessions,
-                mediaRecords = deletedMedia,
-                systemEvents = deletedSystemEvents
-            }
+            deleted
         });
     }
 
@@ -193,6 +199,9 @@ public static class AdminEndpoints
         await db.Database.ExecuteSqlRawAsync("VACUUM");
         return Results.Ok(new { message = "VACUUM complete." });
     }
+
+    private static string QuoteSqliteIdentifier(string value) =>
+        "\"" + value.Replace("\"", "\"\"") + "\"";
 }
 
 internal sealed record PathInput(string? ConfigDir, string? DataDir);

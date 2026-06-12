@@ -14,6 +14,7 @@ public class ProcessTracker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SettingsService _settings;
     private readonly ProcessNameCache _processCache;
+    private readonly IconService _iconService;
     private readonly ILogger<ProcessTracker> _logger;
 
     private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
@@ -26,17 +27,22 @@ public class ProcessTracker : BackgroundService
     private readonly List<(int Pid, string Name, Models.ProcessSession Session)> _reusableNewSessions = new();
 
     public ProcessTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
-        ProcessNameCache processCache, ILogger<ProcessTracker> logger)
+        ProcessNameCache processCache, IconService iconService, ILogger<ProcessTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
         _processCache = processCache;
+        _iconService = iconService;
         _logger = logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("ProcessTracker started, interval: {Interval}s", _settings.Settings.ProcessPollSeconds);
+
+        // Close orphan sessions from a previous crash (EndTime == null).
+        await CloseOrphanSessions();
+
         await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -62,6 +68,31 @@ public class ProcessTracker : BackgroundService
         await CloseAllProcessSessions();
     }
 
+    private async Task CloseOrphanSessions()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var now = DateTime.UtcNow;
+
+            var orphans = await db.ProcessSessions
+                .Where(p => p.EndTime == null)
+                .ToListAsync();
+
+            if (orphans.Count > 0)
+            {
+                foreach (var o in orphans) o.EndTime = now;
+                await db.SaveChangesAsync();
+                _logger.LogInformation("Closed {Count} orphan process sessions from previous run", orphans.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to close orphan process sessions");
+        }
+    }
+
     private async Task SyncProcessSessions()
     {
         using var scope = _scopeFactory.CreateScope();
@@ -69,8 +100,9 @@ public class ProcessTracker : BackgroundService
         var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
 
-        // Refresh cache via snapshot API (zero managed Process objects).
-        _processCache.RefreshAll();
+        // Cache maintained by WMI events when active, otherwise poll.
+        if (!_processCache.IsWmiActive)
+            _processCache.RefreshAll();
         var processMap = _processCache.Snapshot;
 
         // Find PIDs with visible top-level windows.
@@ -84,10 +116,10 @@ public class ProcessTracker : BackgroundService
         }, IntPtr.Zero);
 
         _reusableBg.Clear();
-        foreach (var (pid, name) in processMap)
+        foreach (var (pid, entry) in processMap)
         {
             if (!_reusableVisiblePids.Contains(pid))
-                _reusableBg.Add((name, pid));
+                _reusableBg.Add((entry.Name, pid));
         }
 
         _reusablePids.Clear();
@@ -132,6 +164,10 @@ public class ProcessTracker : BackgroundService
             _runningProcesses[pid] = (session.Id, name);
 
         foreach (var pid in _reusableGonePids) _runningProcesses.Remove(pid);
+
+        // Kick off icon collection for visible processes (fire-and-forget).
+        var visiblePids = _reusableVisiblePids.ToList();
+        _ = _iconService.EnsureIconsAsync(visiblePids);
     }
 
     private async Task CloseAllProcessSessions()

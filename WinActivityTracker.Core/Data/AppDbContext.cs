@@ -19,6 +19,7 @@ public class AppDbContext : DbContext
     public DbSet<Heartbeat> Heartbeats => Set<Heartbeat>();
     public DbSet<DailySummary> DailySummaries => Set<DailySummary>();
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
+    public DbSet<ProcessIcon> ProcessIcons => Set<ProcessIcon>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -80,6 +81,12 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             // Ensures one summary row per process per day — enables INSERT OR REPLACE patterns.
             e.HasIndex(x => new { x.Date, x.ProcessName }).IsUnique();
+        });
+
+        modelBuilder.Entity<ProcessIcon>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.IconHash).IsUnique();
         });
     }
 }

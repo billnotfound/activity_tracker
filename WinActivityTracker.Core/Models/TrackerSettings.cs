@@ -4,8 +4,6 @@
 // PUT /api/settings take effect immediately without restart.
 // Minimum values are enforced by SettingsService.Update() to prevent accidental 0-interval loops.
 // Smart-merge on startup: new properties get defaults, existing values preserved.
-using System.Text.Json.Serialization;
-
 namespace WinActivityTracker.Core.Models;
 
 public class TrackerSettings

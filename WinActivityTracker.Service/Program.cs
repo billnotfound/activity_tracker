@@ -21,6 +21,9 @@ if (Environment.UserInteractive)
 var silent = args.Any(a => a is "--autostart" or "--silent");
 var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 
+// Reduce idle thread count — tray app doesn't need CPU-count worker threads.
+ThreadPool.SetMinThreads(1, 1);
+
 var appPaths = new AppPaths();
 appPaths.MigrateIfNeeded();
 
@@ -35,7 +38,7 @@ var apiPort = ProgramStartup.ParsePortFromSettings(settingsPath);
 // ===== Pre-flight checks (skipped in test mode) =====
 if (!isTesting)
 {
-    if (!ProgramStartup.EnsureSingleInstance(silent)) return;
+    if (!ProgramStartup.EnsureSingleInstance(appPaths.DataDir, silent)) return;
     if (!ProgramStartup.IsPortAvailable(apiPort, silent)) return;
 }
 
@@ -43,14 +46,19 @@ var mirror = new ConsoleMirror(Console.Out);
 Console.SetOut(mirror);
 
 // ===== DI setup =====
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateSlimBuilder(args);
+builder.Logging.AddConsole();
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
     o.SerializerOptions.PropertyNameCaseInsensitive = true;
     o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 builder.Services.AddSingleton(mirror);
-builder.WebHost.ConfigureKestrel(o => o.Limits.MaxConcurrentConnections = 10);
+builder.WebHost.ConfigureKestrel(o =>
+{
+    o.Limits.MaxConcurrentConnections = 10;
+    o.AddServerHeader = false;
+});
 
 var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
     ?? Path.Combine(appPaths.DataDir, "activity.db");
@@ -61,6 +69,7 @@ builder.Services.AddSingleton<SettingsService>();
 builder.Services.AddSingleton<TagService>();
 builder.Services.AddSingleton<TitleNormalizer>();
 builder.Services.AddSingleton<ProcessNameCache>();
+builder.Services.AddSingleton<IconService>();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
 builder.Services.AddSingleton<IdleDetector>();
@@ -91,6 +100,11 @@ if (serveSpa)
 // ===== DB init =====
 await ProgramStartup.InitializeDatabase(app.Services);
 
+// ===== Process cache init: snapshot once, then WMI events keep it current =====
+var processCache = app.Services.GetRequiredService<ProcessNameCache>();
+processCache.RefreshAll();
+processCache.StartWmiWatch();
+
 // ===== API endpoints =====
 app.MapAdminEndpoints();
 app.MapFocusEndpoints();
@@ -108,6 +122,7 @@ if (!Environment.UserInteractive)
 {
     Console.WriteLine($"WinActivityTracker starting as Windows Service on http://localhost:{apiPort}");
     await app.RunAsync();
+    ProgramStartup.DeletePidFile(appPaths.DataDir);
     return;
 }
 
@@ -153,6 +168,8 @@ try
     await shutdownDb.SaveChangesAsync();
 }
 catch (Exception ex) { Console.WriteLine($"Failed to record shutdown: {ex.Message}"); }
+
+ProgramStartup.DeletePidFile(appPaths.DataDir);
 
 await app.StopAsync();
 try { await webTask; } catch (OperationCanceledException) { }

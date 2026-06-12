@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -53,6 +52,8 @@ public class WindowTracker : BackgroundService
     {
         _logger.LogInformation("WindowTracker started, interval: {Interval}s", _settings.Settings.WindowPollSeconds);
 
+        await CloseOrphanSessions();
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -105,6 +106,31 @@ public class WindowTracker : BackgroundService
         }
 
         await CloseAllWindowSessions();
+    }
+
+    private async Task CloseOrphanSessions()
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var now = DateTime.UtcNow;
+
+            var orphans = await db.WindowSessions
+                .Where(w => w.CloseTime == null)
+                .ToListAsync();
+
+            if (orphans.Count > 0)
+            {
+                foreach (var o in orphans) o.CloseTime = now;
+                await db.SaveChangesAsync();
+                _logger.LogInformation("Closed {Count} orphan window sessions from previous run", orphans.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to close orphan window sessions");
+        }
     }
 
     private void TrackForegroundWindow()
@@ -264,25 +290,11 @@ public class WindowTracker : BackgroundService
     public static List<(string ProcessName, string Title, bool IsFocused)> EnumerateVisibleWindows(
         ProcessNameCache cache)
     {
-        var results = new List<(string, string, bool)>();
-        var foregroundHwnd = NativeMethods.GetForegroundWindow();
-
-        NativeMethods.EnumWindows((hWnd, _) =>
-        {
-            if (!NativeMethods.IsWindowVisible(hWnd)) return true;
-            if (NativeMethods.IsIconic(hWnd)) return true;
-
-            var title = GetWindowText(hWnd);
-            if (string.IsNullOrEmpty(title)) return true;
-
-            NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            var processName = cache.GetName((int)pid);
-            if (processName == null) return true;
-
-            results.Add((processName, title, hWnd == foregroundHwnd));
-            return true;
-        }, IntPtr.Zero);
-
+        var raw = new List<(IntPtr, string, string, bool)>();
+        EnumerateVisibleWindowsInto(raw, cache);
+        var results = new List<(string, string, bool)>(raw.Count);
+        foreach (var (_, process, title, focused) in raw)
+            results.Add((process, title, focused));
         return results;
     }
 
