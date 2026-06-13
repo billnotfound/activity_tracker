@@ -109,6 +109,7 @@ const fromDate = ref(toLocalDateString(new Date(Date.now() - 86400000))) // 过�
 const toDate = ref(toLocalDateString(new Date()))
 const data = ref([])
 const timeline = ref([])
+const systemEvents = ref([])
 const sortAsc = ref(false)
 const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
@@ -187,6 +188,17 @@ async function loadData() {
     console.log('Timeline API returned', timelineData.length, 'records')
     timeline.value = timelineData
 
+    // Load system events (sleep/shutdown periods)
+    const eventsUrl = `${apiBase}/api/system/events?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59`
+    console.log('Fetching system events:', eventsUrl)
+    const r3 = await fetch(eventsUrl)
+    if (r3.ok) {
+      systemEvents.value = await r3.json()
+      console.log('System events:', systemEvents.value.length, 'sleep/shutdown periods')
+    } else {
+      systemEvents.value = []
+    }
+
     loading.value = false
     await nextTick()
     await renderTimeline()
@@ -253,11 +265,25 @@ async function renderTimeline() {
 
   console.log('Process colors:', colorMap)
 
-  // Step 3: Filter to only include top 15 processes and exclude SystemSleep
+  // Step 3: Filter to only include top 15 processes (keep SystemSleep for now)
   const filteredTimeline = timeline.value
-    .filter(item => processList.includes(item.processName) && item.processName !== 'SystemSleep')
+    .filter(item => processList.includes(item.processName))
 
-  console.log('Rendering', filteredTimeline.length, 'records (all data points, excluding sleep)')
+  console.log('Rendering', filteredTimeline.length, 'records (all data points)')
+
+  // Step 3.5: Build sleep period map for quick lookup
+  const sleepPeriods = systemEvents.value.map(e => ({
+    start: new Date(e.timestamp).getTime(),
+    end: new Date(e.timestamp).getTime() + e.durationSeconds * 1000
+  }))
+
+  // Helper function to check if a timestamp is during sleep
+  const isDuringSleep = (timestamp) => {
+    const time = new Date(timestamp).getTime()
+    return sleepPeriods.some(period => time >= period.start && time < period.end)
+  }
+
+  console.log('Sleep periods:', sleepPeriods.length)
 
   // Build chart data
   const focusedWindows = []
@@ -268,20 +294,25 @@ async function renderTimeline() {
     const start = new Date(item.timestamp).getTime()
     const end = start + item.durationSeconds * 1000
     const color = colorMap[item.processName]
+    const duringsSleep = isDuringSleep(item.timestamp)
 
     focusedWindows.push({
       name: item.processName,
       value: [processIndex, start, end, item.durationSeconds],
       itemStyle: {
-        color: color,
+        color: duringsSleep ? 'transparent' : color,
+        borderColor: color,
+        borderWidth: duringsSleep ? 2 : 0,
       },
       tooltip: {
         formatter: () => {
+          const sleepWarning = duringsSleep ? '<div style="color:#FFA500;font-size:0.85em;">⚠️ 休眠时段</div>' : ''
           return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${item.processName}</div>
                   <div style="font-size:0.9em;">${item.windowTitle}</div>
                   <div style="margin-top:4px;color:var(--primary-color);">
                     ${toLocalTime(item.timestamp)} · ${item.durationSeconds.toFixed(1)}s
-                  </div>`
+                  </div>
+                  ${sleepWarning}`
         },
       },
     })

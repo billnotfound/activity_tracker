@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Core.Trackers;
 
@@ -11,6 +12,7 @@ public static class WindowEndpoints
     {
         app.MapGet("/api/windows/current", GetCurrentWindows);
         app.MapGet("/api/windows/timeline", GetTimeline);
+        app.MapGet("/api/system/events", GetSystemEvents);
     }
 
     private static IResult GetCurrentWindows(SettingsService settings, ProcessNameCache processCache)
@@ -60,5 +62,31 @@ public static class WindowEndpoints
             .ToListAsync();
 
         return Results.Ok(new { data, total, offset = skip, limit = take });
+    }
+
+    private static async Task<IResult> GetSystemEvents(
+        DateTime? from, DateTime? to, AppDbContext db)
+    {
+        var start = from.HasValue
+            ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
+            : DateTime.UtcNow.AddDays(-7);
+        var end = to.HasValue
+            ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
+            : DateTime.UtcNow;
+
+        var events = await db.SystemEvents
+            .AsNoTracking()
+            .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
+                && e.Timestamp >= start && e.Timestamp <= end)
+            .OrderBy(e => e.Timestamp)
+            .Select(e => new
+            {
+                e.EventType,
+                e.Timestamp,
+                e.DurationSeconds
+            })
+            .ToListAsync();
+
+        return Results.Ok(events);
     }
 }
