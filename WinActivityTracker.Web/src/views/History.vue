@@ -94,6 +94,7 @@
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { toLocalDateString, toLocalTime, fmtDuration } from '../utils/time.js'
+import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
@@ -104,7 +105,7 @@ import Column from 'primevue/column'
 const apiBase = inject('apiBase')
 const { t } = useI18n()
 
-const fromDate = ref(toLocalDateString(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+const fromDate = ref(toLocalDateString(new Date(Date.now() - 86400000))) // 过去1天
 const toDate = ref(toLocalDateString(new Date()))
 const data = ref([])
 const timeline = ref([])
@@ -152,57 +153,131 @@ function toggleSort() {
 async function loadData() {
   loading.value = true
   error.value = ''
-  
+
   try {
+    console.log('Loading data from', fromDate.value, 'to', toDate.value)
+
     // Load summary
-    const r1 = await fetch(`${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`)
+    const summaryUrl = `${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`
+    console.log('Fetching summary:', summaryUrl)
+    const r1 = await fetch(summaryUrl)
     if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
     const res = await r1.json()
-    data.value = Array.isArray(res) ? res : res.items || []
+    const rawData = Array.isArray(res) ? res : res.items || []
+
+    // Merge by normalized process name to handle inconsistent .exe suffixes
+    const mergedData = mergeByProcessName(rawData, (item, acc) => {
+      acc.totalSeconds += item.totalSeconds
+      acc.switchCount += item.switchCount
+      if (item.adjustedSwitchCount !== undefined) {
+        acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
+      }
+    })
+
+    data.value = mergedData
     totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
 
     // Load timeline for visualization
-    const r2 = await fetch(`${apiBase}/api/windows/timeline?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=5000`)
+    const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=5000`
+    console.log('Fetching timeline:', timelineUrl)
+    const r2 = await fetch(timelineUrl)
     if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
     const timelineRes = await r2.json()
-    timeline.value = timelineRes.data || timelineRes
+    const timelineData = timelineRes.data || timelineRes
+    console.log('Timeline API returned', timelineData.length, 'records')
+    timeline.value = timelineData
 
     loading.value = false
     await nextTick()
-    renderTimeline()
+    await renderTimeline()
   } catch (e) {
-    console.error(e)
+    console.error('Load error:', e)
     error.value = `Failed to load: ${e.message}`
     loading.value = false
   }
 }
 
-function renderTimeline() {
-  if (!timelineChartRef.value || !timeline.value.length) return
+async function renderTimeline() {
+  if (!timelineChartRef.value) {
+    console.warn('Timeline chart ref not ready')
+    return
+  }
 
-  // Group timeline by process
-  const processList = [...new Set(timeline.value.map(t => t.processName))].slice(0, 15)
-  
-  // Convert timeline to chart data
-  const focusData = []
+  if (!timeline.value.length) {
+    console.warn('No timeline data to render')
+    // Clear chart if no data
+    if (timelineChart) {
+      timelineChart.clear()
+    }
+    return
+  }
+
+  console.log('Rendering timeline with', timeline.value.length, 'records')
+
+  // Step 1: Use all data to calculate process statistics (for accurate representation)
+  const processStats = {}
   timeline.value.forEach(item => {
+    if (!processStats[item.processName]) {
+      processStats[item.processName] = 0
+    }
+    processStats[item.processName] += item.durationSeconds
+  })
+
+  // Step 2: Sort processes by total duration (descending) and take top 15
+  const processList = Object.entries(processStats)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .map(([name]) => name)
+
+  console.log('Top 15 processes:', processList)
+
+  // Step 2.5: Fetch colors for all processes
+  const colorPromises = processList.map(async (processName) => {
+    try {
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
+      if (response.ok) {
+        const iconData = await response.json()
+        return iconData.colorPrimary || '#6B7FD7'
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch color for ${processName}:`, e)
+    }
+    return '#6B7FD7'
+  })
+
+  const processColors = await Promise.all(colorPromises)
+  const colorMap = {}
+  processList.forEach((name, idx) => {
+    colorMap[name] = processColors[idx]
+  })
+
+  console.log('Process colors:', colorMap)
+
+  // Step 3: Filter to only include top 15 processes and exclude SystemSleep
+  const filteredTimeline = timeline.value
+    .filter(item => processList.includes(item.processName) && item.processName !== 'SystemSleep')
+
+  console.log('Rendering', filteredTimeline.length, 'records (all data points, excluding sleep)')
+
+  // Build chart data
+  const focusedWindows = []
+  filteredTimeline.forEach(item => {
     const processIndex = processList.indexOf(item.processName)
     if (processIndex === -1) return
-    
+
     const start = new Date(item.timestamp).getTime()
     const end = start + item.durationSeconds * 1000
-    
-    focusData.push({
+    const color = colorMap[item.processName]
+
+    focusedWindows.push({
       name: item.processName,
       value: [processIndex, start, end, item.durationSeconds],
       itemStyle: {
-        color: getProcessColor(item.processName),
-        borderColor: 'var(--border-color)',
-        borderWidth: 1,
+        color: color,
       },
       tooltip: {
         formatter: () => {
-          return `<div style="font-weight:600;margin-bottom:4px;">${item.processName}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${item.processName}</div>
                   <div style="font-size:0.9em;">${item.windowTitle}</div>
                   <div style="margin-top:4px;color:var(--primary-color);">
                     ${toLocalTime(item.timestamp)} · ${item.durationSeconds.toFixed(1)}s
@@ -212,20 +287,52 @@ function renderTimeline() {
     })
   })
 
-  if (!timelineChart) {
-    timelineChart = echarts.init(timelineChartRef.value)
+  console.log('Created', focusedWindows.length, 'chart items')
+
+  // Use the query date range for X-axis, not the data range
+  // This ensures the timeline shows the full requested period
+  const xAxisMin = new Date(`${fromDate.value}T00:00:00`).getTime()
+  const xAxisMax = new Date(`${toDate.value}T23:59:59`).getTime()
+
+  console.log('X-axis range (query dates):', {
+    from: fromDate.value,
+    to: toDate.value,
+    xAxisMin: new Date(xAxisMin).toISOString(),
+    xAxisMax: new Date(xAxisMax).toISOString()
+  })
+
+  // Debug: log first item
+  if (focusedWindows.length > 0) {
+    console.log('First chart item:', {
+      name: focusedWindows[0].name,
+      value: focusedWindows[0].value,
+      itemStyle: focusedWindows[0].itemStyle
+    })
   }
 
-  timelineChart.setOption({
+  // Always dispose and recreate the chart instance for clean state
+  if (timelineChart) {
+    console.log('Disposing existing ECharts instance')
+    timelineChart.dispose()
+    timelineChart = null
+  }
+
+  timelineChart = echarts.init(timelineChartRef.value)
+  console.log('ECharts instance created')
+
+  const option = {
+    animation: false,
     grid: {
-      left: 120,
+      left: 20,
       right: 40,
       top: 40,
       bottom: 60,
-      containLabel: false,
+      containLabel: true,
     },
     xAxis: {
       type: 'time',
+      min: xAxisMin,
+      max: xAxisMax,
       axisLabel: {
         color: 'var(--text-color)',
         fontWeight: 600,
@@ -242,15 +349,16 @@ function renderTimeline() {
       type: 'category',
       data: processList,
       axisLabel: {
-        color: 'var(--text-color)',
-        fontWeight: 600,
-        fontSize: 12,
+        show: false,
       },
       axisLine: {
-        lineStyle: { color: 'var(--border-color)', width: 2 },
+        show: false,
+      },
+      axisTick: {
+        show: false,
       },
       splitLine: {
-        lineStyle: { type: 'dashed', color: 'var(--surface-200)' },
+        show: false,
       },
     },
     series: [
@@ -261,7 +369,7 @@ function renderTimeline() {
           x: [1, 2],
           y: 0,
         },
-        data: focusData,
+        data: focusedWindows,
       },
     ],
     tooltip: {
@@ -272,7 +380,24 @@ function renderTimeline() {
         color: 'var(--text-color)',
       },
     },
-  })
+  }
+  
+  console.log('Setting option with', focusedWindows.length, 'data points')
+  console.log('Option object:', JSON.stringify({
+    seriesDataLength: option.series[0].data.length,
+    yAxisData: option.yAxis.data,
+    gridConfig: option.grid
+  }))
+  
+  timelineChart.setOption(option, true) // notMerge: true
+  
+  // 强制刷新
+  setTimeout(() => {
+    timelineChart.resize()
+    console.log('Chart resized after 100ms')
+  }, 100)
+
+  console.log('Timeline rendered successfully')
 }
 
 function renderBar(params, api) {
@@ -281,14 +406,43 @@ function renderBar(params, api) {
   const end = api.coord([api.value(2), categoryIndex])
   const height = api.size([0, 1])[1] * 0.6
 
+  const rectShape = {
+    x: start[0],
+    y: start[1] - height / 2,
+    width: Math.max(end[0] - start[0], 2),
+    height: height,
+  }
+
+  // Debug: log first render
+  if (params.dataIndex === 0) {
+    const debugInfo = {
+      dataIndex: params.dataIndex,
+      categoryIndex,
+      value0: api.value(0),
+      value1: api.value(1),
+      value1Date: new Date(api.value(1)).toISOString(),
+      value2: api.value(2),
+      value2Date: new Date(api.value(2)).toISOString(),
+      value3: api.value(3),
+      startCoord: [start[0], start[1]],
+      endCoord: [end[0], end[1]],
+      size: [api.size([0, 1])[0], api.size([0, 1])[1]],
+      rectShape: {
+        x: rectShape.x,
+        y: rectShape.y,
+        width: rectShape.width,
+        height: rectShape.height
+      },
+      hasStyle: !!api.style(),
+      fill: api.style()?.fill
+    }
+    console.log('renderBar called for first item:')
+    console.log(JSON.stringify(debugInfo, null, 2))
+  }
+
   return {
     type: 'rect',
-    shape: {
-      x: start[0],
-      y: start[1] - height / 2,
-      width: Math.max(end[0] - start[0], 2),
-      height: height,
-    },
+    shape: rectShape,
     style: api.style(),
   }
 }
@@ -396,6 +550,8 @@ function getProcessColor(name) {
   width: 100%;
   height: 400px;
   margin-bottom: 16px;
+  border: 2px solid var(--primary-color); /* 调试：确认容器可见 */
+  background: var(--surface-card);
 }
 
 .timeline-legend {

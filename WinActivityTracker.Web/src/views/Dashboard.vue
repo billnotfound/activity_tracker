@@ -39,49 +39,6 @@
         <div v-else ref="focusChartRef" class="chart-container"></div>
       </MemphisCard>
 
-      <MemphisCard class="chart-card">
-        <h3 class="card-title">{{ t('dashboard.card.switchCount') }}</h3>
-        <MemphisSkeleton v-if="loading" :lines="5" />
-        <div v-else ref="switchChartRef" class="chart-container"></div>
-      </MemphisCard>
-    </div>
-
-    <!-- Data tables row -->
-    <div class="tables-row">
-      <MemphisCard class="data-card">
-        <div class="card-header-row">
-          <h3 class="card-title">{{ t('dashboard.card.overview') }}</h3>
-          <button class="sort-btn" @click="toggleSort">
-            {{ sortAsc ? '↑' : '↓' }}
-          </button>
-        </div>
-        <small v-if="totalSleepSeconds > 0" class="sleep-info">
-          {{ t('dashboard.sleepOff', { duration: fmtDuration(totalSleepSeconds) }) }}
-        </small>
-        <MemphisSkeleton v-if="loading" :lines="8" />
-        <div v-else class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>{{ t('dashboard.table.process') }}</th>
-                <th>{{ t('dashboard.table.totalDuration') }}</th>
-                <th>{{ t('dashboard.table.switches') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="d in sortedSummary" :key="d.processName">
-                <td><strong>{{ d.processName }}</strong></td>
-                <td>{{ fmtDuration(d.totalSeconds) }}</td>
-                <td>{{ mergeSameProcess ? (d.adjustedSwitchCount ?? d.switchCount) : d.switchCount }}</td>
-              </tr>
-              <tr v-if="!summary.length">
-                <td colspan="3" class="no-data">{{ t('dashboard.table.noData') }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </MemphisCard>
-
       <MemphisCard class="data-card">
         <h3 class="card-title">
           {{ t('dashboard.card.recentMedia') }}
@@ -123,6 +80,7 @@
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick } from 'vue'
 import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
+import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
@@ -150,9 +108,7 @@ const loading = ref(true)
 const sortAsc = ref(false)
 
 const focusChartRef = ref(null)
-const switchChartRef = ref(null)
 let focusChart = null
-let switchChart = null
 let timer = null
 
 function setPeriod(p) {
@@ -277,10 +233,6 @@ onUnmounted(() => {
     focusChart.dispose()
     focusChart = null
   }
-  if (switchChart) {
-    switchChart.dispose()
-    switchChart = null
-  }
 })
 
 async function loadSummary() {
@@ -297,7 +249,18 @@ async function fetchSummary() {
     const r = await fetch(url)
     if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
-    summary.value = Array.isArray(res) ? res : res.items || []
+    const rawData = Array.isArray(res) ? res : res.items || []
+
+    // Merge by normalized process name to handle inconsistent .exe suffixes
+    const mergedData = mergeByProcessName(rawData, (item, acc) => {
+      acc.totalSeconds += item.totalSeconds
+      acc.switchCount += item.switchCount
+      if (item.adjustedSwitchCount !== undefined) {
+        acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
+      }
+    })
+
+    summary.value = mergedData
     totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
     error.value = ''
     loading.value = false
@@ -334,30 +297,68 @@ function getColor(name, alpha = 1) {
   return colors[Math.abs(hash) % colors.length]
 }
 
-function renderCharts(data) {
-  if (!focusChartRef.value || !switchChartRef.value) return
-  
+async function renderCharts(data) {
+  if (!focusChartRef.value) return
+
   const top = data.slice(0, 10)
   const labels = top.map(d => d.processName)
   const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
-  const switchData = top.map(d =>
-    mergeSameProcess.value ? d.adjustedSwitchCount ?? d.switchCount : d.switchCount
-  )
-  const colors = labels.map(name => getColor(name))
+
+  // Fetch icons and colors for all processes
+  const iconPromises = labels.map(async (processName) => {
+    try {
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
+      if (response.ok) {
+        const iconData = await response.json()
+        return {
+          icon: iconData.iconData && iconData.iconData.length > 0
+            ? `data:image/png;base64,${iconData.iconData}`
+            : null,
+          colorPrimary: iconData.colorPrimary || '#6B7FD7',
+          colorSecondary: iconData.colorSecondary || '#DD7596',
+          colorAccent: iconData.colorAccent || '#06D6A0'
+        }
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch icon for ${processName}:`, e)
+    }
+    return {
+      icon: null,
+      colorPrimary: '#6B7FD7',
+      colorSecondary: '#DD7596',
+      colorAccent: '#06D6A0'
+    }
+  })
+
+  const iconDataList = await Promise.all(iconPromises)
+  const icons = iconDataList.map(d => d.icon)
+  const colors = iconDataList.map(d => d.colorPrimary)
 
   // Focus duration chart
   if (!focusChart) {
     focusChart = echarts.init(focusChartRef.value)
   }
   focusChart.setOption({
-    grid: { left: 60, right: 20, top: 20, bottom: 60 },
+    grid: { left: 60, right: 20, top: 20, bottom: 80 },
     xAxis: {
       type: 'category',
       data: labels,
       axisLabel: {
-        rotate: 45,
-        color: 'var(--text-color)',
-        fontWeight: 600,
+        interval: 0,
+        formatter: (value, index) => {
+          // Return image placeholder that will be replaced by rich text
+          return `{img${index}|}`
+        },
+        rich: icons.reduce((acc, icon, idx) => {
+          acc[`img${idx}`] = {
+            backgroundColor: {
+              image: icon || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiNDQ0NDQ0MiLz4KICA8dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTYiPj88L3RleHQ+Cjwvc3ZnPg=='
+            },
+            height: 32,
+            width: 32
+          }
+          return acc
+        }, {})
       },
       axisLine: { lineStyle: { color: 'var(--border-color)', width: 2 } },
     },
@@ -399,64 +400,6 @@ function renderCharts(data) {
       formatter: params => {
         const p = params[0]
         return `<strong>${p.name}</strong><br/>${p.value} ${t('dashboard.chart.durationUnit')}`
-      },
-    },
-  })
-
-  // Switch count chart
-  if (!switchChart) {
-    switchChart = echarts.init(switchChartRef.value)
-  }
-  switchChart.setOption({
-    grid: { left: 60, right: 20, top: 20, bottom: 60 },
-    xAxis: {
-      type: 'category',
-      data: labels,
-      axisLabel: {
-        rotate: 45,
-        color: 'var(--text-color)',
-        fontWeight: 600,
-      },
-      axisLine: { lineStyle: { color: 'var(--border-color)', width: 2 } },
-    },
-    yAxis: {
-      type: 'value',
-      name: t('dashboard.chart.switchAxis'),
-      nameTextStyle: { color: 'var(--text-color)', fontWeight: 600 },
-      axisLabel: { color: 'var(--text-color)' },
-      axisLine: { lineStyle: { color: 'var(--border-color)', width: 2 } },
-      splitLine: { lineStyle: { type: 'dashed', color: 'var(--surface-200)' } },
-    },
-    series: [
-      {
-        type: 'bar',
-        data: switchData.map((val, idx) => ({
-          value: val,
-          itemStyle: {
-            color: colors[idx],
-            borderColor: 'var(--border-color)',
-            borderWidth: 2,
-          },
-        })),
-        label: { show: false },
-        emphasis: {
-          itemStyle: {
-            shadowBlur: 10,
-            shadowColor: 'rgba(0,0,0,0.3)',
-          },
-        },
-      },
-    ],
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      backgroundColor: 'var(--surface-card)',
-      borderColor: 'var(--primary-color)',
-      borderWidth: 2,
-      textStyle: { color: 'var(--text-color)', fontWeight: 600 },
-      formatter: params => {
-        const p = params[0]
-        return `<strong>${p.name}</strong><br/>${p.value} ${t('dashboard.chart.switchUnit')}`
       },
     },
   })
@@ -544,7 +487,8 @@ function renderCharts(data) {
   gap: 24px;
 }
 
-.chart-card {
+.chart-card,
+.data-card {
   min-height: 350px;
 }
 
@@ -560,16 +504,6 @@ function renderCharts(data) {
 .chart-container {
   width: 100%;
   height: 300px;
-}
-
-.tables-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 24px;
-}
-
-.data-card {
-  min-height: 300px;
 }
 
 .card-header-row {

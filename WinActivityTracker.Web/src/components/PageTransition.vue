@@ -1,5 +1,5 @@
 <template>
-  <Transition :name="currentTransition">
+  <Transition :name="currentTransition" mode="out-in">
     <slot></slot>
   </Transition>
 </template>
@@ -43,17 +43,15 @@ watch(() => route.path, (newPath, oldPath) => {
 .slide-left-enter-active,
 .slide-left-leave-active {
   transition: transform 0.3s ease, opacity 0.3s ease;
-  position: absolute;
-  width: 100%;
 }
 
 .slide-left-enter-from {
-  transform: translateX(100%);
+  transform: translateX(30%);
   opacity: 0;
 }
 
 .slide-left-leave-to {
-  transform: translateX(-100%);
+  transform: translateX(-30%);
   opacity: 0;
 }
 
@@ -61,17 +59,15 @@ watch(() => route.path, (newPath, oldPath) => {
 .slide-right-enter-active,
 .slide-right-leave-active {
   transition: transform 0.3s ease, opacity 0.3s ease;
-  position: absolute;
-  width: 100%;
 }
 
 .slide-right-enter-from {
-  transform: translateX(-100%);
+  transform: translateX(-30%);
   opacity: 0;
 }
 
 .slide-right-leave-to {
-  transform: translateX(100%);
+  transform: translateX(30%);
   opacity: 0;
 }
 
@@ -79,8 +75,6 @@ watch(() => route.path, (newPath, oldPath) => {
 .geometric-enter-active,
 .geometric-leave-active {
   transition: clip-path 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55), opacity 0.5s ease;
-  position: absolute;
-  width: 100%;
 }
 
 .geometric-enter-from {

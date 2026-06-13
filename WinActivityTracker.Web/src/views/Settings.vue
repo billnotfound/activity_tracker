@@ -146,6 +146,13 @@
           <div class="button-row">
             <Button label="刷新统计" icon="pi pi-refresh" @click="loadDbStats" :loading="false" />
             <Button
+              label="清除图标缓存"
+              icon="pi pi-image"
+              severity="secondary"
+              @click="clearIconCache"
+              :loading="clearingIcons"
+            />
+            <Button
               label="清理旧数据"
               icon="pi pi-trash"
               severity="warning"
@@ -184,6 +191,9 @@
             </div>
           </div>
 
+          <div v-if="iconCacheResult" class="alert-banner success mt-3">
+            {{ iconCacheResult }}
+          </div>
           <div v-if="cleanupResult" class="alert-banner success mt-3">
             清理完成：删除 {{ cleanupResult.deleted.focusChanges }} 条焦点记录
           </div>
@@ -243,8 +253,10 @@ const form = reactive({
 const excludeText = ref('')
 const saving = ref(false)
 const cleaning = ref(false)
+const clearingIcons = ref(false)
 const dbStats = ref(null)
 const cleanupResult = ref(null)
+const iconCacheResult = ref(null)
 const resetConfirm = ref(false)
 const resetting = ref(false)
 const resetResult = ref(null)
@@ -342,6 +354,22 @@ async function runCleanup() {
   }
   cleaning.value = false
   await loadDbStats()
+}
+
+async function clearIconCache() {
+  clearingIcons.value = true
+  iconCacheResult.value = null
+  try {
+    const r = await fetch(`${apiBase}/api/icons/cache`, { method: 'DELETE' })
+    if (r.ok) {
+      const result = await r.json()
+      iconCacheResult.value = result.message
+    }
+  } catch (e) {
+    console.error('Clear icon cache failed:', e)
+    iconCacheResult.value = '清除图标缓存失败'
+  }
+  clearingIcons.value = false
 }
 
 async function runReset() {

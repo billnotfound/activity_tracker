@@ -20,6 +20,7 @@ public class AppDbContext : DbContext
     public DbSet<DailySummary> DailySummaries => Set<DailySummary>();
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
     public DbSet<ProcessIcon> ProcessIcons => Set<ProcessIcon>();
+    public DbSet<ProcessIconMapping> ProcessIconMappings => Set<ProcessIconMapping>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -87,6 +88,13 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.IconHash).IsUnique();
+        });
+
+        modelBuilder.Entity<ProcessIconMapping>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.ProcessName);
+            e.HasIndex(x => x.IconHash);
         });
     }
 }

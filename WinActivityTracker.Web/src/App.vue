@@ -8,7 +8,7 @@
       <div class="navbar-container">
         <div class="navbar-brand">
           <div class="brand-deco"></div>
-          <router-link to="/" class="brand-link">WinActivityTracker</router-link>
+          <router-link to="/" class="brand-link">W</router-link>
         </div>
         <div class="navbar-menu">
           <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }">
@@ -67,8 +67,9 @@ const { isDark, toggleDark } = useTheme()
   padding: 0 24px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   height: 64px;
+  gap: 32px;
 }
 
 .navbar-brand {
@@ -87,7 +88,7 @@ const { isDark, toggleDark } = useTheme()
   }
   
   .brand-link {
-    font-size: 1.25rem;
+    font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-color);
     text-decoration: none;
@@ -220,7 +221,6 @@ const { isDark, toggleDark } = useTheme()
 .page-container {
   position: relative;
   width: 100%;
-  overflow: hidden;
   min-height: 400px;
 }
 
