@@ -6,6 +6,12 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+
+    <!-- Version info -->
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +22,8 @@
     <!-- Required for NotifyIcon, ContextMenuStrip, and StatusWindow -->
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>taskmonitor114</AssemblyName>
+    <!-- Application icon (visible in Explorer, taskbar, etc.) -->
+    <ApplicationIcon>..\WinActivityTracker.Web\src\icon\timer1.ico</ApplicationIcon>
     <!-- Desktop tray app → Workstation GC (single-heap, aggressive return to OS).
          Server GC (default for Web SDK) creates per-CPU heaps ~16MB each. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
