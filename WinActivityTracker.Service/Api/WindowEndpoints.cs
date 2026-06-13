@@ -12,6 +12,7 @@ public static class WindowEndpoints
     {
         app.MapGet("/api/windows/current", GetCurrentWindows);
         app.MapGet("/api/windows/timeline", GetTimeline);
+        app.MapGet("/api/windows/sessions", GetWindowSessions);
         app.MapGet("/api/system/events", GetSystemEvents);
     }
 
@@ -39,7 +40,7 @@ public static class WindowEndpoints
             ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
             : DateTime.UtcNow;
 
-        var take = Math.Clamp(limit ?? 500, 1, 2000);
+        var take = Math.Clamp(limit ?? 2000, 1, 50000); // Increased max to 50k for longer ranges
         var skip = Math.Max(0, offset ?? 0);
 
         var total = await db.FocusChanges
@@ -62,6 +63,36 @@ public static class WindowEndpoints
             .ToListAsync();
 
         return Results.Ok(new { data, total, offset = skip, limit = take });
+    }
+
+    private static async Task<IResult> GetWindowSessions(
+        DateTime? from, DateTime? to, int? limit, AppDbContext db)
+    {
+        var start = from.HasValue
+            ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
+            : DateTime.UtcNow.AddHours(-1);
+        var end = to.HasValue
+            ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
+            : DateTime.UtcNow;
+
+        var take = Math.Clamp(limit ?? 5000, 1, 50000);
+
+        // Get window sessions that overlap with the time range
+        var sessions = await db.WindowSessions
+            .AsNoTracking()
+            .Where(w => w.OpenTime <= end && (w.CloseTime == null || w.CloseTime >= start))
+            .OrderBy(w => w.OpenTime)
+            .Take(take)
+            .Select(w => new
+            {
+                w.ProcessName,
+                w.WindowTitle,
+                w.OpenTime,
+                w.CloseTime
+            })
+            .ToListAsync();
+
+        return Results.Ok(sessions);
     }
 
     private static async Task<IResult> GetSystemEvents(

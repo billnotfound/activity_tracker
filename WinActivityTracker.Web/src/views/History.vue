@@ -93,7 +93,7 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick } from 'vue'
-import { toLocalDateString, toLocalTime, fmtDuration } from '../utils/time.js'
+import { toLocalDateString, toLocalTime, fmtDuration, parseUtcTs } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import * as echarts from 'echarts'
@@ -109,6 +109,7 @@ const fromDate = ref(toLocalDateString(new Date(Date.now() - 86400000))) // 过�
 const toDate = ref(toLocalDateString(new Date()))
 const data = ref([])
 const timeline = ref([])
+const windowSessions = ref([])
 const systemEvents = ref([])
 const sortAsc = ref(false)
 const mergeSameProcess = ref(true)
@@ -179,14 +180,37 @@ async function loadData() {
     totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
 
     // Load timeline for visualization
-    const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=5000`
-    console.log('Fetching timeline:', timelineUrl)
+    // Adjust limit based on date range to get good coverage
+    const rangeInDays = (new Date(toDate.value) - new Date(fromDate.value)) / (1000 * 60 * 60 * 24)
+    const timelineLimit = rangeInDays <= 1 ? 5000 : rangeInDays <= 3 ? 10000 : rangeInDays <= 7 ? 20000 : 50000
+
+    const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=${timelineLimit}`
+    console.log('Fetching timeline:', timelineUrl, `(range: ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
     const r2 = await fetch(timelineUrl)
     if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
     const timelineRes = await r2.json()
     const timelineData = timelineRes.data || timelineRes
-    console.log('Timeline API returned', timelineData.length, 'records')
-    timeline.value = timelineData
+    const timelineTotal = timelineRes.total || timelineData.length
+    console.log('Timeline API returned', timelineData.length, 'records (total available:', timelineTotal, ')')
+
+    if (timelineTotal > timelineData.length) {
+      console.warn(`⚠️ Timeline data truncated: showing ${timelineData.length} of ${timelineTotal} records`)
+      // Consider showing a warning to the user
+    }
+
+    // For large datasets, apply intelligent sampling to improve rendering performance
+    let sampledData = timelineData
+    if (timelineData.length > 10000) {
+      // Sample to keep ~10000 most significant records
+      // Sort by duration (longer durations are more important)
+      const sorted = [...timelineData].sort((a, b) => b.durationSeconds - a.durationSeconds)
+      sampledData = sorted.slice(0, 10000)
+      // Re-sort by timestamp for timeline rendering
+      sampledData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      console.log(`📊 Sampled ${sampledData.length} records from ${timelineData.length} (kept longest durations)`)
+    }
+
+    timeline.value = sampledData
 
     // Load system events (sleep/shutdown periods)
     const eventsUrl = `${apiBase}/api/system/events?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59`
@@ -197,6 +221,17 @@ async function loadData() {
       console.log('System events:', systemEvents.value.length, 'sleep/shutdown periods')
     } else {
       systemEvents.value = []
+    }
+
+    // Load window sessions (for background running apps)
+    const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=10000`
+    console.log('Fetching window sessions:', sessionsUrl)
+    const r4 = await fetch(sessionsUrl)
+    if (r4.ok) {
+      windowSessions.value = await r4.json()
+      console.log('Window sessions:', windowSessions.value.length)
+    } else {
+      windowSessions.value = []
     }
 
     loading.value = false
@@ -273,13 +308,13 @@ async function renderTimeline() {
 
   // Step 3.5: Build sleep period map for quick lookup
   const sleepPeriods = systemEvents.value.map(e => ({
-    start: new Date(e.timestamp).getTime(),
-    end: new Date(e.timestamp).getTime() + e.durationSeconds * 1000
+    start: parseUtcTs(e.timestamp).getTime(),
+    end: parseUtcTs(e.timestamp).getTime() + e.durationSeconds * 1000
   }))
 
   // Helper function to check if a timestamp is during sleep
   const isDuringSleep = (timestamp) => {
-    const time = new Date(timestamp).getTime()
+    const time = parseUtcTs(timestamp).getTime()
     return sleepPeriods.some(period => time >= period.start && time < period.end)
   }
 
@@ -291,7 +326,7 @@ async function renderTimeline() {
     const processIndex = processList.indexOf(item.processName)
     if (processIndex === -1) return
 
-    const start = new Date(item.timestamp).getTime()
+    const start = parseUtcTs(item.timestamp).getTime()
     const end = start + item.durationSeconds * 1000
     const color = colorMap[item.processName]
     const duringsSleep = isDuringSleep(item.timestamp)
@@ -318,16 +353,85 @@ async function renderTimeline() {
     })
   })
 
-  console.log('Created', focusedWindows.length, 'chart items')
+  console.log('Created', focusedWindows.length, 'focused window chart items')
 
-  // Use the query date range for X-axis, not the data range
-  // This ensures the timeline shows the full requested period
-  const xAxisMin = new Date(`${fromDate.value}T00:00:00`).getTime()
-  const xAxisMax = new Date(`${toDate.value}T23:59:59`).getTime()
+  // Calculate X-axis range first (needed for background windows)
+  const fromParts = fromDate.value.split('-').map(Number)
+  const toParts = toDate.value.split('-').map(Number)
+  const xAxisMin = new Date(fromParts[0], fromParts[1] - 1, fromParts[2], 0, 0, 0).getTime()
+  const xAxisMax = new Date(toParts[0], toParts[1] - 1, toParts[2], 23, 59, 59).getTime()
+
+  // Step 4: Add background running windows (thin lines)
+  const backgroundWindows = []
+  windowSessions.value.forEach(session => {
+    const processIndex = processList.indexOf(session.processName)
+    if (processIndex === -1) return
+
+    const color = colorMap[session.processName]
+    const openTime = parseUtcTs(session.openTime).getTime()
+    const closeTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
+
+    // For each window session, we need to find gaps where it wasn't focused
+    // This is computationally expensive, so we'll use a simpler approach:
+    // Just show the full window session as a thin line
+    // The focused periods (color blocks) will render on top
+
+    backgroundWindows.push({
+      name: session.processName,
+      value: [processIndex, openTime, closeTime, 0],
+      itemStyle: {
+        color: 'transparent',
+        borderColor: color,
+        borderWidth: 1,
+        opacity: 0.3
+      },
+      tooltip: {
+        formatter: () => {
+          const status = session.closeTime ? '已关闭' : '运行中'
+          return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${session.processName}</div>
+                  <div style="font-size:0.9em;">${session.windowTitle}</div>
+                  <div style="margin-top:4px;color:var(--surface-500);">
+                    ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : '现在'}
+                  </div>
+                  <div style="font-size:0.85em;color:var(--surface-400);">后台运行 · ${status}</div>`
+        },
+      },
+    })
+  })
+
+  console.log('Created', backgroundWindows.length, 'background window chart items')
+
+  // Combine background windows (rendered first, behind) and focused windows (on top)
+  const allWindows = [...backgroundWindows, ...focusedWindows]
+
+  // Calculate date range in days
+  const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
+
+  // Dynamic time format based on range
+  let timeFormatter
+  if (rangeInDays <= 2) {
+    // 2 days or less: show time only (HH:mm)
+    timeFormatter = '{HH}:{mm}'
+  } else {
+    // More than 2 days: show date and time (MM-DD HH:mm)
+    timeFormatter = '{MM}-{dd} {HH}:{mm}'
+  }
+
+  // Dynamic interval for axis labels (to avoid crowding)
+  let axisLabelInterval
+  if (rangeInDays <= 1) {
+    axisLabelInterval = 'auto' // hourly or so
+  } else if (rangeInDays <= 7) {
+    axisLabelInterval = 'auto' // every few hours
+  } else {
+    axisLabelInterval = 'auto' // daily
+  }
 
   console.log('X-axis range (query dates):', {
     from: fromDate.value,
     to: toDate.value,
+    rangeInDays: rangeInDays.toFixed(1),
+    timeFormatter,
     xAxisMin: new Date(xAxisMin).toISOString(),
     xAxisMax: new Date(xAxisMax).toISOString()
   })
@@ -367,7 +471,8 @@ async function renderTimeline() {
       axisLabel: {
         color: 'var(--text-color)',
         fontWeight: 600,
-        formatter: '{HH}:{mm}',
+        formatter: timeFormatter,
+        rotate: rangeInDays > 3 ? 15 : 0, // Rotate labels for longer ranges
       },
       axisLine: {
         lineStyle: { color: 'var(--border-color)', width: 2 },
@@ -400,7 +505,7 @@ async function renderTimeline() {
           x: [1, 2],
           y: 0,
         },
-        data: focusedWindows,
+        data: allWindows,
       },
     ],
     tooltip: {
@@ -435,13 +540,29 @@ function renderBar(params, api) {
   const categoryIndex = api.value(0)
   const start = api.coord([api.value(1), categoryIndex])
   const end = api.coord([api.value(2), categoryIndex])
-  const height = api.size([0, 1])[1] * 0.6
+  const durationSeconds = api.value(3)
 
-  const rectShape = {
-    x: start[0],
-    y: start[1] - height / 2,
-    width: Math.max(end[0] - start[0], 2),
-    height: height,
+  // Check if this is a background window (durationSeconds = 0) or focused window
+  const isBackground = durationSeconds === 0
+
+  let rectShape
+  if (isBackground) {
+    // Render as a thin horizontal line in the middle
+    rectShape = {
+      x: start[0],
+      y: start[1], // Middle of the row
+      width: Math.max(end[0] - start[0], 2),
+      height: 1, // 1px thin line
+    }
+  } else {
+    // Render as a regular bar (focused window)
+    const height = api.size([0, 1])[1] * 0.6
+    rectShape = {
+      x: start[0],
+      y: start[1] - height / 2,
+      width: Math.max(end[0] - start[0], 2),
+      height: height,
+    }
   }
 
   // Debug: log first render
@@ -449,6 +570,8 @@ function renderBar(params, api) {
     const debugInfo = {
       dataIndex: params.dataIndex,
       categoryIndex,
+      isBackground,
+      durationSeconds,
       value0: api.value(0),
       value1: api.value(1),
       value1Date: new Date(api.value(1)).toISOString(),
