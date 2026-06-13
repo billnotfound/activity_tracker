@@ -148,4 +148,46 @@ public class IconService
             top.Count > 2 ? hex(top[2]) : "#000000"
         );
     }
+
+    /// <summary>
+    /// Gets all process names that have icons extracted.
+    /// Used by IconCacheService to populate the cache on startup.
+    /// </summary>
+    public async Task<List<string>> GetAllProcessNamesWithIconsAsync()
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        return await db.ProcessIconMappings
+            .Select(m => m.ProcessName)
+            .Distinct()
+            .ToListAsync();
+    }
+
+    /// <summary>
+    /// Extracts and saves icon for a specific process name.
+    /// Returns true if successful, false otherwise.
+    /// </summary>
+    public async Task<bool> ExtractAndSaveIconAsync(string processName)
+    {
+        try
+        {
+            // Find a running process with this name
+            var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processName));
+            if (processes.Length == 0)
+            {
+                _logger.LogDebug("No running process found for {ProcessName}", processName);
+                return false;
+            }
+
+            var pid = processes[0].Id;
+            await EnsureIconAsync(pid);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract icon for {ProcessName}", processName);
+            return false;
+        }
+    }
 }

@@ -24,6 +24,7 @@ public class ConsoleWindow : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         Padding = new Padding(8);
+        Icon = IconHelper.GetTimerIcon();
 
         _output = new TextBox
         {

@@ -1,6 +1,7 @@
 // Native settings form.
 // Uses a simple TableLayoutPanel with fixed-height GroupBoxes — no AutoSize
 // conflicts, no overlapping. Each GroupBox docks an inner panel for its content.
+using System.Drawing;
 using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Native;
@@ -31,6 +32,7 @@ public partial class SettingsWindow : Form
         Size = new Size(610, 780);
         ShowInTaskbar = true;
         Padding = new Padding(12);
+        Icon = IconHelper.GetSettingsIcon();
 
         BuildUI();
         LoadSettings();

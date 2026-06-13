@@ -79,6 +79,7 @@ builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
 builder.Services.AddHostedService<HeartbeatService>();
+builder.Services.AddHostedService<IconCacheService>();
 builder.Services.AddWindowsService(options => { options.ServiceName = "taskmonitor114"; });
 builder.Services.AddCors(c => c.AddDefaultPolicy(p =>
     p.WithOrigins($"http://localhost:{apiPort}", "http://localhost:5000").AllowAnyMethod().AllowAnyHeader()));

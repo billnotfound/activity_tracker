@@ -92,10 +92,11 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { toLocalDateString, toLocalTime, fmtDuration, parseUtcTs } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
+import { useTheme } from '../composables/useTheme.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
@@ -104,6 +105,7 @@ import Column from 'primevue/column'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
+const { isDark } = useTheme()
 
 const fromDate = ref(toLocalDateString(new Date(Date.now() - 86400000))) // 过去1天
 const toDate = ref(toLocalDateString(new Date()))
@@ -131,14 +133,45 @@ onMounted(async () => {
     console.error('Failed to load settings:', e)
   }
   await loadData()
+
+  // Add window resize listener for chart responsiveness
+  window.addEventListener('resize', handleResize)
+})
+
+// Watch for theme changes and re-render timeline
+watch(isDark, () => {
+  console.log('Theme changed, re-rendering timeline')
+  if (timelineChart && timeline.value && timeline.value.length > 0) {
+    renderTimeline()
+  }
 })
 
 onUnmounted(() => {
+  // Remove resize listener
+  window.removeEventListener('resize', handleResize)
+
   if (timelineChart) {
     timelineChart.dispose()
     timelineChart = null
   }
 })
+
+// Debounced resize handler
+let resizeTimer = null
+function handleResize() {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    if (timelineChart) {
+      timelineChart.resize()
+      console.log('Chart resized due to window resize')
+      // Re-render chart with current data to adapt to new dimensions
+      if (timeline.value && timeline.value.length > 0) {
+        renderTimeline()
+        console.log('Chart re-rendered after resize')
+      }
+    }
+  }, 200) // 200ms debounce
+}
 
 const sortedData = computed(() => {
   const arr = [...data.value]
@@ -362,40 +395,82 @@ async function renderTimeline() {
   const xAxisMax = new Date(toParts[0], toParts[1] - 1, toParts[2], 23, 59, 59).getTime()
 
   // Step 4: Add background running windows (thin lines)
+  // Only show background lines during periods with activity (not during sleep/shutdown)
   const backgroundWindows = []
+
+  // Build activity periods from focus changes
+  const activityPeriods = []
+  filteredTimeline.forEach(item => {
+    const start = parseUtcTs(item.timestamp).getTime()
+    const end = start + item.durationSeconds * 1000
+    activityPeriods.push({ start, end })
+  })
+
+  // Merge overlapping activity periods and sort
+  activityPeriods.sort((a, b) => a.start - b.start)
+  const mergedActivity = []
+  activityPeriods.forEach(period => {
+    if (mergedActivity.length === 0) {
+      mergedActivity.push({ ...period })
+    } else {
+      const last = mergedActivity[mergedActivity.length - 1]
+      if (period.start <= last.end) {
+        // Overlapping, merge
+        last.end = Math.max(last.end, period.end)
+      } else {
+        mergedActivity.push({ ...period })
+      }
+    }
+  })
+
+  console.log('Merged activity periods:', mergedActivity.length)
+
   windowSessions.value.forEach(session => {
     const processIndex = processList.indexOf(session.processName)
     if (processIndex === -1) return
 
     const color = colorMap[session.processName]
-    const openTime = parseUtcTs(session.openTime).getTime()
-    const closeTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
+    const sessionOpenTime = parseUtcTs(session.openTime).getTime()
+    const sessionCloseTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
 
-    // For each window session, we need to find gaps where it wasn't focused
-    // This is computationally expensive, so we'll use a simpler approach:
-    // Just show the full window session as a thin line
-    // The focused periods (color blocks) will render on top
+    // Only show background lines during activity periods
+    mergedActivity.forEach(activityPeriod => {
+      // Find intersection between window session and activity period
+      const segmentStart = Math.max(sessionOpenTime, activityPeriod.start)
+      const segmentEnd = Math.min(sessionCloseTime, activityPeriod.end)
 
-    backgroundWindows.push({
-      name: session.processName,
-      value: [processIndex, openTime, closeTime, 0],
-      itemStyle: {
-        color: 'transparent',
-        borderColor: color,
-        borderWidth: 1,
-        opacity: 0.3
-      },
-      tooltip: {
-        formatter: () => {
-          const status = session.closeTime ? '已关闭' : '运行中'
-          return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${session.processName}</div>
-                  <div style="font-size:0.9em;">${session.windowTitle}</div>
-                  <div style="margin-top:4px;color:var(--surface-500);">
-                    ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : '现在'}
-                  </div>
-                  <div style="font-size:0.85em;color:var(--surface-400);">后台运行 · ${status}</div>`
-        },
-      },
+      // Only create segment if there's actual overlap
+      if (segmentStart < segmentEnd) {
+        // Check if this segment is during sleep
+        const isDuringSleepPeriod = sleepPeriods.some(sleep =>
+          segmentStart >= sleep.start && segmentStart < sleep.end
+        )
+
+        // Skip if during sleep
+        if (isDuringSleepPeriod) return
+
+        backgroundWindows.push({
+          name: session.processName,
+          value: [processIndex, segmentStart, segmentEnd, 0],
+          itemStyle: {
+            color: 'transparent',
+            borderColor: color,
+            borderWidth: 1,
+            opacity: 0.3
+          },
+          tooltip: {
+            formatter: () => {
+              const status = session.closeTime ? '已关闭' : '运行中'
+              return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${session.processName}</div>
+                      <div style="font-size:0.9em;">${session.windowTitle}</div>
+                      <div style="margin-top:4px;color:var(--surface-500);">
+                        ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : '现在'}
+                      </div>
+                      <div style="font-size:0.85em;color:var(--surface-400);">后台运行 · ${status}</div>`
+            },
+          },
+        })
+      }
     })
   })
 

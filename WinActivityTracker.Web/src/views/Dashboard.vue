@@ -78,16 +78,18 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
+import { useTheme } from '../composables/useTheme.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
+const { isDark } = useTheme()
 
 const periods = [
   { key: 'today', label: t('dashboard.periods.today') },
@@ -225,15 +227,47 @@ onMounted(async () => {
   }
   await loadSummary()
   timer = setInterval(loadSummary, 2000)
+
+  // Add window resize listener for chart responsiveness
+  window.addEventListener('resize', handleResize)
+})
+
+// Watch for theme changes and re-render charts
+watch(isDark, () => {
+  console.log('Theme changed, re-rendering charts')
+  if (focusChart && summary.value && summary.value.length > 0) {
+    renderCharts(summary.value)
+  }
 })
 
 onUnmounted(() => {
   clearInterval(timer)
+
+  // Remove resize listener
+  window.removeEventListener('resize', handleResize)
+
   if (focusChart) {
     focusChart.dispose()
     focusChart = null
   }
 })
+
+// Debounced resize handler
+let resizeTimer = null
+function handleResize() {
+  if (resizeTimer) clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(() => {
+    if (focusChart) {
+      focusChart.resize()
+      console.log('Chart resized due to window resize')
+      // Re-render chart with current data to adapt to new dimensions
+      if (summary.value && summary.value.length > 0) {
+        renderCharts(summary.value)
+        console.log('Chart re-rendered after resize')
+      }
+    }
+  }, 200) // 200ms debounce
+}
 
 async function loadSummary() {
   await Promise.all([fetchSummary(), fetchMedia()])

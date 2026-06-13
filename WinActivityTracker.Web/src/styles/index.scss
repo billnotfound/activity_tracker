@@ -68,7 +68,8 @@ body {
 .p-datatable {
   border: 2px solid var(--surface-200) !important;
   border-radius: 0 !important;
-  
+  background: var(--surface-card) !important;
+
   .p-datatable-thead > tr > th {
     background: var(--surface-card) !important;
     color: var(--text-color) !important;
@@ -79,14 +80,19 @@ body {
     letter-spacing: 0.5px;
     font-size: 0.9rem;
   }
-  
+
   .p-datatable-tbody > tr {
     transition: all 0.2s ease !important;
     border-bottom: 1px solid var(--surface-200) !important;
-    
+    background: var(--surface-card) !important;
+
     &:hover {
       background: var(--surface-100) !important;
       transform: translateX(2px);
+    }
+
+    td {
+      color: var(--text-color) !important;
     }
   }
 }
@@ -172,4 +178,110 @@ body {
 
 .mt-3 {
   margin-top: $memphis-spacing-lg;
+}
+
+// Bootstrap table theme support
+.table {
+  color: var(--text-color);
+
+  thead th {
+    color: var(--text-color);
+    border-color: var(--surface-200);
+  }
+
+  tbody td {
+    color: var(--text-color);
+    border-color: var(--surface-200);
+  }
+
+  &.table-hover tbody tr:hover {
+    background-color: var(--surface-100);
+    color: var(--text-color);
+  }
+
+  .table-primary {
+    background-color: var(--surface-100);
+    color: var(--text-color);
+  }
+
+  .text-muted {
+    color: var(--surface-500) !important;
+  }
+}
+
+// Card theme support
+.card {
+  background-color: var(--surface-card);
+  border-color: var(--surface-200);
+  color: var(--text-color);
+
+  .card-header {
+    background-color: var(--surface-card);
+    border-color: var(--surface-200);
+    color: var(--text-color);
+  }
+
+  .card-body {
+    background-color: var(--surface-card);
+    color: var(--text-color);
+  }
+}
+
+// Form controls theme support
+.form-control,
+.form-select {
+  background-color: var(--surface-card);
+  border-color: var(--surface-200);
+  color: var(--text-color);
+
+  &:focus {
+    background-color: var(--surface-card);
+    border-color: var(--primary-color);
+    color: var(--text-color);
+  }
+}
+
+.form-label {
+  color: var(--text-color);
+}
+
+// Button theme support
+.btn {
+  border-width: 2px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+
+  &.btn-primary {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 0 var(--primary-color);
+    }
+  }
+
+  &.btn-outline-secondary {
+    border-color: var(--surface-200);
+    color: var(--text-color);
+
+    &:hover {
+      background-color: var(--surface-100);
+      border-color: var(--primary-color);
+    }
+  }
+}
+
+// Alert theme support
+.alert {
+  background-color: var(--surface-100);
+  border-color: var(--surface-200);
+  color: var(--text-color);
+
+  &.alert-danger {
+    background-color: rgba(239, 68, 68, 0.1);
+    border-color: rgb(239, 68, 68);
+    color: var(--text-color);
+  }
 }

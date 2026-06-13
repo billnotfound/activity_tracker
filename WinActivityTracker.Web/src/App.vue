@@ -45,10 +45,41 @@
 <script setup>
 import { useI18n } from './i18n/index.js'
 import { useTheme } from './composables/useTheme.js'
+import { useRoute } from 'vue-router'
+import { watch, onMounted } from 'vue'
 import PageTransition from './components/PageTransition.vue'
 
 const { t } = useI18n()
 const { isDark, toggleDark } = useTheme()
+const route = useRoute()
+
+// Update favicon based on route
+function updateFavicon(path) {
+  const isSettings = path === '/settings' || path === '/tags'
+  const iconPath = isSettings ? '/settings.ico' : '/timer.ico'
+
+  // Update main favicon
+  const favicon = document.getElementById('favicon')
+  if (favicon) {
+    favicon.href = iconPath + '?v=' + Date.now() // Add timestamp to force refresh
+  }
+
+  // Update shortcut icon
+  const shortcutIcon = document.getElementById('shortcut-icon')
+  if (shortcutIcon) {
+    shortcutIcon.href = iconPath + '?v=' + Date.now()
+  }
+}
+
+// Dynamic favicon based on route
+watch(() => route.path, (newPath) => {
+  updateFavicon(newPath)
+})
+
+// Update on mount to ensure initial state is correct
+onMounted(() => {
+  updateFavicon(route.path)
+})
 </script>
 
 <style lang="scss" scoped>
@@ -67,9 +98,17 @@ const { isDark, toggleDark } = useTheme()
   padding: 0 24px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   height: 64px;
   gap: 32px;
+  flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    height: auto;
+    min-height: 64px;
+    padding: 12px 16px;
+    gap: 16px;
+  }
 }
 
 .navbar-brand {
@@ -118,6 +157,14 @@ const { isDark, toggleDark } = useTheme()
 .navbar-menu {
   display: flex;
   gap: 4px;
+
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+    gap: 2px;
+    width: 100%;
+    order: 3;
+    justify-content: center;
+  }
 }
 
 .nav-item {
@@ -132,7 +179,13 @@ const { isDark, toggleDark } = useTheme()
   background: transparent;
   position: relative;
   transition: all 0.2s ease;
-  
+
+  @media (max-width: 768px) {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    letter-spacing: 0.3px;
+  }
+
   // Underline only on hover
   &::after {
     content: '';
@@ -145,19 +198,19 @@ const { isDark, toggleDark } = useTheme()
     background: var(--primary-color);
     transition: width 0.3s ease;
   }
-  
+
   &:hover {
     transform: translateY(-2px);
-    
+
     &::after {
       width: 70%;
     }
   }
-  
+
   // Active state - border only, no background fill
   &.active {
     border-bottom: 3px solid var(--primary-color);
-    
+
     &::after {
       display: none;
     }
@@ -216,6 +269,10 @@ const { isDark, toggleDark } = useTheme()
   margin: 0 auto;
   padding: 32px 24px;
   min-height: calc(100vh - 64px);
+
+  @media (max-width: 768px) {
+    padding: 16px 12px;
+  }
 }
 
 .page-container {

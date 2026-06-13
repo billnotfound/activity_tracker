@@ -3,8 +3,9 @@
 // Runs on the WinForms STA thread. Console is an in-app ConsoleWindow form,
 // not the system console — closing it does not exit the application.
 //
-// Double-click opens dashboard. On first launch, StatusWindow opens after 1s delay.
+// On first launch, StatusWindow opens after 1s delay.
 using System.Diagnostics;
+using System.Drawing;
 
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Win32;
@@ -123,7 +124,7 @@ public class TrayApplicationContext : ApplicationContext
 
         _trayIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = IconHelper.GetTimerIcon(),
             Text = "taskmonitor114",
             ContextMenuStrip = menu,
             Visible = true

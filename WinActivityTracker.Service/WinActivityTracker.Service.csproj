@@ -43,6 +43,16 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.8" />
   </ItemGroup>
 
+  <!-- Embed icon files as resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\timer1.ico">
+      <LogicalName>timer.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\settings1.ico">
+      <LogicalName>settings.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <!-- Copy Vue SPA build output (wwwroot) from Web project into Service output.
        This lets the tray icon's "打开仪表盘" serve the full UI from port 5200.
        The Vue project must be built first: cd WinActivityTracker.Web && pnpm build

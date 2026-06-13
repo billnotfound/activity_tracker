@@ -27,6 +27,7 @@ public partial class StatusWindow : Form
         ShowInTaskbar = true;
         StartPosition = FormStartPosition.CenterScreen;
         Padding = new Padding(12);
+        Icon = IconHelper.GetTimerIcon();
 
         BuildUI(services);
 
