@@ -15,6 +15,11 @@
   "common.switches": "切换次数",
   "common.title": "窗口标题",
   "common.delete": "删除",
+  "common.year": "年",
+  "common.month": "月",
+  "common.day": "日",
+  "common.hour": "时",
+  "common.minute": "分",
 
   "error.backendUnreachable": "无法连接后端: {message}",
   "error.saveFailed": "保存失败 ({status})",
@@ -31,6 +36,7 @@
   "nav.tags": "标签",
   "nav.timeline": "时间线",
   "nav.settings": "设置",
+  "nav.licenses": "第三方",
 
   "dashboard.periods.today": "当日",
   "dashboard.periods.week": "7天",
@@ -64,11 +70,16 @@
 
   "history.startDate": "开始日期",
   "history.endDate": "结束日期",
+  "history.startTime": "开始时间",
+  "history.endTime": "结束时间",
   "history.query": "查询",
   "history.sortAsc": "↑ 时长升序",
   "history.sortDesc": "↓ 时长降序",
+  "history.card.visualTimeline": "可视化时间线",
   "history.card.periodSummary": "时段汇总",
   "history.card.programCount": "({count} 个程序)",
+  "history.legend.focus": "焦点窗口",
+  "history.legend.visible": "后台可见",
   "history.sleepOff": "休眠/关机 {duration}",
   "history.table.process": "程序",
   "history.table.totalDuration": "总时长",
@@ -161,5 +172,14 @@
   "tags.mode.overwrite": "覆盖 (overwrite)",
   "tags.savedCount": "已保存 {count} 条规则",
   "tags.error.saveFailed": "保存失败 ({status})",
-  "tags.error.backendUnreachable": "无法连接后端: {message}"
+  "tags.error.backendUnreachable": "无法连接后端: {message}",
+
+  "licenses.pageTitle": "第三方许可",
+  "licenses.description": "本项目使用了以下开源字体和库，感谢它们的贡献。",
+  "licenses.version": "许可证",
+  "licenses.copyright": "版权",
+  "licenses.website": "网站",
+  "licenses.usage": "用途",
+  "licenses.fontUsage": "UI 文本字体和等宽代码字体",
+  "licenses.viewLicense": "查看完整许可证"
 }

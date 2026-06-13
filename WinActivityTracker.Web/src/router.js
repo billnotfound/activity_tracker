@@ -5,7 +5,7 @@
 //   /           Dashboard   — today's charts, media history
 //   /history    History     — date-range query, aggregated data table, visual timeline
 //   /tags       Tags        — tag rules editor
-//   /settings   Settings    — backend configuration, DB maintenance, theme settings
+//   /settings   Settings    — backend configuration, DB maintenance, theme settings, third-party licenses
 //
 // history: createWebHistory() means the .NET Web server MUST have
 // MapFallbackToFile("index.html") configured for SPA routing to work in production.

@@ -18,7 +18,7 @@
         <MemphisCard>
           <h3 class="section-title">主题配色</h3>
           <div class="theme-selector">
-            <div
+            <button
               v-for="th in lightThemes"
               :key="th.id"
               class="theme-option"
@@ -32,7 +32,7 @@
               </div>
               <div class="theme-name">{{ th.name }}</div>
               <div class="theme-desc">{{ th.description }}</div>
-            </div>
+            </button>
           </div>
 
           <div class="divider"></div>
@@ -46,23 +46,23 @@
           <div class="divider"></div>
 
           <h3 class="section-title">页面切换动画</h3>
-          <div class="radio-group">
-            <div
-              class="radio-option"
+          <div class="button-group">
+            <button
+              class="option-button"
               :class="{ active: theme.pageTransition === 'slide' }"
               @click="theme.setPageTransition('slide')"
             >
               <i class="pi pi-arrow-right"></i>
               <span>滑动</span>
-            </div>
-            <div
-              class="radio-option"
+            </button>
+            <button
+              class="option-button"
               :class="{ active: theme.pageTransition === 'geometric' }"
               @click="theme.setPageTransition('geometric')"
             >
               <i class="pi pi-th-large"></i>
               <span>几何</span>
-            </div>
+            </button>
           </div>
 
           <div class="divider"></div>
@@ -199,6 +199,58 @@
           </div>
           <div v-if="resetResult" class="alert-banner warning mt-3">
             重置完成：已删除所有数据
+          </div>
+        </MemphisCard>
+      </TabPanel>
+
+      <!-- Third-Party Licenses Tab -->
+      <TabPanel :header="'第三方'">
+        <MemphisCard>
+          <h3 class="section-title">开源许可</h3>
+          <p class="license-intro">本项目使用了以下开源字体和库，感谢它们的贡献。</p>
+
+          <!-- Ubuntu Font -->
+          <div class="license-section">
+            <h4 class="license-title">Ubuntu Font Family</h4>
+            <div class="license-info">
+              <div class="info-row">
+                <span class="label">许可证:</span>
+                <span class="value">Ubuntu Font Licence 1.0</span>
+              </div>
+              <div class="info-row">
+                <span class="label">版权:</span>
+                <span class="value">© 2010-2015 Canonical Ltd.</span>
+              </div>
+              <div class="info-row">
+                <span class="label">网站:</span>
+                <a href="https://design.ubuntu.com/font" target="_blank" class="link">design.ubuntu.com/font</a>
+              </div>
+              <div class="info-row">
+                <span class="label">用途:</span>
+                <span class="value">UI 文本字体和等宽代码字体</span>
+              </div>
+            </div>
+
+            <details class="license-details">
+              <summary>查看完整许可证</summary>
+              <pre class="license-text">-------------------------------
+UBUNTU FONT LICENCE Version 1.0
+-------------------------------
+
+PREAMBLE
+This licence allows the licensed fonts to be used, studied, modified and
+redistributed freely. The fonts, including any derivative works, can be
+bundled, embedded, and redistributed provided the terms of this licence
+are met. The fonts and derivatives, however, cannot be released under
+any other licence.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of the Font Software, to propagate the Font Software, subject to
+the conditions specified in the full licence text.
+
+For the complete licence text, see:
+https://ubuntu.com/legal/font-licence</pre>
+            </details>
           </div>
         </MemphisCard>
       </TabPanel>
@@ -444,17 +496,27 @@ async function runReset() {
 .theme-option {
   padding: 16px;
   border: 2px solid var(--surface-200);
+  background: var(--surface-card);
   cursor: pointer;
   transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
 
   &:hover {
     border-color: var(--primary-color);
     transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color);
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
   }
 
   &.active {
     border-color: var(--primary-color);
     border-width: 3px;
+    box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
   }
 }
 
@@ -473,11 +535,12 @@ async function runReset() {
 .theme-name {
   font-weight: 600;
   margin-bottom: 4px;
+  color: var(--text-color);
 }
 
 .theme-desc {
   font-size: 0.85rem;
-  color: var(--surface-400);
+  color: var(--text-color-secondary);
 }
 
 .toggle-row {
@@ -491,15 +554,16 @@ async function runReset() {
   color: var(--text-color);
 }
 
-.radio-group {
+.button-group {
   display: flex;
   gap: 12px;
 }
 
-.radio-option {
+.option-button {
   flex: 1;
   padding: 16px;
   border: 2px solid var(--surface-200);
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -507,16 +571,29 @@ async function runReset() {
   cursor: pointer;
   transition: all 0.2s ease;
   font-weight: 600;
+  font-size: 1rem;
+  color: var(--text-color);
 
   &:hover {
     border-color: var(--primary-color);
     transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color);
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
   }
 
   &.active {
     border-color: var(--primary-color);
     background: var(--primary-color);
     color: var(--surface-card);
+    box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
+  }
+
+  i {
+    font-size: 1.5rem;
   }
 }
 
@@ -625,5 +702,97 @@ async function runReset() {
 
 .mt-3 {
   margin-top: 24px;
+}
+
+// Third-party licenses styles
+.license-intro {
+  margin-bottom: 24px;
+  color: var(--text-color-secondary);
+  line-height: 1.6;
+}
+
+.license-section {
+  padding: 20px;
+  background: var(--surface-100);
+  border: 2px solid var(--surface-200);
+  margin-bottom: 20px;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+.license-title {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--primary-color);
+}
+
+.license-info {
+  margin-bottom: 16px;
+}
+
+.info-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+  align-items: baseline;
+
+  .label {
+    font-weight: 600;
+    color: var(--text-color);
+    min-width: 80px;
+  }
+
+  .value {
+    color: var(--text-color-secondary);
+  }
+
+  .link {
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 600;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+.license-details {
+  margin-top: 16px;
+  border: 2px solid var(--surface-200);
+  background: var(--surface-card);
+
+  summary {
+    padding: 12px 16px;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--primary-color);
+    user-select: none;
+    transition: background 0.2s;
+
+    &:hover {
+      background: var(--surface-100);
+    }
+
+    &::marker {
+      color: var(--primary-color);
+    }
+  }
+}
+
+.license-text {
+  padding: 20px;
+  margin: 0;
+  background: var(--surface-card);
+  color: var(--text-color);
+  font-family: 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 </style>

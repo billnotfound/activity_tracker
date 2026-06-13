@@ -8,7 +8,9 @@
       <div class="navbar-container">
         <div class="navbar-brand">
           <div class="brand-deco"></div>
-          <router-link to="/" class="brand-link">W</router-link>
+          <router-link to="/" class="brand-link">
+            <img :src="brandIconPath" alt="Logo" class="brand-icon" />
+          </router-link>
         </div>
         <div class="navbar-menu">
           <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }">
@@ -46,12 +48,23 @@
 import { useI18n } from './i18n/index.js'
 import { useTheme } from './composables/useTheme.js'
 import { useRoute } from 'vue-router'
-import { watch, onMounted } from 'vue'
+import { watch, onMounted, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
+import timerIcon from './icon/timer.svg'
+import settingsIcon from './icon/settings.svg'
 
 const { t } = useI18n()
 const { isDark, toggleDark } = useTheme()
 const route = useRoute()
+
+// Brand icon changes based on current route
+const brandIconPath = computed(() => {
+  const path = route.path
+  if (path === '/settings' || path === '/tags') {
+    return settingsIcon
+  }
+  return timerIcon
+})
 
 // Update favicon based on route
 function updateFavicon(path) {
@@ -131,18 +144,24 @@ onMounted(() => {
     font-weight: 700;
     color: var(--text-color);
     text-decoration: none;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
     padding: 6px 12px;
     border: 2px solid transparent;
-    display: inline-block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     position: relative;
     transition: all 0.3s ease;
-    
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      display: block;
+    }
+
     &:hover {
       border-color: var(--primary-color);
       transform: translateY(-2px);
-      
+
       & + .brand-deco {
         opacity: 1;
       }

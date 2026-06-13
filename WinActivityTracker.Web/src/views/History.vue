@@ -1,25 +1,16 @@
 <!--
-  History view — date range query + visual timeline + summary table
-  Merges old Timeline functionality with aggregated stats
+  History view — visual timeline with time wheel picker
+  Combines timeline visualization with aggregated stats
 -->
 <template>
   <div class="history-page">
-    <!-- Date range selector -->
-    <MemphisCard class="query-card mb-3" :show-deco="false">
-      <div class="query-row">
-        <div class="input-group">
-          <label class="input-label">{{ t('history.startDate') }}</label>
-          <input type="date" v-model="fromDate" class="memphis-input" />
-        </div>
-        <div class="input-group">
-          <label class="input-label">{{ t('history.endDate') }}</label>
-          <input type="date" v-model="toDate" class="memphis-input" />
-        </div>
-        <button class="query-btn" @click="loadData">
-          {{ t('common.query') }}
-        </button>
-      </div>
-    </MemphisCard>
+    <!-- Time range picker with wheels -->
+    <TimeRangePicker
+      :start-date="startDate"
+      :end-date="endDate"
+      @change="handleTimeChange"
+      class="mb-3"
+    />
 
     <!-- Error -->
     <div v-if="error" class="error-banner mb-3">
@@ -93,13 +84,14 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import { toLocalDateString, toLocalTime, fmtDuration, parseUtcTs } from '../utils/time.js'
+import { toLocalTime, fmtDuration, parseUtcTs } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
+import TimeRangePicker from '../components/TimeRangePicker.vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 
@@ -107,8 +99,10 @@ const apiBase = inject('apiBase')
 const { t } = useI18n()
 const { isDark } = useTheme()
 
-const fromDate = ref(toLocalDateString(new Date(Date.now() - 86400000))) // 过去1天
-const toDate = ref(toLocalDateString(new Date()))
+// Initialize with past 3 hours
+const startDate = ref(new Date(Date.now() - 3 * 60 * 60 * 1000))
+const endDate = ref(new Date())
+
 const data = ref([])
 const timeline = ref([])
 const windowSessions = ref([])
@@ -121,6 +115,18 @@ const error = ref('')
 
 const timelineChartRef = ref(null)
 let timelineChart = null
+
+// Handle time change from picker
+function handleTimeChange({ start, end }) {
+  startDate.value = start
+  endDate.value = end
+  loadData()
+}
+
+// Convert Date to API format (YYYY-MM-DDTHH:mm:ss)
+function toApiDateTime(date) {
+  return date.toISOString().slice(0, 19)
+}
 
 onMounted(async () => {
   try {
@@ -190,10 +196,12 @@ async function loadData() {
   error.value = ''
 
   try {
-    console.log('Loading data from', fromDate.value, 'to', toDate.value)
+    const fromStr = toApiDateTime(startDate.value)
+    const toStr = toApiDateTime(endDate.value)
+    console.log('Loading data from', fromStr, 'to', toStr)
 
     // Load summary
-    const summaryUrl = `${apiBase}/api/summary/range?from=${fromDate.value}&to=${toDate.value}T23:59:59`
+    const summaryUrl = `${apiBase}/api/summary/range?from=${fromStr}&to=${toStr}`
     console.log('Fetching summary:', summaryUrl)
     const r1 = await fetch(summaryUrl)
     if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
@@ -214,11 +222,26 @@ async function loadData() {
 
     // Load timeline for visualization
     // Adjust limit based on date range to get good coverage
-    const rangeInDays = (new Date(toDate.value) - new Date(fromDate.value)) / (1000 * 60 * 60 * 24)
-    const timelineLimit = rangeInDays <= 1 ? 5000 : rangeInDays <= 3 ? 10000 : rangeInDays <= 7 ? 20000 : 50000
+    const rangeInMs = endDate.value - startDate.value
+    const rangeInHours = rangeInMs / (1000 * 60 * 60)
+    const rangeInDays = rangeInMs / (1000 * 60 * 60 * 24)
 
-    const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=${timelineLimit}`
-    console.log('Fetching timeline:', timelineUrl, `(range: ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
+    // Scale limit based on time range - smaller ranges need fewer records
+    let timelineLimit
+    if (rangeInHours <= 6) {
+      timelineLimit = 1000  // 6 hours or less
+    } else if (rangeInDays <= 1) {
+      timelineLimit = 3000  // Up to 1 day
+    } else if (rangeInDays <= 3) {
+      timelineLimit = 10000  // Up to 3 days
+    } else if (rangeInDays <= 7) {
+      timelineLimit = 20000  // Up to 1 week
+    } else {
+      timelineLimit = 50000  // More than 1 week
+    }
+
+    const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromStr}&to=${toStr}&limit=${timelineLimit}`
+    console.log('Fetching timeline:', timelineUrl, `(range: ${rangeInHours.toFixed(1)} hours / ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
     const r2 = await fetch(timelineUrl)
     if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
     const timelineRes = await r2.json()
@@ -233,20 +256,23 @@ async function loadData() {
 
     // For large datasets, apply intelligent sampling to improve rendering performance
     let sampledData = timelineData
-    if (timelineData.length > 10000) {
-      // Sample to keep ~10000 most significant records
+    const samplingThreshold = rangeInHours <= 6 ? 2000 : 5000  // Lower threshold for small ranges
+
+    if (timelineData.length > samplingThreshold) {
+      // Sample to keep most significant records
       // Sort by duration (longer durations are more important)
       const sorted = [...timelineData].sort((a, b) => b.durationSeconds - a.durationSeconds)
-      sampledData = sorted.slice(0, 10000)
+      sampledData = sorted.slice(0, samplingThreshold)
       // Re-sort by timestamp for timeline rendering
       sampledData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
       console.log(`📊 Sampled ${sampledData.length} records from ${timelineData.length} (kept longest durations)`)
     }
 
     timeline.value = sampledData
+    console.log('✅ timeline.value set to:', timeline.value.length, 'records')
 
     // Load system events (sleep/shutdown periods)
-    const eventsUrl = `${apiBase}/api/system/events?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59`
+    const eventsUrl = `${apiBase}/api/system/events?from=${fromStr}&to=${toStr}`
     console.log('Fetching system events:', eventsUrl)
     const r3 = await fetch(eventsUrl)
     if (r3.ok) {
@@ -257,7 +283,7 @@ async function loadData() {
     }
 
     // Load window sessions (for background running apps)
-    const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromDate.value}T00:00:00&to=${toDate.value}T23:59:59&limit=10000`
+    const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromStr}&to=${toStr}&limit=10000`
     console.log('Fetching window sessions:', sessionsUrl)
     const r4 = await fetch(sessionsUrl)
     if (r4.ok) {
@@ -278,6 +304,10 @@ async function loadData() {
 }
 
 async function renderTimeline() {
+  console.log('=== renderTimeline called ===')
+  console.log('timelineChartRef.value:', !!timelineChartRef.value)
+  console.log('timeline.value.length:', timeline.value.length)
+
   if (!timelineChartRef.value) {
     console.warn('Timeline chart ref not ready')
     return
@@ -372,27 +402,21 @@ async function renderTimeline() {
         borderColor: color,
         borderWidth: duringsSleep ? 2 : 0,
       },
-      tooltip: {
-        formatter: () => {
-          const sleepWarning = duringsSleep ? '<div style="color:#FFA500;font-size:0.85em;">⚠️ 休眠时段</div>' : ''
-          return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${item.processName}</div>
-                  <div style="font-size:0.9em;">${item.windowTitle}</div>
-                  <div style="margin-top:4px;color:var(--primary-color);">
-                    ${toLocalTime(item.timestamp)} · ${item.durationSeconds.toFixed(1)}s
-                  </div>
-                  ${sleepWarning}`
-        },
-      },
+      // Store data for tooltip without creating closure
+      processName: item.processName,
+      windowTitle: item.windowTitle,
+      timestamp: item.timestamp,
+      durationSeconds: item.durationSeconds,
+      duringsSleep: duringsSleep,
+      itemColor: color
     })
   })
 
   console.log('Created', focusedWindows.length, 'focused window chart items')
 
-  // Calculate X-axis range first (needed for background windows)
-  const fromParts = fromDate.value.split('-').map(Number)
-  const toParts = toDate.value.split('-').map(Number)
-  const xAxisMin = new Date(fromParts[0], fromParts[1] - 1, fromParts[2], 0, 0, 0).getTime()
-  const xAxisMax = new Date(toParts[0], toParts[1] - 1, toParts[2], 23, 59, 59).getTime()
+  // Calculate X-axis range from selected dates
+  const xAxisMin = startDate.value.getTime()
+  const xAxisMax = endDate.value.getTime()
 
   // Step 4: Add background running windows (thin lines)
   // Only show background lines during periods with activity (not during sleep/shutdown)
@@ -503,8 +527,8 @@ async function renderTimeline() {
   }
 
   console.log('X-axis range (query dates):', {
-    from: fromDate.value,
-    to: toDate.value,
+    from: startDate.value.toISOString(),
+    to: endDate.value.toISOString(),
     rangeInDays: rangeInDays.toFixed(1),
     timeFormatter,
     xAxisMin: new Date(xAxisMin).toISOString(),
@@ -529,6 +553,12 @@ async function renderTimeline() {
 
   timelineChart = echarts.init(timelineChartRef.value)
   console.log('ECharts instance created')
+
+  // Get computed CSS colors (ECharts doesn't support CSS variables in tooltip)
+  const computedStyle = getComputedStyle(document.documentElement)
+  const tooltipBg = computedStyle.getPropertyValue('--surface-card').trim()
+  const tooltipBorder = computedStyle.getPropertyValue('--primary-color').trim()
+  const tooltipText = computedStyle.getPropertyValue('--text-color').trim()
 
   const option = {
     animation: false,
@@ -584,12 +614,24 @@ async function renderTimeline() {
       },
     ],
     tooltip: {
-      backgroundColor: 'var(--surface-card)',
-      borderColor: 'var(--primary-color)',
+      backgroundColor: tooltipBg,
+      borderColor: tooltipBorder,
       borderWidth: 2,
       textStyle: {
-        color: 'var(--text-color)',
+        color: tooltipText,
       },
+      formatter: (params) => {
+        const data = params.data
+        if (!data) return ''
+
+        const sleepWarning = data.duringsSleep ? '<div style="color:#FFA500;font-size:0.85em;">⚠️ 休眠时段</div>' : ''
+        return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${data.processName}</div>
+                <div style="font-size:0.9em;">${data.windowTitle}</div>
+                <div style="margin-top:4px;color:var(--primary-color);">
+                  ${toLocalTime(data.timestamp)} · ${data.durationSeconds.toFixed(1)}s
+                </div>
+                ${sleepWarning}`
+      }
     },
   }
   
@@ -696,50 +738,6 @@ function getProcessColor(name) {
 <style lang="scss" scoped>
 .history-page {
   width: 100%;
-}
-
-.query-card {
-  background: var(--surface-card);
-}
-
-.query-row {
-  display: flex;
-  gap: 16px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-}
-
-.input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.input-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text-color);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.query-btn {
-  padding: 10px 24px;
-  border: 2px solid var(--primary-color);
-  background: transparent;
-  color: var(--text-color);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &:hover {
-    background: var(--primary-color);
-    color: var(--surface-card);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 0 var(--primary-color);
-  }
 }
 
 .error-banner {

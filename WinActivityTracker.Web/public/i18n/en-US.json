@@ -15,6 +15,11 @@
   "common.switches": "Switches",
   "common.title": "Window Title",
   "common.delete": "Delete",
+  "common.year": "Y",
+  "common.month": "M",
+  "common.day": "D",
+  "common.hour": "H",
+  "common.minute": "Min",
 
   "error.backendUnreachable": "Cannot connect to backend: {message}",
   "error.saveFailed": "Save failed ({status})",
@@ -31,6 +36,7 @@
   "nav.tags": "Tags",
   "nav.timeline": "Timeline",
   "nav.settings": "Settings",
+  "nav.licenses": "Licenses",
 
   "dashboard.periods.today": "Today",
   "dashboard.periods.week": "7 Days",
@@ -64,11 +70,16 @@
 
   "history.startDate": "Start Date",
   "history.endDate": "End Date",
+  "history.startTime": "Start Time",
+  "history.endTime": "End Time",
   "history.query": "Query",
   "history.sortAsc": "↑ Duration Ascending",
   "history.sortDesc": "↓ Duration Descending",
+  "history.card.visualTimeline": "Visual Timeline",
   "history.card.periodSummary": "Period Summary",
   "history.card.programCount": "({count} programs)",
+  "history.legend.focus": "Focused",
+  "history.legend.visible": "Background Visible",
   "history.sleepOff": "Sleep/Shutdown {duration}",
   "history.table.process": "Process",
   "history.table.totalDuration": "Total Duration",
@@ -159,5 +170,14 @@
   "tags.mode.overwrite": "Overwrite",
   "tags.savedCount": "Saved {count} rules",
   "tags.error.saveFailed": "Save failed ({status})",
-  "tags.error.backendUnreachable": "Cannot connect to backend: {message}"
+  "tags.error.backendUnreachable": "Cannot connect to backend: {message}",
+
+  "licenses.pageTitle": "Third-Party Licenses",
+  "licenses.description": "This project uses the following open source fonts and libraries. Thanks for their contributions.",
+  "licenses.version": "License",
+  "licenses.copyright": "Copyright",
+  "licenses.website": "Website",
+  "licenses.usage": "Usage",
+  "licenses.fontUsage": "UI text font and monospace code font",
+  "licenses.viewLicense": "View Full License"
 }

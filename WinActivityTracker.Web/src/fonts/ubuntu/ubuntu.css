@@ -1,0 +1,46 @@
+/* Ubuntu Font Family - Ubuntu Font Licence 1.0 */
+
+/* Ubuntu Regular */
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('./Ubuntu-R.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ubuntu Bold */
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('./Ubuntu-B.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ubuntu Medium */
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('./Ubuntu-M.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ubuntu Mono Regular - for code */
+@font-face {
+  font-family: 'Ubuntu Mono';
+  src: url('./UbuntuMono-R.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ubuntu Mono Bold - for code */
+@font-face {
+  font-family: 'Ubuntu Mono';
+  src: url('./UbuntuMono-B.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
