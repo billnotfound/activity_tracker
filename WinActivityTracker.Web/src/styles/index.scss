@@ -1,0 +1,175 @@
+// Memphis Style Main Entry Point
+@import './memphis/variables';
+@import './memphis/mixins';
+@import './memphis/animations';
+@import './memphis/components';
+@import './memphis/themes';
+
+// Global reset and base styles
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: var(--surface-ground, #FFFFFF);
+  color: var(--text-color, #212529);
+  transition: background-color 0.3s, color 0.3s;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+// Override PrimeVue default styles to match Memphis (refined)
+.p-component {
+  font-family: inherit;
+}
+
+// PrimeVue Button override - cleaner style
+.p-button {
+  border-radius: 0 !important;
+  border-width: 2px !important;
+  font-weight: 600 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: all 0.2s ease !important;
+  
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color) !important;
+  }
+  
+  &:active {
+    transform: translateY(0);
+    box-shadow: none !important;
+  }
+}
+
+// PrimeVue Card override - minimal decoration
+.p-card {
+  border-radius: 0 !important;
+  border: 2px solid var(--surface-200) !important;
+  box-shadow: none !important;
+  transition: all 0.3s ease !important;
+  
+  &:hover {
+    border-color: var(--primary-color) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color) !important;
+  }
+}
+
+// PrimeVue DataTable override - clean borders
+.p-datatable {
+  border: 2px solid var(--surface-200) !important;
+  border-radius: 0 !important;
+  
+  .p-datatable-thead > tr > th {
+    background: var(--surface-card) !important;
+    color: var(--text-color) !important;
+    border: none !important;
+    border-bottom: 2px solid var(--primary-color) !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 0.9rem;
+  }
+  
+  .p-datatable-tbody > tr {
+    transition: all 0.2s ease !important;
+    border-bottom: 1px solid var(--surface-200) !important;
+    
+    &:hover {
+      background: var(--surface-100) !important;
+      transform: translateX(2px);
+    }
+  }
+}
+
+// PrimeVue InputText override
+.p-inputtext {
+  border-radius: 0 !important;
+  border: 2px solid var(--surface-200) !important;
+  transition: all 0.2s ease !important;
+  
+  &:focus {
+    border-color: var(--primary-color) !important;
+    box-shadow: none !important;
+    outline: none !important;
+  }
+}
+
+// PrimeVue TabView override - minimal style
+.p-tabview {
+  .p-tabview-nav {
+    border: none !important;
+    background: transparent !important;
+    border-bottom: 2px solid var(--surface-200) !important;
+    
+    .p-tabview-nav-link {
+      border-radius: 0 !important;
+      border: 2px solid transparent !important;
+      border-bottom: none !important;
+      background: transparent !important;
+      font-weight: 600 !important;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 0.9rem;
+      transition: all 0.2s ease !important;
+      
+      &:hover {
+        background: transparent !important;
+        border-bottom: 2px solid var(--primary-color) !important;
+        margin-bottom: -2px;
+      }
+    }
+    
+    .p-highlight .p-tabview-nav-link {
+      background: transparent !important;
+      color: var(--text-color) !important;
+      border-bottom: 3px solid var(--primary-color) !important;
+      margin-bottom: -2px;
+    }
+  }
+  
+  .p-tabview-panels {
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    padding: 24px 0 !important;
+  }
+}
+
+// Utility classes
+.flex {
+  display: flex;
+}
+
+.items-center {
+  align-items: center;
+}
+
+.justify-between {
+  justify-content: space-between;
+}
+
+.gap-2 {
+  gap: $memphis-spacing-sm;
+}
+
+.gap-4 {
+  gap: $memphis-spacing-md;
+}
+
+.mb-3 {
+  margin-bottom: $memphis-spacing-lg;
+}
+
+.mt-3 {
+  margin-top: $memphis-spacing-lg;
+}

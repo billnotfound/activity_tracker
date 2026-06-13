@@ -1,0 +1,103 @@
+// Memphis Style Animations
+
+// Bounce in animation
+@keyframes bounce-in {
+  0% {
+    transform: scale(0) rotate(-45deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.1) rotate(5deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+  }
+}
+
+.bounce-in {
+  animation: bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+// Pulse animation
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.pulse {
+  animation: pulse 2s infinite;
+}
+
+// Rotate decoration
+@keyframes rotate-decoration {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rotate-decoration {
+  animation: rotate-decoration 10s linear infinite;
+}
+
+// Float animation
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.float {
+  animation: float 3s ease-in-out infinite;
+}
+
+// Glitch effect for dark mode (reduced intensity)
+@keyframes glitch {
+  0%, 100% {
+    text-shadow: 
+      1px 1px 0 rgba(255, 107, 157, 0.5),
+      -1px -1px 0 rgba(78, 205, 196, 0.5);
+  }
+  50% {
+    text-shadow: 
+      -1px 1px 0 rgba(255, 107, 157, 0.5),
+      1px -1px 0 rgba(78, 205, 196, 0.5);
+  }
+}
+
+.glitch {
+  animation: glitch 1s infinite;
+}
+
+// Dash animation for borders
+@keyframes dash {
+  to {
+    stroke-dashoffset: -200;
+  }
+}
+
+// Fade scale
+@keyframes fade-scale {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.fade-scale {
+  animation: fade-scale 0.3s ease-out;
+}

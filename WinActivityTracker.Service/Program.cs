@@ -111,6 +111,7 @@ app.MapFocusEndpoints();
 app.MapMediaEndpoints();
 app.MapWindowEndpoints();
 app.MapTagEndpoints();
+app.MapIconEndpoints();
 
 if (serveSpa && fp != null)
     app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });

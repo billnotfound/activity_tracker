@@ -1,0 +1,184 @@
+// Memphis Style Component Styles
+
+@import './variables';
+@import './mixins';
+
+// Memphis Card - minimal decoration, interaction-focused
+.memphis-card {
+  background: var(--surface-card, $memphis-fallback-surface);
+  border: 2px solid var(--surface-200, #E0E0E0);
+  padding: $memphis-spacing-lg;
+  position: relative;
+  overflow: visible;
+  transition: all $memphis-transition-normal;
+  
+  // Corner decoration - only visible on hover
+  &::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    background: var(--accent-color, $memphis-fallback-accent);
+    clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+    opacity: 0;
+    transition: opacity $memphis-transition-normal;
+  }
+  
+  &:hover {
+    border-color: var(--primary-color, $memphis-fallback-primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary);
+    
+    &::before {
+      opacity: 1;
+    }
+  }
+  
+  &.variant-accent {
+    border-color: var(--accent-color, $memphis-fallback-accent);
+    
+    &:hover {
+      box-shadow: 0 4px 0 var(--accent-color, $memphis-fallback-accent);
+    }
+  }
+  
+  &.variant-secondary {
+    border-color: var(--secondary-color, $memphis-fallback-secondary);
+    
+    &:hover {
+      box-shadow: 0 4px 0 var(--secondary-color, $memphis-fallback-secondary);
+    }
+  }
+  
+  &.no-deco::before {
+    display: none;
+  }
+}
+
+// Memphis Button - clean with hover effect
+.memphis-button {
+  border: 2px solid var(--primary-color, $memphis-fallback-primary);
+  background: transparent;
+  color: var(--text-color, $memphis-fallback-text);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 10px 20px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all $memphis-transition-normal;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: var(--primary-color, $memphis-fallback-primary);
+    transition: left $memphis-transition-normal;
+    z-index: 0;
+  }
+  
+  span {
+    position: relative;
+    z-index: 1;
+  }
+  
+  &:hover {
+    color: var(--surface-card, $memphis-fallback-surface);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary);
+    
+    &::before {
+      left: 0;
+    }
+  }
+  
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+}
+
+// Memphis Skeleton - cleaner animation
+.memphis-skeleton {
+  display: flex;
+  gap: $memphis-spacing-md;
+  padding: $memphis-spacing-lg;
+  
+  .shape {
+    @include memphis-shimmer(
+      var(--surface-100, #E0E0E0),
+      var(--surface-200, #CCCCCC)
+    );
+    
+    &.shape-triangle {
+      @include memphis-triangle(transparent, 40px);
+      flex-shrink: 0;
+    }
+    
+    &.shape-circle {
+      @include memphis-circle(transparent, 40px);
+      flex-shrink: 0;
+    }
+    
+    &.shape-rect {
+      width: 100%;
+      height: 16px;
+      margin: 4px 0;
+    }
+  }
+}
+
+// Memphis Tag - subtle with border
+.memphis-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 2px solid var(--primary-color, $memphis-fallback-primary);
+  background: transparent;
+  color: var(--text-color, $memphis-fallback-text);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  position: relative;
+  transition: all $memphis-transition-fast;
+  
+  &:hover {
+    background: var(--primary-color, $memphis-fallback-primary);
+    color: var(--surface-card, $memphis-fallback-surface);
+  }
+}
+
+// Memphis Input
+.memphis-input {
+  border: 2px solid var(--surface-200, #E0E0E0);
+  background: var(--surface-card, $memphis-fallback-surface);
+  padding: 8px 12px;
+  font-size: 1rem;
+  color: var(--text-color, $memphis-fallback-text);
+  transition: all $memphis-transition-fast;
+  
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color, $memphis-fallback-primary);
+  }
+  
+  &::placeholder {
+    color: var(--surface-400, #999);
+  }
+}
+
+// Dark mode - subtle glow on interaction only
+.dark-mode {
+  .memphis-card:hover,
+  .memphis-button:hover {
+    box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary),
+                0 0 12px rgba(255, 107, 157, 0.2);
+  }
+}

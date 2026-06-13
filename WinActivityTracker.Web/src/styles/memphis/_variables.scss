@@ -1,0 +1,46 @@
+// ============================================================
+// Memphis Style — Layout & Animation Variables
+// ============================================================
+// All COLOR values live in src/styles/theme.config.js and are
+// applied at runtime as CSS variables (e.g. --primary-color).
+// This file only holds layout/timing tokens that need to be
+// consumed at SCSS compile time (mixins, calc fallbacks).
+//
+// Use colors in SCSS with: `var(--primary-color, #fallback)`.
+// ============================================================
+
+// Spacing
+$memphis-spacing-xs: 4px;
+$memphis-spacing-sm: 8px;
+$memphis-spacing-md: 16px;
+$memphis-spacing-lg: 24px;
+$memphis-spacing-xl: 32px;
+
+// Border
+$memphis-border-width: 2px;
+$memphis-border-radius: 0;
+
+// Shadows
+$memphis-shadow-sm: 0 2px 0;
+$memphis-shadow-md: 0 4px 0;
+$memphis-shadow-lg: 0 6px 0;
+
+// Animation
+$memphis-transition-fast: 0.2s ease;
+$memphis-transition-normal: 0.3s ease;
+$memphis-transition-slow: 0.5s ease;
+
+// ------------------------------------------------------------
+// Color fallbacks (only used when CSS vars haven't loaded yet,
+// e.g. SSR first paint). Keep in sync with default light theme
+// in theme.config.js — but the JS file is the source of truth.
+// ------------------------------------------------------------
+$memphis-fallback-primary:   #F4A261;
+$memphis-fallback-secondary: #E76F51;
+$memphis-fallback-accent:    #2A9D8F;
+$memphis-fallback-text:      #2B2D42;
+$memphis-fallback-bg:        #FEFEFE;
+$memphis-fallback-surface:   #F8F9FA;
+$memphis-fallback-border:    #2B2D42;
+$memphis-fallback-100:       #F0F0F0;
+$memphis-fallback-200:       #E0E0E0;

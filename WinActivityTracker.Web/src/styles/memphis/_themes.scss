@@ -1,0 +1,15 @@
+// ============================================================
+// Theme-Specific Structural Styles
+// ============================================================
+// Color CSS variables (--primary-color etc.) are set by useTheme.js
+// at runtime from theme.config.js. This file only contains style
+// rules that need to react to which theme is active (background,
+// special decorations, dark-mode-only effects).
+// ============================================================
+
+@import './variables';
+
+// Clean background — no patterns, lets the theme color shine
+.memphis-background {
+  background: var(--surface-ground, $memphis-fallback-bg);
+}

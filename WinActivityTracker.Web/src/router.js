@@ -1,18 +1,17 @@
 // Vue Router with HTML5 history mode (no hash in URLs).
-// Four routes, each lazy-loading a view component.
+// Three routes, each lazy-loading a view component.
 //
 // Navigation:
 //   /           Dashboard   — today's charts, media history
-//   /history    History     — date-range query, aggregated data table
-//   /timeline   Timeline    — focus change log, live visible windows
-//   /settings   Settings    — backend configuration, DB maintenance
+//   /history    History     — date-range query, aggregated data table, visual timeline
+//   /tags       Tags        — tag rules editor
+//   /settings   Settings    — backend configuration, DB maintenance, theme settings
 //
 // history: createWebHistory() means the .NET Web server MUST have
 // MapFallbackToFile("index.html") configured for SPA routing to work in production.
 import { createRouter, createWebHistory } from 'vue-router'
 import Dashboard from './views/Dashboard.vue'
 import History from './views/History.vue'
-import Timeline from './views/Timeline.vue'
 import Settings from './views/Settings.vue'
 import Tags from './views/Tags.vue'
 
@@ -21,7 +20,6 @@ export default createRouter({
   routes: [
     { path: '/', component: Dashboard },
     { path: '/history', component: History },
-    { path: '/timeline', component: Timeline },
     { path: '/tags', component: Tags },
     { path: '/settings', component: Settings },
   ]

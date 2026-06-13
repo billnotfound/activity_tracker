@@ -1,0 +1,100 @@
+// Memphis Style Mixins
+
+@mixin memphis-card-shadow($color) {
+  box-shadow: $memphis-shadow-md $color;
+  transition: all $memphis-transition-normal;
+  
+  &:hover {
+    transform: translate(-4px, -4px);
+    box-shadow: $memphis-shadow-lg $color;
+  }
+}
+
+@mixin memphis-border($color, $width: $memphis-border-width) {
+  border: $width solid $color;
+  border-radius: $memphis-border-radius;
+}
+
+// Geometric decorations
+@mixin memphis-corner-triangle($color, $size: 40px) {
+  content: '';
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  width: $size;
+  height: $size;
+  background: $color;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+}
+
+@mixin memphis-corner-circle($color, $size: 30px) {
+  content: '';
+  position: absolute;
+  bottom: -10px;
+  left: -10px;
+  width: $size;
+  height: $size;
+  background: $color;
+  border-radius: 50%;
+}
+
+// Animated dashed border
+@mixin memphis-dashed-border($color) {
+  &::after {
+    content: '';
+    position: absolute;
+    inset: -5px;
+    border: 2px dashed $color;
+    opacity: 0;
+    transition: opacity $memphis-transition-normal;
+  }
+  
+  &:hover::after {
+    opacity: 1;
+    animation: dash-rotate 20s linear infinite;
+  }
+}
+
+@keyframes dash-rotate {
+  to {
+    stroke-dashoffset: -200;
+  }
+}
+
+// Shimmer effect for skeleton
+@mixin memphis-shimmer($color1, $color2) {
+  background: linear-gradient(90deg, 
+    $color1 25%, 
+    $color2 50%, 
+    $color1 75%);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+// Geometric shapes
+@mixin memphis-triangle($color, $size: 20px) {
+  width: 0;
+  height: 0;
+  border-left: calc($size / 2) solid transparent;
+  border-right: calc($size / 2) solid transparent;
+  border-bottom: $size solid $color;
+}
+
+@mixin memphis-circle($color, $size: 20px) {
+  width: $size;
+  height: $size;
+  background: $color;
+  border-radius: 50%;
+}
+
+// Neon glow effect for dark mode
+@mixin memphis-glow($color) {
+  box-shadow: 0 0 10px $color,
+              0 0 20px $color,
+              0 0 30px $color;
+}
