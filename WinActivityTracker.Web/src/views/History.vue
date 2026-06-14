@@ -84,7 +84,7 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import { toLocalTime, fmtDuration, parseUtcTs } from '../utils/time.js'
+import { toLocalTime, fmtDuration, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -121,11 +121,6 @@ function handleTimeChange({ start, end }) {
   startDate.value = start
   endDate.value = end
   loadData()
-}
-
-// Convert Date to API format (YYYY-MM-DDTHH:mm:ss)
-function toApiDateTime(date) {
-  return date.toISOString().slice(0, 19)
 }
 
 onMounted(async () => {
@@ -196,8 +191,8 @@ async function loadData() {
   error.value = ''
 
   try {
-    const fromStr = toApiDateTime(startDate.value)
-    const toStr = toApiDateTime(endDate.value)
+    const fromStr = toLocalDatetimeString(startDate.value)
+    const toStr = toLocalDatetimeString(endDate.value)
     console.log('Loading data from', fromStr, 'to', toStr)
 
     // Load summary
@@ -217,6 +212,8 @@ async function loadData() {
       }
     })
 
+    // Sort after merge — merging can change totalSeconds and disrupt backend order
+    mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
     data.value = mergedData
     totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
 

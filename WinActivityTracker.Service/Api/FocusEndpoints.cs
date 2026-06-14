@@ -82,7 +82,7 @@ public static class FocusEndpoints
                 SwitchCount = d.SwitchCount,
                 AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount),
                 Tags = tagService.ResolveTags(d.ProcessName, null)
-            }).OrderByDescending(x => x.TotalSeconds),
+            }),
             totalSleepSeconds = totalSleepSec
         });
     }

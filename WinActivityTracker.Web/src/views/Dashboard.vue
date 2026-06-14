@@ -79,7 +79,7 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import { fmtShortDur, parseUtcTs, fmtDuration, toLocalDateString } from '../utils/time.js'
+import { fmtShortDur, parseUtcTs, toLocalDateString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -90,6 +90,9 @@ import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 const apiBase = inject('apiBase')
 const { t } = useI18n()
 const { isDark } = useTheme()
+
+// Cache icon data to avoid re-fetching every refresh (2s interval)
+const iconCache = new Map()
 
 const periods = [
   { key: 'today', label: t('dashboard.periods.today') },
@@ -107,7 +110,6 @@ const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
 const loading = ref(true)
-const sortAsc = ref(false)
 
 const focusChartRef = ref(null)
 let focusChart = null
@@ -125,10 +127,6 @@ function onPickDate() {
   clearInterval(timer)
   loadSummary()
   timer = setInterval(loadSummary, 2000)
-}
-
-function toggleSort() {
-  sortAsc.value = !sortAsc.value
 }
 
 function periodRange() {
@@ -187,14 +185,6 @@ const mergedMedia = computed(() => {
 const displayMedia = computed(() =>
   mergedMedia.value.filter(m => m.playbackStatus !== 'SystemSleep')
 )
-
-const sortedSummary = computed(() => {
-  const list = [...summary.value]
-  list.sort((a, b) =>
-    sortAsc.value ? a.totalSeconds - b.totalSeconds : b.totalSeconds - a.totalSeconds
-  )
-  return list
-})
 
 const totalListenFmt = computed(() => {
   const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing')
@@ -294,6 +284,8 @@ async function fetchSummary() {
       }
     })
 
+    // Sort after merge — merging can change totalSeconds and disrupt backend order
+    mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
     summary.value = mergedData
     totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
     error.value = ''
@@ -320,17 +312,6 @@ async function fetchMedia() {
   }
 }
 
-function getColor(name, alpha = 1) {
-  // Use theme colors from CSS variables
-  const primary = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim()
-  const secondary = getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim()
-  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim()
-  
-  const colors = [primary, secondary, accent, '#06D6A0', '#9B5DE5', '#F15BB5', '#E76F51', '#4ECDC4']
-  const hash = name.split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
-  return colors[Math.abs(hash) % colors.length]
-}
-
 async function renderCharts(data) {
   if (!focusChartRef.value) return
 
@@ -338,13 +319,15 @@ async function renderCharts(data) {
   const labels = top.map(d => d.processName)
   const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
 
-  // Fetch icons and colors for all processes
+  // Fetch icons and colors for all processes (cached)
   const iconPromises = labels.map(async (processName) => {
+    const cached = iconCache.get(processName)
+    if (cached) return cached
     try {
       const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
       if (response.ok) {
         const iconData = await response.json()
-        return {
+        const result = {
           icon: iconData.iconData && iconData.iconData.length > 0
             ? `data:image/png;base64,${iconData.iconData}`
             : null,
@@ -352,16 +335,20 @@ async function renderCharts(data) {
           colorSecondary: iconData.colorSecondary || '#DD7596',
           colorAccent: iconData.colorAccent || '#06D6A0'
         }
+        iconCache.set(processName, result)
+        return result
       }
     } catch (e) {
       console.warn(`Failed to fetch icon for ${processName}:`, e)
     }
-    return {
+    const fallback = {
       icon: null,
       colorPrimary: '#6B7FD7',
       colorSecondary: '#DD7596',
       colorAccent: '#06D6A0'
     }
+    iconCache.set(processName, fallback)
+    return fallback
   })
 
   const iconDataList = await Promise.all(iconPromises)
