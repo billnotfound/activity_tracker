@@ -27,7 +27,7 @@
           </router-link>
         </div>
         <div class="navbar-actions">
-          <button class="theme-toggle" @click="toggleDark" :title="isDark ? 'Light Mode' : 'Dark Mode'">
+          <button class="theme-toggle" @click="toggleDark" :title="isDark ? t('app.lightMode') : t('app.darkMode')">
             <i :class="isDark ? 'pi pi-sun' : 'pi pi-moon'"></i>
           </button>
         </div>

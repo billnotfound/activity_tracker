@@ -41,7 +41,7 @@
                   <td>{{ toLocal(d.timestamp) }}</td>
                   <td><strong>{{ d.processName }}</strong></td>
                   <td>{{ d.windowTitle }}</td>
-                  <td>{{ d.durationSeconds.toFixed(1) }}s</td>
+                  <td>{{ t('time.shortS', { n: d.durationSeconds.toFixed(1) }) }}</td>
                 </tr>
                 <tr v-if="!timeline.length"><td colspan="4" class="text-muted">{{ t('timeline.noData') }}</td></tr>
               </tbody>

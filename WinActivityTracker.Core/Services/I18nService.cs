@@ -28,14 +28,25 @@ public class I18nService
 
     /// <summary>
     /// Returns the translated and formatted string.
-    /// Uses string.Format positional {0}, {1}, etc. placeholders.
-    /// If the template doesn't contain {0}, extra args are ignored.
+    /// Supports two placeholder styles for compatibility with the web frontend:
+    ///   {0}, {1} — string.Format style (used by WinForms-specific keys)
+    ///   {n}      — web UI style (used by shared keys like time.*)
+    /// If the template contains neither, extra args are ignored.
     /// </summary>
     public static string _(string key, params object[] args)
     {
         var template = _(key);
-        if (args.Length > 0 && template.Contains("{0}"))
+        if (args.Length == 0)
+            return template;
+        if (template.Contains("{0}"))
             return string.Format(template, args);
+        if (template.Contains("{n}"))
+        {
+            var result = template;
+            for (int i = 0; i < args.Length; i++)
+                result = result.Replace("{n}", args[i]?.ToString() ?? "");
+            return result;
+        }
         return template;
     }
 

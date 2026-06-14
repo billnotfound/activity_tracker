@@ -49,34 +49,34 @@
         stripedRows
         :rowClass="rowClass"
       >
-        <Column field="tag" header="Tag" style="min-width: 120px">
+        <Column field="tag" :header="t('tags.column.tag')" style="min-width: 120px">
           <template #body="{ data }">
             <input
               v-model="data.tag"
               class="memphis-input compact"
-              placeholder="tag"
+              :placeholder="t('tags.placeholder.tag')"
             />
           </template>
         </Column>
-        <Column field="process" header="Process" style="min-width: 150px">
+        <Column field="process" :header="t('tags.column.process')" style="min-width: 150px">
           <template #body="{ data }">
             <input
               v-model="data.process"
               class="memphis-input compact"
-              placeholder="(any)"
+              :placeholder="t('tags.placeholder.any')"
             />
           </template>
         </Column>
-        <Column field="titlePattern" header="Title Pattern" style="min-width: 180px">
+        <Column field="titlePattern" :header="t('tags.column.titlePattern')" style="min-width: 180px">
           <template #body="{ data }">
             <input
               v-model="data.titlePattern"
               class="memphis-input compact"
-              placeholder="(any)"
+              :placeholder="t('tags.placeholder.any')"
             />
           </template>
         </Column>
-        <Column field="weight" header="Weight" style="width: 100px">
+        <Column field="weight" :header="t('tags.column.weight')" style="width: 100px">
           <template #body="{ data }">
             <input
               v-model.number="data.weight"
@@ -85,7 +85,7 @@
             />
           </template>
         </Column>
-        <Column field="mode" header="Mode" style="width: 120px">
+        <Column field="mode" :header="t('tags.column.mode')" style="width: 120px">
           <template #body="{ data }">
             <select v-model="data.mode" class="memphis-select compact">
               <option v-for="m in modes" :key="m.v" :value="m.v">

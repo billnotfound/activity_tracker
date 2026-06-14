@@ -63,7 +63,8 @@
 
   <!-- Copy Vue SPA build output (wwwroot) from Web project into Service output.
        This lets the tray icon's "打开仪表盘" serve the full UI from port 5200.
-       The Vue project must be built first: cd WinActivityTracker.Web && pnpm build
+       Frontend must be built first: cd WinActivityTracker.Web && pnpm build
+       (publish.ps1 does this automatically; for dotnet build run pnpm build manually.)
        Build target: copies to output dir for dotnet run / F5.
        Publish target: copies to publish dir for dotnet publish. -->
   <Target Name="CopyVueDistBuild" AfterTargets="Build" Condition="Exists('..\WinActivityTracker.Web\wwwroot\index.html')">
@@ -77,6 +78,26 @@
       <VueFiles Include="..\WinActivityTracker.Web\wwwroot\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(VueFiles)" DestinationFolder="$(PublishDir)wwwroot\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <!-- I18n JSON files are copied to TWO locations from source (public/i18n/):
+       1. wwwroot/i18n/  — served by UseStaticFiles for the web frontend
+       2. i18n/           — loaded by I18nService for WinForms native windows
+       Read directly from public/i18n/ so they work even without running pnpm build.
+       SkipUnchangedFiles="false" ensures every build picks up the latest translations. -->
+  <Target Name="CopyI18nBuild" AfterTargets="Build">
+    <ItemGroup>
+      <I18nFiles Include="..\WinActivityTracker.Web\public\i18n\*.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(I18nFiles)" DestinationFolder="$(OutputPath)wwwroot\i18n\" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(I18nFiles)" DestinationFolder="$(OutputPath)i18n\" SkipUnchangedFiles="false" />
+  </Target>
+  <Target Name="CopyI18nPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <I18nFiles Include="..\WinActivityTracker.Web\public\i18n\*.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(I18nFiles)" DestinationFolder="$(PublishDir)wwwroot\i18n\" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(I18nFiles)" DestinationFolder="$(PublishDir)i18n\" SkipUnchangedFiles="false" />
   </Target>
 
 </Project>

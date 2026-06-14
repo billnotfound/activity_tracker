@@ -1,5 +1,5 @@
 <!--
-  Settings page — backend config + theme settings
+  Settings page — backend config + theme settings + language switcher
 -->
 <template>
   <div class="settings-page">
@@ -14,9 +14,24 @@
     <!-- TabView -->
     <TabView class="memphis-tabview">
       <!-- Appearance Tab -->
-      <TabPanel :header="'外观'">
+      <TabPanel :header="t('settings.tab.appearance')">
         <MemphisCard>
-          <h3 class="section-title">主题配色</h3>
+          <h3 class="section-title">{{ t('settings.card.language') }}</h3>
+          <div class="language-selector">
+            <button
+              v-for="lang in languages"
+              :key="lang.code"
+              class="option-button"
+              :class="{ active: locale === lang.code }"
+              @click="setLocale(lang.code)"
+            >
+              <span>{{ lang.name }}</span>
+            </button>
+          </div>
+
+          <div class="divider"></div>
+
+          <h3 class="section-title">{{ t('settings.appearance.themeColors') }}</h3>
           <div class="theme-selector">
             <button
               v-for="th in lightThemes"
@@ -37,15 +52,15 @@
 
           <div class="divider"></div>
 
-          <h3 class="section-title">深色模式</h3>
+          <h3 class="section-title">{{ t('settings.appearance.darkMode') }}</h3>
           <div class="toggle-row">
             <InputSwitch v-model="theme.isDark" @change="theme.toggleDark" />
-            <span class="toggle-label">{{ theme.isDark ? '深色' : '浅色' }}</span>
+            <span class="toggle-label">{{ theme.isDark ? t('settings.appearance.dark') : t('settings.appearance.light') }}</span>
           </div>
 
           <div class="divider"></div>
 
-          <h3 class="section-title">页面切换动画</h3>
+          <h3 class="section-title">{{ t('settings.appearance.pageTransition') }}</h3>
           <div class="button-group">
             <button
               class="option-button"
@@ -53,7 +68,7 @@
               @click="theme.setPageTransition('slide')"
             >
               <i class="pi pi-arrow-right"></i>
-              <span>滑动</span>
+              <span>{{ t('settings.appearance.slide') }}</span>
             </button>
             <button
               class="option-button"
@@ -61,24 +76,24 @@
               @click="theme.setPageTransition('geometric')"
             >
               <i class="pi pi-th-large"></i>
-              <span>几何</span>
+              <span>{{ t('settings.appearance.geometric') }}</span>
             </button>
           </div>
 
           <div class="divider"></div>
 
-          <h3 class="section-title">自动配色</h3>
+          <h3 class="section-title">{{ t('settings.appearance.autoColor') }}</h3>
           <div class="toggle-row">
             <InputSwitch v-model="theme.autoColor" @change="v => theme.setAutoColor(v)" />
-            <span class="toggle-label">根据今日使用最多的应用自动选择主题色</span>
+            <span class="toggle-label">{{ t('settings.appearance.autoColorHelp') }}</span>
           </div>
         </MemphisCard>
       </TabPanel>
 
       <!-- Tracking Tab -->
-      <TabPanel :header="'追踪'">
+      <TabPanel :header="t('settings.tab.tracking')">
         <MemphisCard>
-          <h3 class="section-title">追踪状态</h3>
+          <h3 class="section-title">{{ t('settings.tracking.status') }}</h3>
           <div class="toggle-row mb-3">
             <InputSwitch v-model="form.trackingEnabled" />
             <span class="toggle-label">
@@ -89,31 +104,31 @@
 
           <div class="divider"></div>
 
-          <h3 class="section-title">轮询间隔</h3>
+          <h3 class="section-title">{{ t('settings.tracking.pollInterval') }}</h3>
           <div class="input-grid">
             <div class="input-field">
               <label>{{ t('settings.windowPollLabel') }}</label>
-              <InputNumber v-model="form.windowPollSeconds" :min="1" suffix=" 秒" />
+              <InputNumber v-model="form.windowPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
               <small>{{ t('settings.windowPollHelp') }}</small>
             </div>
             <div class="input-field">
               <label>{{ t('settings.processPollLabel') }}</label>
-              <InputNumber v-model="form.processPollSeconds" :min="5" suffix=" 秒" />
+              <InputNumber v-model="form.processPollSeconds" :min="5" :suffix="t('time.seconds.suffix')" />
               <small>{{ t('settings.processPollHelp') }}</small>
             </div>
             <div class="input-field">
               <label>{{ t('settings.mediaPollLabel') }}</label>
-              <InputNumber v-model="form.mediaPollSeconds" :min="1" suffix=" 秒" />
+              <InputNumber v-model="form.mediaPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
               <small>{{ t('settings.mediaPollHelp') }}</small>
             </div>
           </div>
 
           <div class="divider"></div>
 
-          <h3 class="section-title">闲置检测</h3>
+          <h3 class="section-title">{{ t('settings.tracking.idleDetection') }}</h3>
           <div class="input-field">
             <label>{{ t('settings.idleThresholdLabel') }}</label>
-            <InputNumber v-model="form.idleThresholdMinutes" :min="1" suffix=" 分钟" />
+            <InputNumber v-model="form.idleThresholdMinutes" :min="1" :suffix="t('time.minutes.suffix')" />
             <small>{{ t('settings.idleThresholdHelp') }}</small>
           </div>
 
@@ -131,29 +146,29 @@
       </TabPanel>
 
       <!-- Database Tab -->
-      <TabPanel :header="'数据库'">
+      <TabPanel :header="t('settings.tab.database')">
         <MemphisCard>
-          <h3 class="section-title">数据保留</h3>
+          <h3 class="section-title">{{ t('settings.database.dataRetention') }}</h3>
           <div class="input-field">
             <label>{{ t('settings.retentionLabel') }}</label>
-            <InputNumber v-model="form.dataRetentionDays" :min="1" suffix=" 天" />
+            <InputNumber v-model="form.dataRetentionDays" :min="1" :suffix="t('common.day.suffix')" />
             <small>{{ t('settings.retentionHelp') }}</small>
           </div>
 
           <div class="divider"></div>
 
-          <h3 class="section-title">数据库操作</h3>
+          <h3 class="section-title">{{ t('settings.database.operations') }}</h3>
           <div class="button-row">
-            <Button label="刷新统计" icon="pi pi-refresh" @click="loadDbStats" :loading="false" />
+            <Button :label="t('settings.refreshStats')" icon="pi pi-refresh" @click="loadDbStats" :loading="false" />
             <Button
-              label="清除图标缓存"
+              :label="t('settings.database.clearIconCache')"
               icon="pi pi-image"
               severity="secondary"
               @click="clearIconCache"
               :loading="clearingIcons"
             />
             <Button
-              label="清理旧数据"
+              :label="t('settings.cleanupNow')"
               icon="pi pi-trash"
               severity="warning"
               @click="runCleanup"
@@ -161,32 +176,32 @@
             />
             <Button
               v-if="!resetConfirm"
-              label="删除所有数据"
+              :label="t('settings.deleteAll')"
               icon="pi pi-times"
               severity="danger"
               @click="resetConfirm = true"
             />
             <template v-else>
-              <Button label="确认删除" severity="danger" @click="runReset" :loading="resetting" />
-              <Button label="取消" severity="secondary" text @click="resetConfirm = false" />
+              <Button :label="t('settings.confirmDelete')" severity="danger" @click="runReset" :loading="resetting" />
+              <Button :label="t('settings.cancel')" severity="secondary" text @click="resetConfirm = false" />
             </template>
           </div>
 
           <div v-if="dbStats" class="stats-table">
             <div class="stat-row">
-              <span>焦点记录</span>
+              <span>{{ t('settings.dbStats.focusChanges') }}</span>
               <strong>{{ dbStats.focusChanges?.toLocaleString() }}</strong>
             </div>
             <div class="stat-row">
-              <span>窗口会话</span>
+              <span>{{ t('settings.dbStats.windowSessions') }}</span>
               <strong>{{ dbStats.windowSessions?.toLocaleString() }}</strong>
             </div>
             <div class="stat-row">
-              <span>进程会话</span>
+              <span>{{ t('settings.dbStats.processSessions') }}</span>
               <strong>{{ dbStats.processSessions?.toLocaleString() }}</strong>
             </div>
             <div class="stat-row">
-              <span>媒体记录</span>
+              <span>{{ t('settings.dbStats.mediaRecords') }}</span>
               <strong>{{ dbStats.mediaRecords }}</strong>
             </div>
           </div>
@@ -195,44 +210,44 @@
             {{ iconCacheResult }}
           </div>
           <div v-if="cleanupResult" class="alert-banner success mt-3">
-            清理完成：删除 {{ cleanupResult.deleted.focusChanges }} 条焦点记录
+            {{ t('settings.cleanupDone', { focus: cleanupResult.deleted.focusChanges ?? 0, windows: (cleanupResult.deleted.windowSessions ?? 0) + (cleanupResult.deleted.windowSnapshots ?? 0), processes: (cleanupResult.deleted.processSessions ?? 0) + (cleanupResult.deleted.processSnapshots ?? 0), media: cleanupResult.deleted.mediaRecords ?? 0 }) }}
           </div>
           <div v-if="resetResult" class="alert-banner warning mt-3">
-            重置完成：已删除所有数据
+            {{ t('settings.resetDone') }}
           </div>
         </MemphisCard>
       </TabPanel>
 
       <!-- Third-Party Licenses Tab -->
-      <TabPanel :header="'第三方'">
+      <TabPanel :header="t('settings.tab.licenses')">
         <MemphisCard>
-          <h3 class="section-title">开源许可</h3>
-          <p class="license-intro">本项目使用了以下开源字体和库，感谢它们的贡献。</p>
+          <h3 class="section-title">{{ t('licenses.pageTitle') }}</h3>
+          <p class="license-intro">{{ t('licenses.description') }}</p>
 
           <!-- Ubuntu Font -->
           <div class="license-section">
             <h4 class="license-title">Ubuntu Font Family</h4>
             <div class="license-info">
               <div class="info-row">
-                <span class="label">许可证:</span>
+                <span class="label">{{ t('licenses.version') }}:</span>
                 <span class="value">Ubuntu Font Licence 1.0</span>
               </div>
               <div class="info-row">
-                <span class="label">版权:</span>
+                <span class="label">{{ t('licenses.copyright') }}:</span>
                 <span class="value">© 2010-2015 Canonical Ltd.</span>
               </div>
               <div class="info-row">
-                <span class="label">网站:</span>
+                <span class="label">{{ t('licenses.website') }}:</span>
                 <a href="https://design.ubuntu.com/font" target="_blank" class="link">design.ubuntu.com/font</a>
               </div>
               <div class="info-row">
-                <span class="label">用途:</span>
-                <span class="value">UI 文本字体和等宽代码字体</span>
+                <span class="label">{{ t('licenses.usage') }}:</span>
+                <span class="value">{{ t('licenses.fontUsage') }}</span>
               </div>
             </div>
 
             <details class="license-details">
-              <summary>查看完整许可证</summary>
+              <summary>{{ t('licenses.viewLicense') }}</summary>
               <pre class="license-text">-------------------------------
 UBUNTU FONT LICENCE Version 1.0
 -------------------------------
@@ -259,7 +274,7 @@ https://ubuntu.com/legal/font-licence</pre>
     <!-- Save Button -->
     <div class="save-section">
       <Button
-        label="保存设置"
+        :label="t('settings.saveSettings')"
         icon="pi pi-check"
         size="large"
         @click="saveSettings"
@@ -285,6 +300,11 @@ import Button from 'primevue/button'
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
 const theme = useTheme()
+
+const languages = [
+  { code: 'zh-CN', name: '中文' },
+  { code: 'en-US', name: 'English' },
+]
 
 const lightThemes = computed(() =>
   Object.values(theme.themes).filter(t => !t.isDark)
@@ -414,12 +434,13 @@ async function clearIconCache() {
   try {
     const r = await fetch(`${apiBase}/api/icons/cache`, { method: 'DELETE' })
     if (r.ok) {
-      const result = await r.json()
-      iconCacheResult.value = result.message
+      iconCacheResult.value = t('settings.database.iconCacheCleared')
+    } else {
+      iconCacheResult.value = t('settings.database.iconCacheClearFailed')
     }
   } catch (e) {
     console.error('Clear icon cache failed:', e)
-    iconCacheResult.value = '清除图标缓存失败'
+    iconCacheResult.value = t('settings.database.iconCacheClearFailed')
   }
   clearingIcons.value = false
 }
@@ -555,6 +576,11 @@ async function runReset() {
 }
 
 .button-group {
+  display: flex;
+  gap: 12px;
+}
+
+.language-selector {
   display: flex;
   gap: 12px;
 }

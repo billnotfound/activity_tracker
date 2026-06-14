@@ -8,6 +8,7 @@
     <TimeRangePicker
       :start-date="startDate"
       :end-date="endDate"
+      :earliest-date="earliestDate"
       @change="handleTimeChange"
       class="mb-3"
     />
@@ -21,20 +22,26 @@
     <!-- Visual timeline -->
     <MemphisCard class="timeline-card mb-3">
       <h3 class="card-title">{{ t('history.card.visualTimeline') }}</h3>
-      <MemphisSkeleton v-if="loading" :lines="6" />
-      <div v-else>
-        <div ref="timelineChartRef" class="timeline-chart"></div>
-        <div class="timeline-legend">
-          <span class="legend-item">
-            <span class="legend-box focus"></span>
-            {{ t('history.legend.focus') }}
-          </span>
-          <span class="legend-item">
-            <span class="legend-box visible"></span>
-            {{ t('history.legend.visible') }}
-          </span>
-        </div>
+      <!-- Easter egg: invalid time range -->
+      <div v-if="!isTimeValid" class="easter-egg-chart">
+        <div class="easter-egg-chart-text">{{ timeEasterEgg }}</div>
       </div>
+      <template v-else>
+        <MemphisSkeleton v-if="loading" :lines="6" />
+        <div v-else>
+          <div ref="timelineChartRef" class="timeline-chart"></div>
+          <div class="timeline-legend">
+            <span class="legend-item">
+              <span class="legend-box focus"></span>
+              {{ t('history.legend.focus') }}
+            </span>
+            <span class="legend-item">
+              <span class="legend-box visible"></span>
+              {{ t('history.legend.visible') }}
+            </span>
+          </div>
+        </div>
+      </template>
     </MemphisCard>
 
     <!-- Summary table -->
@@ -112,15 +119,22 @@ const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
 const loading = ref(true)
 const error = ref('')
+const earliestDate = ref(null)
+const isTimeValid = ref(true)
+const timeEasterEgg = ref('')
 
 const timelineChartRef = ref(null)
 let timelineChart = null
 
 // Handle time change from picker
-function handleTimeChange({ start, end }) {
+function handleTimeChange({ start, end, valid, easterEgg }) {
   startDate.value = start
   endDate.value = end
-  loadData()
+  isTimeValid.value = valid
+  timeEasterEgg.value = easterEgg || ''
+  if (valid) {
+    loadData()
+  }
 }
 
 onMounted(async () => {
@@ -133,6 +147,20 @@ onMounted(async () => {
   } catch (e) {
     console.error('Failed to load settings:', e)
   }
+
+  // Fetch oldest record to constrain time picker
+  try {
+    const r = await fetch(`${apiBase}/api/db/stats`)
+    if (r.ok) {
+      const stats = await r.json()
+      if (stats.oldestRecord) {
+        earliestDate.value = new Date(stats.oldestRecord.endsWith('Z') ? stats.oldestRecord : stats.oldestRecord + 'Z')
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load DB stats:', e)
+  }
+
   await loadData()
 
   // Add window resize listener for chart responsiveness
@@ -295,7 +323,7 @@ async function loadData() {
     await renderTimeline()
   } catch (e) {
     console.error('Load error:', e)
-    error.value = `Failed to load: ${e.message}`
+    error.value = t('history.error.loadDataFailed', { message: e.message })
     loading.value = false
   }
 }
@@ -481,13 +509,13 @@ async function renderTimeline() {
           },
           tooltip: {
             formatter: () => {
-              const status = session.closeTime ? '已关闭' : '运行中'
+              const status = session.closeTime ? t('history.status.closed') : t('history.status.running')
               return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${session.processName}</div>
                       <div style="font-size:0.9em;">${session.windowTitle}</div>
                       <div style="margin-top:4px;color:var(--surface-500);">
-                        ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : '现在'}
+                        ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : t('history.status.now')}
                       </div>
-                      <div style="font-size:0.85em;color:var(--surface-400);">后台运行 · ${status}</div>`
+                      <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
             },
           },
         })
@@ -621,7 +649,7 @@ async function renderTimeline() {
         const data = params.data
         if (!data) return ''
 
-        const sleepWarning = data.duringsSleep ? '<div style="color:#FFA500;font-size:0.85em;">⚠️ 休眠时段</div>' : ''
+        const sleepWarning = data.duringsSleep ? `<div style="color:#FFA500;font-size:0.85em;">⚠️ ${t('history.status.sleepPeriod')}</div>` : ''
         return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${data.processName}</div>
                 <div style="font-size:0.9em;">${data.windowTitle}</div>
                 <div style="margin-top:4px;color:var(--primary-color);">
@@ -759,6 +787,35 @@ function getProcessColor(name) {
 
 .timeline-card {
   min-height: 400px;
+}
+
+.easter-egg-chart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  border: 2px dashed var(--danger-color, #E76F51);
+  background: var(--surface-ground, #f8f9fa);
+  animation: eggFadeIn 0.4s ease-out;
+}
+
+.easter-egg-chart-text {
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--danger-color, #E76F51);
+  text-align: center;
+  padding: 32px;
+  animation: eggPulse 2s ease-in-out infinite;
+}
+
+@keyframes eggFadeIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes eggPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 .card-title {
