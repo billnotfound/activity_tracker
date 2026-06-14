@@ -44,54 +44,12 @@
       </template>
     </MemphisCard>
 
-    <!-- Summary table -->
-    <MemphisCard class="summary-card">
-      <div class="card-header-row">
-        <h3 class="card-title">
-          {{ t('history.card.periodSummary') }}
-          <small class="count-info">{{ t('history.card.programCount', { count: data.length }) }}</small>
-        </h3>
-        <button class="sort-btn" @click="toggleSort">
-          {{ sortAsc ? '↑' : '↓' }}
-        </button>
-      </div>
-      <small v-if="totalSleepSeconds > 0" class="sleep-info">
-        {{ t('history.sleepOff', { duration: fmtDuration(totalSleepSeconds) }) }}
-      </small>
-      <MemphisSkeleton v-if="loading" :lines="8" />
-      <DataTable
-        v-else
-        :value="sortedData"
-        :rows="20"
-        :paginator="data.length > 20"
-        :rowsPerPageOptions="[10, 20, 50, 100]"
-        class="memphis-datatable"
-        stripedRows
-        showGridlines
-      >
-        <Column field="processName" :header="t('history.table.process')" sortable>
-          <template #body="{ data }">
-            <strong>{{ data.processName }}</strong>
-          </template>
-        </Column>
-        <Column field="totalSeconds" :header="t('history.table.totalDuration')" sortable>
-          <template #body="{ data }">
-            {{ fmtDuration(data.totalSeconds) }}
-          </template>
-        </Column>
-        <Column field="switchCount" :header="t('history.table.switches')" sortable>
-          <template #body="{ data }">
-            {{ mergeSameProcess ? (data.adjustedSwitchCount ?? data.switchCount) : data.switchCount }}
-          </template>
-        </Column>
-      </DataTable>
-    </MemphisCard>
   </div>
 </template>
 
 <script setup>
-import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
-import { toLocalTime, fmtDuration, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
+import { ref, inject, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { toLocalTime, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -99,8 +57,6 @@ import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
@@ -114,7 +70,6 @@ const data = ref([])
 const timeline = ref([])
 const windowSessions = ref([])
 const systemEvents = ref([])
-const sortAsc = ref(false)
 const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
 const loading = ref(true)
@@ -125,6 +80,10 @@ const timeEasterEgg = ref('')
 
 const timelineChartRef = ref(null)
 let timelineChart = null
+
+// Counter to cancel stale loadData calls — each call increments the ID;
+// only the call whose ID still matches when it reaches renderTimeline() proceeds.
+let loadId = 0
 
 // Handle time change from picker
 function handleTimeChange({ start, end, valid, easterEgg }) {
@@ -169,20 +128,24 @@ onMounted(async () => {
 
 // Watch for theme changes and re-render timeline
 watch(isDark, () => {
-  console.log('Theme changed, re-rendering timeline')
-  if (timelineChart && timeline.value && timeline.value.length > 0) {
+  if (timeline.value && timeline.value.length > 0) {
     renderTimeline()
   }
 })
 
 onUnmounted(() => {
-  // Remove resize listener
   window.removeEventListener('resize', handleResize)
 
-  if (timelineChart) {
-    timelineChart.dispose()
-    timelineChart = null
+  if (timelineChart && !timelineChart.isDisposed()) {
+    try {
+      timelineChart.dispose()
+    } catch (e) {
+      console.warn('Error disposing chart on unmount:', e)
+    }
   }
+  timelineChart = null
+  // Cancel pending loads
+  loadId++
 })
 
 // Debounced resize handler
@@ -190,31 +153,15 @@ let resizeTimer = null
 function handleResize() {
   if (resizeTimer) clearTimeout(resizeTimer)
   resizeTimer = setTimeout(() => {
-    if (timelineChart) {
+    if (timelineChart && !timelineChart.isDisposed()) {
       timelineChart.resize()
-      console.log('Chart resized due to window resize')
-      // Re-render chart with current data to adapt to new dimensions
-      if (timeline.value && timeline.value.length > 0) {
-        renderTimeline()
-        console.log('Chart re-rendered after resize')
-      }
     }
-  }, 200) // 200ms debounce
+  }, 200)
 }
 
-const sortedData = computed(() => {
-  const arr = [...data.value]
-  arr.sort((a, b) =>
-    sortAsc.value ? a.totalSeconds - b.totalSeconds : b.totalSeconds - a.totalSeconds
-  )
-  return arr
-})
-
-function toggleSort() {
-  sortAsc.value = !sortAsc.value
-}
 
 async function loadData() {
+  const myLoadId = ++loadId
   loading.value = true
   error.value = ''
 
@@ -279,18 +226,17 @@ async function loadData() {
       // Consider showing a warning to the user
     }
 
-    // For large datasets, apply intelligent sampling to improve rendering performance
+    // Systematic time-based sampling: keep every Nth point sorted by time,
+    // so the chart spans the full range evenly instead of clustering on long-duration items.
     let sampledData = timelineData
-    const samplingThreshold = rangeInHours <= 6 ? 2000 : 5000  // Lower threshold for small ranges
+    const MAX_POINTS = 8000
 
-    if (timelineData.length > samplingThreshold) {
-      // Sample to keep most significant records
-      // Sort by duration (longer durations are more important)
-      const sorted = [...timelineData].sort((a, b) => b.durationSeconds - a.durationSeconds)
-      sampledData = sorted.slice(0, samplingThreshold)
-      // Re-sort by timestamp for timeline rendering
-      sampledData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-      console.log(`📊 Sampled ${sampledData.length} records from ${timelineData.length} (kept longest durations)`)
+    if (timelineData.length > MAX_POINTS) {
+      // Sort chronologically first
+      const sorted = [...timelineData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      const step = Math.ceil(sorted.length / MAX_POINTS)
+      sampledData = sorted.filter((_, i) => i % step === 0)
+      console.log(`📊 Systematic sampling: ${sampledData.length} records from ${timelineData.length} (every ${step}th point)`)
     }
 
     timeline.value = sampledData
@@ -319,16 +265,23 @@ async function loadData() {
     }
 
     loading.value = false
+    // Only render if no newer loadData() call has started
+    if (myLoadId !== loadId) {
+      console.log(`Stale loadData call #${myLoadId} — current is #${loadId}, skipping render`)
+      return
+    }
     await nextTick()
-    await renderTimeline()
+    await renderTimeline(myLoadId)
   } catch (e) {
+    // If this isn't the latest call, don't show the error
+    if (myLoadId !== loadId) return
     console.error('Load error:', e)
     error.value = t('history.error.loadDataFailed', { message: e.message })
     loading.value = false
   }
 }
 
-async function renderTimeline() {
+async function renderTimeline(myLoadId) {
   console.log('=== renderTimeline called ===')
   console.log('timelineChartRef.value:', !!timelineChartRef.value)
   console.log('timeline.value.length:', timeline.value.length)
@@ -340,10 +293,15 @@ async function renderTimeline() {
 
   if (!timeline.value.length) {
     console.warn('No timeline data to render')
-    // Clear chart if no data
-    if (timelineChart) {
+    if (timelineChart && !timelineChart.isDisposed()) {
       timelineChart.clear()
     }
+    return
+  }
+
+  // Bail if a newer load has started
+  if (myLoadId !== undefined && myLoadId !== loadId) {
+    console.log(`Stale renderTimeline call #${myLoadId} — current is #${loadId}, skipping`)
     return
   }
 
@@ -442,6 +400,7 @@ async function renderTimeline() {
   // Calculate X-axis range from selected dates
   const xAxisMin = startDate.value.getTime()
   const xAxisMax = endDate.value.getTime()
+  const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
 
   // Step 4: Add background running windows (thin lines)
   // Only show background lines during periods with activity (not during sleep/shutdown)
@@ -474,7 +433,11 @@ async function renderTimeline() {
 
   console.log('Merged activity periods:', mergedActivity.length)
 
+  const MAX_BACKGROUND = 3000
+  let bgSkipped = 0
+
   windowSessions.value.forEach(session => {
+    if (backgroundWindows.length >= MAX_BACKGROUND) return
     const processIndex = processList.indexOf(session.processName)
     if (processIndex === -1) return
 
@@ -483,7 +446,8 @@ async function renderTimeline() {
     const sessionCloseTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
 
     // Only show background lines during activity periods
-    mergedActivity.forEach(activityPeriod => {
+    for (const activityPeriod of mergedActivity) {
+      if (backgroundWindows.length >= MAX_BACKGROUND) break
       // Find intersection between window session and activity period
       const segmentStart = Math.max(sessionOpenTime, activityPeriod.start)
       const segmentEnd = Math.min(sessionCloseTime, activityPeriod.end)
@@ -496,7 +460,13 @@ async function renderTimeline() {
         )
 
         // Skip if during sleep
-        if (isDuringSleepPeriod) return
+        if (isDuringSleepPeriod) continue
+
+        // For large ranges, skip very short background segments
+        if (rangeInDays > 1 && (segmentEnd - segmentStart) < 60 * 1000) {
+          bgSkipped++
+          continue
+        }
 
         backgroundWindows.push({
           name: session.processName,
@@ -520,16 +490,14 @@ async function renderTimeline() {
           },
         })
       }
-    })
+    }
   })
 
+  if (bgSkipped > 0) console.log(`Skipped ${bgSkipped} short background segments (< 60s)`)
   console.log('Created', backgroundWindows.length, 'background window chart items')
 
   // Combine background windows (rendered first, behind) and focused windows (on top)
   const allWindows = [...backgroundWindows, ...focusedWindows]
-
-  // Calculate date range in days
-  const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
 
   // Dynamic time format based on range
   let timeFormatter
@@ -571,10 +539,18 @@ async function renderTimeline() {
 
   // Always dispose and recreate the chart instance for clean state
   if (timelineChart) {
-    console.log('Disposing existing ECharts instance')
-    timelineChart.dispose()
+    try {
+      if (!timelineChart.isDisposed()) {
+        timelineChart.dispose()
+      }
+    } catch (e) {
+      console.warn('Error disposing chart:', e)
+    }
     timelineChart = null
   }
+
+  // Bail if a newer load started while we were working
+  if (myLoadId !== undefined && myLoadId !== loadId) return
 
   timelineChart = echarts.init(timelineChartRef.value)
   console.log('ECharts instance created')
@@ -587,6 +563,8 @@ async function renderTimeline() {
 
   const option = {
     animation: false,
+    progressive: 200,
+    progressiveThreshold: 500,
     grid: {
       left: 20,
       right: 40,
@@ -602,7 +580,7 @@ async function renderTimeline() {
         color: 'var(--text-color)',
         fontWeight: 600,
         formatter: timeFormatter,
-        rotate: rangeInDays > 3 ? 15 : 0, // Rotate labels for longer ranges
+        rotate: rangeInDays > 3 ? 15 : 0,
       },
       axisLine: {
         lineStyle: { color: 'var(--border-color)', width: 2 },
@@ -659,21 +637,13 @@ async function renderTimeline() {
       }
     },
   }
-  
-  console.log('Setting option with', focusedWindows.length, 'data points')
-  console.log('Option object:', JSON.stringify({
-    seriesDataLength: option.series[0].data.length,
-    yAxisData: option.yAxis.data,
-    gridConfig: option.grid
-  }))
-  
-  timelineChart.setOption(option, true) // notMerge: true
-  
-  // 强制刷新
-  setTimeout(() => {
-    timelineChart.resize()
-    console.log('Chart resized after 100ms')
-  }, 100)
+
+  console.log(`Setting option with ${focusedWindows.length} focused + ${backgroundWindows.length} bg = ${allWindows.length} total points`)
+
+  // Bail if stale
+  if (myLoadId !== undefined && myLoadId !== loadId) return
+
+  timelineChart.setOption(option, true)
 
   console.log('Timeline rendered successfully')
 }
@@ -867,96 +837,4 @@ function getProcessColor(name) {
   }
 }
 
-.summary-card {
-  min-height: 300px;
-}
-
-.card-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.count-info {
-  font-size: 0.85rem;
-  color: var(--surface-400);
-  margin-left: 12px;
-  font-weight: normal;
-}
-
-.sleep-info {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--surface-400);
-  margin-bottom: 16px;
-}
-
-.sort-btn {
-  padding: 4px 12px;
-  border: 2px solid var(--surface-200);
-  background: transparent;
-  color: var(--text-color);
-  font-size: 1.2rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-
-  &:hover {
-    border-color: var(--primary-color);
-    transform: translateY(-2px);
-  }
-}
-
-:deep(.memphis-datatable) {
-  .p-datatable-header {
-    background: transparent;
-    border: none;
-  }
-
-  .p-paginator {
-    background: transparent;
-    border: none;
-    border-top: 2px solid var(--surface-200);
-    padding: 16px 0;
-
-    .p-paginator-pages .p-paginator-page {
-      border: 2px solid var(--surface-200);
-      background: transparent;
-      color: var(--text-color);
-      min-width: 32px;
-      height: 32px;
-      margin: 0 2px;
-      transition: all 0.2s ease;
-
-      &:hover {
-        border-color: var(--primary-color);
-        background: transparent;
-      }
-
-      &.p-highlight {
-        border-color: var(--primary-color);
-        background: transparent;
-        color: var(--primary-color);
-        font-weight: 700;
-      }
-    }
-
-    .p-paginator-first,
-    .p-paginator-prev,
-    .p-paginator-next,
-    .p-paginator-last {
-      border: 2px solid var(--surface-200);
-      background: transparent;
-      color: var(--text-color);
-      min-width: 32px;
-      height: 32px;
-      margin: 0 2px;
-
-      &:hover {
-        border-color: var(--primary-color);
-        background: transparent;
-      }
-    }
-  }
-}
 </style>

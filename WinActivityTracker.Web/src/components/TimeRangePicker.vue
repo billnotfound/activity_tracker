@@ -1,35 +1,41 @@
 <template>
   <div class="time-range-picker">
-    <!-- Duration display (left) — always shows actual duration, red when invalid -->
+    <!-- Duration display -->
     <div class="duration-display" :class="{ 'easter-egg': !isValid }">
       <div class="duration-value">{{ signedDurationText }}</div>
       <div class="duration-label">{{ durationUnit }}</div>
     </div>
 
-    <!-- Time wheels (right) -->
-    <div class="time-wheels">
-      <!-- Start time -->
-      <div class="wheel-group">
-        <div class="wheel-label">{{ t('history.startTime') }}</div>
-        <div class="wheels-row">
-          <TimeWheel v-model="startYear" :items="startYearOptions" :suffix="t('common.year')" />
-          <TimeWheel v-model="startMonth" :items="startMonthOptions" :suffix="t('common.month')" />
-          <TimeWheel v-model="startDay" :items="startDayOptions" :suffix="t('common.day')" />
-          <TimeWheel v-model="startHour" :items="startHourOptions" :suffix="t('common.hour')" />
-          <TimeWheel v-model="startMinute" :items="startMinuteOptions" :suffix="t('common.minute')" />
-        </div>
+    <!-- Arrow + time wheels -->
+    <div class="time-area">
+      <!-- Start time wheels -->
+      <div class="wheels-row">
+        <TimeWheel v-model="startYear"   :items="startYearOptions"   wide :label="t('common.year')"    @carry="(d) => carry('start','year',d)" />
+        <TimeWheel v-model="startMonth"  :items="startMonthOptions"       :label="t('common.month')"   @carry="(d) => carry('start','month',d)" />
+        <TimeWheel v-model="startDay"    :items="startDayOptions"         :label="t('common.day')"     @carry="(d) => carry('start','day',d)" />
+        <TimeWheel v-model="startHour"   :items="startHourOptions"        :label="t('common.hour')"    @carry="(d) => carry('start','hour',d)" />
+        <TimeWheel v-model="startMinute" :items="startMinuteOptions"      :label="t('common.minute')"  @carry="(d) => carry('start','minute',d)" />
       </div>
 
-      <!-- End time -->
-      <div class="wheel-group">
-        <div class="wheel-label">{{ t('history.endTime') }}</div>
-        <div class="wheels-row">
-          <TimeWheel v-model="endYear" :items="endYearOptions" :suffix="t('common.year')" />
-          <TimeWheel v-model="endMonth" :items="endMonthOptions" :suffix="t('common.month')" />
-          <TimeWheel v-model="endDay" :items="endDayOptions" :suffix="t('common.day')" />
-          <TimeWheel v-model="endHour" :items="endHourOptions" :suffix="t('common.hour')" />
-          <TimeWheel v-model="endMinute" :items="endMinuteOptions" :suffix="t('common.minute')" />
-        </div>
+      <!-- Arrow: horizontal by default, vertical on narrow -->
+      <div class="arrow-wrap">
+        <svg class="arrow-h" viewBox="0 0 48 20" width="48" height="20">
+          <line x1="0" y1="10" x2="38" y2="10" stroke-width="2.5" stroke="currentColor" />
+          <polygon points="34,3 46,10 34,17" fill="currentColor" />
+        </svg>
+        <svg class="arrow-v" viewBox="0 0 20 48" width="20" height="48">
+          <line x1="10" y1="0" x2="10" y2="38" stroke-width="2.5" stroke="currentColor" />
+          <polygon points="3,34 10,46 17,34" fill="currentColor" />
+        </svg>
+      </div>
+
+      <!-- End time wheels -->
+      <div class="wheels-row">
+        <TimeWheel v-model="endYear"   :items="endYearOptions"   wide :label="t('common.year')"    @carry="(d) => carry('end','year',d)" />
+        <TimeWheel v-model="endMonth"  :items="endMonthOptions"       :label="t('common.month')"   @carry="(d) => carry('end','month',d)" />
+        <TimeWheel v-model="endDay"    :items="endDayOptions"         :label="t('common.day')"     @carry="(d) => carry('end','day',d)" />
+        <TimeWheel v-model="endHour"   :items="endHourOptions"        :label="t('common.hour')"    @carry="(d) => carry('end','hour',d)" />
+        <TimeWheel v-model="endMinute" :items="endMinuteOptions"      :label="t('common.minute')"  @carry="(d) => carry('end','minute',d)" />
       </div>
     </div>
   </div>
@@ -61,7 +67,7 @@ const emit = defineEmits(['update:startDate', 'update:endDate', 'change'])
 
 const now = new Date()
 
-// Earliest bounds (from DB oldest record, or fallback to 5 years ago)
+// Earliest bounds
 const earliestYear = computed(() =>
   props.earliestDate ? props.earliestDate.getFullYear() : now.getFullYear() - 5
 )
@@ -72,13 +78,9 @@ const earliestDay = computed(() =>
   props.earliestDate ? props.earliestDate.getDate() : 1
 )
 
-// Dynamic year options
-const startYearOptions = computed(() =>
-  range(earliestYear.value, now.getFullYear())
-)
-const endYearOptions = computed(() =>
-  range(earliestYear.value, now.getFullYear())
-)
+// Year options
+const startYearOptions = computed(() => range(earliestYear.value, now.getFullYear()))
+const endYearOptions = computed(() => range(earliestYear.value, now.getFullYear()))
 
 // Start time refs
 const startYear = ref(clamp(props.startDate.getFullYear(), earliestYear.value, now.getFullYear()))
@@ -98,14 +100,14 @@ const endMinute = ref(props.endDate.getMinutes())
 const easterEggMsg = ref('')
 const isValid = ref(true)
 
-// Invalid-range easter eggs (start >= end, out of bounds)
+// Invalid-range easter eggs
 const invalidEggKeys = [
   'history.easterEgg.reverseClock',
   'history.easterEgg.doctorStrange',
   'history.easterEgg.lightSpeed'
 ]
 
-// Zero-duration easter eggs (start == end)
+// Zero-duration easter eggs
 const zeroEggKeys = [
   'history.easterEgg.zeroDraw',
   'history.easterEgg.zeroLog',
@@ -122,7 +124,6 @@ function pickEasterEgg(durationMs) {
   easterEggMsg.value = t(key)
 }
 
-// Days in month helper
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate()
 }
@@ -146,7 +147,7 @@ const endDateTime = computed(() => {
   return new Date(endYear.value, endMonth.value - 1, endDay.value, endHour.value, endMinute.value)
 })
 
-// Context-sensitive month/day/hour/minute options for start
+// Context-sensitive option lists for START
 const startMonthOptions = computed(() => {
   const min = startYear.value === earliestYear.value ? earliestMonth.value : 1
   const max = startYear.value === now.getFullYear() ? now.getMonth() + 1 : 12
@@ -181,7 +182,7 @@ const startMinuteOptions = computed(() => {
   return range(0, max)
 })
 
-// Context-sensitive month/day/hour/minute options for end
+// Context-sensitive option lists for END
 const endMonthOptions = computed(() => {
   const min = endYear.value === earliestYear.value ? earliestMonth.value : 1
   const max = endYear.value === now.getFullYear() ? now.getMonth() + 1 : 12
@@ -216,33 +217,75 @@ const endMinuteOptions = computed(() => {
   return range(0, max)
 })
 
-// Clamp wheel values when options change
-watch(startMonthOptions, (opts) => {
-  if (!opts.includes(startMonth.value)) startMonth.value = opts[opts.length - 1]
-})
-watch(startDayOptions, (opts) => {
-  if (!opts.includes(startDay.value)) startDay.value = opts[opts.length - 1]
-})
-watch(startHourOptions, (opts) => {
-  if (!opts.includes(startHour.value)) startHour.value = opts[opts.length - 1]
-})
-watch(startMinuteOptions, (opts) => {
-  if (!opts.includes(startMinute.value)) startMinute.value = opts[opts.length - 1]
-})
-watch(endMonthOptions, (opts) => {
-  if (!opts.includes(endMonth.value)) endMonth.value = opts[opts.length - 1]
-})
-watch(endDayOptions, (opts) => {
-  if (!opts.includes(endDay.value)) endDay.value = opts[opts.length - 1]
-})
-watch(endHourOptions, (opts) => {
-  if (!opts.includes(endHour.value)) endHour.value = opts[opts.length - 1]
-})
-watch(endMinuteOptions, (opts) => {
-  if (!opts.includes(endMinute.value)) endMinute.value = opts[opts.length - 1]
-})
+// ── Auto-carry / borrow ──
 
-// Validation — picks easter egg on valid→invalid transition
+const sideRefs = {
+  start: { year: startYear, month: startMonth, day: startDay, hour: startHour, minute: startMinute },
+  end:   { year: endYear,   month: endMonth,   day: endDay,   hour: endHour,   minute: endMinute }
+}
+
+function carry(side, unit, delta) {
+  const date = side === 'start' ? startDateTime.value : endDateTime.value
+  const newDate = new Date(date)
+
+  switch (unit) {
+    case 'minute': newDate.setMinutes(newDate.getMinutes() + delta); break
+    case 'hour':   newDate.setHours(newDate.getHours() + delta); break
+    case 'day':    newDate.setDate(newDate.getDate() + delta); break
+    case 'month':
+      // Avoid JS date auto-correction (Jan 31 → Feb → Mar 3).
+      // Pin to day 1 before month shift, then restore day clamped to new month.
+      {
+        const d = newDate.getDate()
+        newDate.setDate(1)
+        newDate.setMonth(newDate.getMonth() + delta)
+        const maxD = daysInMonth(newDate.getFullYear(), newDate.getMonth() + 1)
+        newDate.setDate(Math.min(d, maxD))
+      }
+      break
+    case 'year':
+      // Same issue: Feb 29 in leap year → next year Feb 29 → Mar 1.
+      {
+        const m = newDate.getMonth()
+        const d = newDate.getDate()
+        newDate.setFullYear(newDate.getFullYear() + delta)
+        // If we were on Feb 29 of a leap year, restore to Feb 28 in non-leap year
+        if (m === 1 && d === 29 && daysInMonth(newDate.getFullYear(), 2) === 28) {
+          newDate.setMonth(1)
+          newDate.setDate(28)
+        }
+      }
+      break
+  }
+
+  // Validate against bounds
+  const earliest = props.earliestDate || new Date(0)
+  if (newDate < earliest) return
+  if (newDate > now) return
+
+  if (side === 'start' && newDate >= endDateTime.value) return
+  if (side === 'end'   && newDate <= startDateTime.value) return
+
+  // Valid — update all refs
+  const refs = sideRefs[side]
+  refs.year.value   = newDate.getFullYear()
+  refs.month.value  = newDate.getMonth() + 1
+  refs.day.value    = newDate.getDate()
+  refs.hour.value   = newDate.getHours()
+  refs.minute.value = newDate.getMinutes()
+}
+
+// Clamp wheel values when options change
+watch(startMonthOptions, (opts) => { if (!opts.includes(startMonth.value)) startMonth.value = opts[opts.length - 1] })
+watch(startDayOptions, (opts) => { if (!opts.includes(startDay.value)) startDay.value = opts[opts.length - 1] })
+watch(startHourOptions, (opts) => { if (!opts.includes(startHour.value)) startHour.value = opts[opts.length - 1] })
+watch(startMinuteOptions, (opts) => { if (!opts.includes(startMinute.value)) startMinute.value = opts[opts.length - 1] })
+watch(endMonthOptions, (opts) => { if (!opts.includes(endMonth.value)) endMonth.value = opts[opts.length - 1] })
+watch(endDayOptions, (opts) => { if (!opts.includes(endDay.value)) endDay.value = opts[opts.length - 1] })
+watch(endHourOptions, (opts) => { if (!opts.includes(endHour.value)) endHour.value = opts[opts.length - 1] })
+watch(endMinuteOptions, (opts) => { if (!opts.includes(endMinute.value)) endMinute.value = opts[opts.length - 1] })
+
+// Validation
 function validate() {
   const start = startDateTime.value
   const end = endDateTime.value
@@ -268,20 +311,15 @@ function validate() {
   return true
 }
 
-// Duration calculation — allows negative values
-const durationMs = computed(() => {
-  return endDateTime.value - startDateTime.value
-})
+const durationMs = computed(() => endDateTime.value - startDateTime.value)
 
 const signedDurationText = computed(() => {
   const ms = durationMs.value
   const sign = ms < 0 ? '-' : ''
   const absMs = Math.abs(ms)
-
   const minutes = Math.floor(absMs / 1000 / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
-
   if (days > 0) return sign + days.toString()
   else if (hours > 0) return sign + hours.toString()
   else return sign + minutes.toString()
@@ -289,17 +327,14 @@ const signedDurationText = computed(() => {
 
 const durationUnit = computed(() => {
   const absMs = Math.abs(durationMs.value)
-
   const minutes = Math.floor(absMs / 1000 / 60)
   const hours = Math.floor(minutes / 60)
   const days = Math.floor(hours / 24)
-
   if (days > 0) return t('common.day')
   else if (hours > 0) return t('common.hour')
   else return t('common.minute')
 })
 
-// Always emit — include validity info so parent can decide
 function emitChange() {
   emit('update:startDate', startDateTime.value)
   emit('update:endDate', endDateTime.value)
@@ -320,37 +355,41 @@ watch([endYear, endMonth, endDay, endHour, endMinute], emitChange)
 .time-range-picker {
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 20px;
+  gap: 20px;
+  padding: 16px 20px;
   background: var(--surface-card);
   border: 2px solid var(--surface-200);
+  min-height: 86px;
+  contain: layout style;
 }
+
+// ── Duration display ──
 
 .duration-display {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px 24px;
+  padding: 12px 20px;
   background: var(--primary-color);
   color: white;
-  border: 2px solid var(--primary-color);
-  min-width: 120px;
-  min-height: 100px;
-  transition: background 0.3s, border-color 0.3s;
+  min-width: 100px;
+  min-height: 90px;
+  flex-shrink: 0;
+  contain: layout style;
 
   .duration-value {
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     font-weight: 700;
     line-height: 1;
   }
 
   .duration-label {
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-top: 8px;
+    margin-top: 6px;
   }
 
   &.easter-egg {
@@ -368,43 +407,77 @@ watch([endYear, endMonth, endDay, endHour, endMinute], emitChange)
   80% { transform: translateX(4px); }
 }
 
-.time-wheels {
+// ── Time area (wheels + arrow) ──
+
+.time-area {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.wheel-group {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.wheel-label {
-  font-size: 0.9rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-color);
+  align-items: center;
+  gap: 10px;
+  contain: layout style;
 }
 
 .wheels-row {
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  flex-shrink: 0;
+  contain: layout style;
 }
 
-@media (max-width: 768px) {
+// ── Arrow ──
+
+.arrow-wrap {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-color);
+
+  .arrow-v {
+    display: none;
+  }
+}
+
+// ── Responsive: stack vertically ──
+
+@media (max-width: 900px) {
   .time-range-picker {
     flex-direction: column;
+    min-height: auto;
   }
 
   .duration-display {
     width: 100%;
+    min-height: 70px;
+    flex-direction: row;
+    gap: 12px;
+
+    .duration-value { font-size: 1.6rem; }
+    .duration-label { margin-top: 0; }
+  }
+
+  .time-area {
+    flex-direction: column;
+  }
+
+  .arrow-wrap {
+    .arrow-h { display: none; }
+    .arrow-v { display: block; }
+  }
+}
+
+@media (max-width: 520px) {
+  .time-range-picker {
+    padding: 10px;
+    gap: 10px;
   }
 
   .wheels-row {
-    flex-wrap: wrap;
+    gap: 2px;
+  }
+
+  .time-area {
+    gap: 6px;
   }
 }
 </style>
