@@ -51,7 +51,7 @@
   "dashboard.periods.week": "7天",
   "dashboard.periods.month": "1月",
   "dashboard.periods.year": "1年",
-  "dashboard.periods.all": "全部",
+  "dashboard.periods.halfYear": "6月",
   "dashboard.pickDateTitle": "查询特定日期",
   "dashboard.card.focusDurationTop10": "焦点时长 Top 10",
   "dashboard.card.switchCount": "焦点切换次数",

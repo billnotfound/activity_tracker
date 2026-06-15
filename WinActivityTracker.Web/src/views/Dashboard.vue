@@ -5,7 +5,8 @@
   <div class="dashboard">
     <!-- Period selector -->
     <div class="period-selector mb-3">
-      <div class="period-buttons">
+      <div class="period-buttons" ref="periodButtonsRef">
+        <div class="sliding-frame" :style="frameStyle" v-show="frameReady"></div>
         <button
           v-for="p in periods"
           :key="p.key"
@@ -16,13 +17,11 @@
           {{ p.label }}
         </button>
       </div>
-      <input
-        type="date"
-        v-model="pickDate"
-        class="date-picker"
-        @change="onPickDate"
-        :title="t('dashboard.pickDateTitle')"
-      />
+      <div class="date-wheels">
+        <TimeWheel v-model="wheelYear" :items="yearOptions" wide :label="t('common.year')" @carry="(d) => carryDate('year', d)" />
+        <TimeWheel v-model="wheelMonth" :items="monthOptions" :label="t('common.month')" @carry="(d) => carryDate('month', d)" />
+        <TimeWheel v-model="wheelDay" :items="dayOptions" :label="t('common.day')" @carry="(d) => carryDate('day', d)" />
+      </div>
     </div>
 
     <!-- Error -->
@@ -86,6 +85,7 @@ import { useTheme } from '../composables/useTheme.js'
 import * as echarts from 'echarts'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
+import TimeWheel from '../components/TimeWheel.vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
@@ -98,8 +98,8 @@ const periods = [
   { key: 'today', label: t('dashboard.periods.today') },
   { key: 'week', label: t('dashboard.periods.week') },
   { key: 'month', label: t('dashboard.periods.month') },
+  { key: 'halfYear', label: t('dashboard.periods.halfYear') },
   { key: 'year', label: t('dashboard.periods.year') },
-  { key: 'all', label: t('dashboard.periods.all') },
 ]
 
 const period = ref('today')
@@ -110,6 +110,121 @@ const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
 const loading = ref(true)
+
+// ── Date wheels (replaces date input) ──
+
+const earliestDate = ref(null)
+const wheelYear = ref(new Date().getFullYear())
+const wheelMonth = ref(new Date().getMonth() + 1)
+const wheelDay = ref(new Date().getDate())
+
+function range(from, to) {
+  const arr = []
+  for (let i = from; i <= to; i++) arr.push(i)
+  return arr
+}
+
+const yearOptions = computed(() => {
+  const from = earliestDate.value ? earliestDate.value.getFullYear() : new Date().getFullYear() - 5
+  return range(from, new Date().getFullYear())
+})
+const monthOptions = computed(() => {
+  let min = 1, max = 12
+  if (earliestDate.value && wheelYear.value === earliestDate.value.getFullYear()) {
+    min = earliestDate.value.getMonth() + 1
+  }
+  if (wheelYear.value === new Date().getFullYear()) {
+    max = new Date().getMonth() + 1
+  }
+  return range(min, max)
+})
+const dayOptions = computed(() => {
+  const maxDay = new Date(wheelYear.value, wheelMonth.value, 0).getDate()
+  let min = 1, max = maxDay
+  if (earliestDate.value &&
+      wheelYear.value === earliestDate.value.getFullYear() &&
+      wheelMonth.value === earliestDate.value.getMonth() + 1) {
+    min = earliestDate.value.getDate()
+  }
+  if (wheelYear.value === new Date().getFullYear() &&
+      wheelMonth.value === new Date().getMonth() + 1) {
+    max = Math.min(maxDay, new Date().getDate())
+  }
+  return range(min, max)
+})
+
+function carryDate(unit, delta) {
+  const cur = new Date(wheelYear.value, wheelMonth.value - 1, wheelDay.value)
+  const next = new Date(cur)
+
+  if (unit === 'month') {
+    const d = next.getDate()
+    next.setDate(1)
+    next.setMonth(next.getMonth() + delta)
+    const maxD = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()
+    next.setDate(Math.min(d, maxD))
+  } else if (unit === 'day') {
+    next.setDate(next.getDate() + delta)
+  } else {
+    return
+  }
+
+  if (earliestDate.value) {
+    const e = new Date(earliestDate.value)
+    e.setHours(0, 0, 0, 0)
+    if (+next < +e) return
+  }
+  const todayEnd = new Date()
+  todayEnd.setHours(23, 59, 59, 999)
+  if (+next > +todayEnd) return
+
+  wheelYear.value = next.getFullYear()
+  wheelMonth.value = next.getMonth() + 1
+  wheelDay.value = next.getDate()
+}
+
+watch(yearOptions, (opts) => {
+  if (!opts.includes(wheelYear.value)) {
+    wheelYear.value = wheelYear.value < opts[0] ? opts[0] : opts[opts.length - 1]
+  }
+})
+watch(monthOptions, (opts) => {
+  if (!opts.includes(wheelMonth.value)) {
+    wheelMonth.value = wheelMonth.value < opts[0] ? opts[0] : opts[opts.length - 1]
+  }
+})
+watch([wheelYear, wheelMonth], () => {
+  const opts = dayOptions.value
+  if (!opts.includes(wheelDay.value)) {
+    wheelDay.value = opts[opts.length - 1]
+  }
+})
+
+watch([wheelYear, wheelMonth, wheelDay], () => {
+  const d = `${wheelYear.value}-${String(wheelMonth.value).padStart(2, '0')}-${String(wheelDay.value).padStart(2, '0')}`
+  pickDate.value = d
+  onPickDate()
+})
+
+const periodButtonsRef = ref(null)
+const frameStyle = ref({})
+const frameReady = ref(false)
+
+function updateFrame() {
+  nextTick(() => {
+    const el = periodButtonsRef.value
+    if (!el) return
+    const active = el.querySelector('.period-btn.active')
+    if (!active) return
+    frameStyle.value = {
+      width: active.offsetWidth + 'px',
+      left: active.offsetLeft + 'px'
+    }
+    frameReady.value = true
+  })
+}
+
+watch(period, updateFrame)
 
 const focusChartRef = ref(null)
 let focusChart = null
@@ -145,8 +260,10 @@ function periodRange() {
       const d = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
       return [toLocalDateString(d), to]
     }
-    case 'all':
-      return ['2020-01-01', to]
+    case 'halfYear': {
+      const d = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate())
+      return [toLocalDateString(d), to]
+    }
     default:
       return [pickDate.value, pickDate.value]
   }
@@ -220,6 +337,22 @@ onMounted(async () => {
 
   // Add window resize listener for chart responsiveness
   window.addEventListener('resize', handleResize)
+
+  // Fetch earliest record to constrain date wheels
+  try {
+    const r = await fetch(`${apiBase}/api/db/stats`)
+    if (r.ok) {
+      const stats = await r.json()
+      if (stats.oldestRecord) {
+        earliestDate.value = new Date(stats.oldestRecord)
+      }
+    }
+  } catch (e) {
+    console.error('Failed to fetch DB stats:', e)
+  }
+
+  // Position the sliding frame on the initially active button
+  updateFrame()
 })
 
 // Watch for theme changes and re-render charts
@@ -302,7 +435,7 @@ async function fetchSummary() {
 async function fetchMedia() {
   try {
     const [fromDate, toDate] = periodRange()
-    const limits = { today: 50, week: 200, month: 500, year: 2000, all: 5000 }
+    const limits = { today: 50, week: 200, month: 500, halfYear: 3000, year: 2000 }
     const limit = limits[period.value] || 50
     const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`)
     if (!r.ok) throw new Error(`API ${r.status}`)
@@ -447,13 +580,45 @@ async function renderCharts(data) {
 }
 
 .period-buttons {
+  position: relative;
   display: flex;
   gap: 4px;
+
+  &:has(.period-btn.active:hover) .sliding-frame {
+    border-color: var(--text-color);
+    transform: translateY(-2px);
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+    transition:
+      left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+      width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+      transform 0.12s ease-out,
+      box-shadow 0.15s ease-out,
+      border-color 0s 0s;
+  }
+}
+
+.sliding-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent);
+  pointer-events: none;
+  box-shadow: 0 0 0 transparent;
+  transition:
+    left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.12s ease-out,
+    box-shadow 0.15s ease-out,
+    border-color 0.2s 5s;
+  z-index: 0;
 }
 
 .period-btn {
+  position: relative;
+  z-index: 1;
   padding: 8px 16px;
-  border: 2px solid var(--surface-200);
+  border: 2px solid transparent;
   background: transparent;
   color: var(--text-color);
   font-weight: 600;
@@ -464,28 +629,30 @@ async function renderCharts(data) {
   transition: all 0.2s ease;
 
   &:hover {
-    border-color: var(--primary-color);
     transform: translateY(-2px);
   }
 
-  &.active {
-    border-color: var(--primary-color);
-    border-bottom-width: 3px;
-    margin-bottom: -1px;
-  }
 }
 
-.date-picker {
-  padding: 8px 12px;
-  border: 2px solid var(--surface-200);
-  background: var(--surface-card);
-  color: var(--text-color);
-  font-weight: 600;
-  transition: border-color 0.2s ease;
+.date-wheels {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 
-  &:focus {
-    outline: none;
-    border-color: var(--primary-color);
+  :deep(.wheel-frame) {
+    border-color: color-mix(in srgb, var(--text-color) 60%, transparent);
+    box-shadow: 0 0 0 transparent;
+
+    &:hover {
+      transform: translate(-2px, -2px);
+      border-color: var(--text-color);
+      box-shadow: 5px 5px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+    }
+
+    &.scrolling {
+      border-color: var(--text-color);
+      box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+    }
   }
 }
 

@@ -51,7 +51,7 @@
   "dashboard.periods.week": "7 Days",
   "dashboard.periods.month": "1 Month",
   "dashboard.periods.year": "1 Year",
-  "dashboard.periods.all": "All",
+  "dashboard.periods.halfYear": "6 Months",
   "dashboard.pickDateTitle": "Pick a specific date",
   "dashboard.card.focusDurationTop10": "Focus Duration Top 10",
   "dashboard.card.switchCount": "Focus Switch Count",

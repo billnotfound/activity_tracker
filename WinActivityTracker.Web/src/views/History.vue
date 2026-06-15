@@ -173,6 +173,13 @@ async function loadData() {
   loading.value = true
   error.value = ''
 
+  // Dispose chart before skeleton replaces the DOM container,
+  // so renderTimeline() will init a fresh instance on the new div.
+  if (timelineChart && !timelineChart.isDisposed()) {
+    timelineChart.dispose()
+    timelineChart = null
+  }
+
   try {
     const fromStr = toLocalDatetimeString(startDate.value)
     const toStr = toLocalDatetimeString(endDate.value)
@@ -648,23 +655,12 @@ async function renderTimeline(myLoadId) {
     })
   }
 
-  // Always dispose and recreate the chart instance for clean state
-  if (timelineChart) {
-    try {
-      if (!timelineChart.isDisposed()) {
-        timelineChart.dispose()
-      }
-    } catch (e) {
-      console.warn('Error disposing chart:', e)
-    }
-    timelineChart = null
+  if (!timelineChart) {
+    timelineChart = echarts.init(timelineChartRef.value)
   }
 
   // Bail if a newer load started while we were working
   if (myLoadId !== undefined && myLoadId !== loadId) return
-
-  timelineChart = echarts.init(timelineChartRef.value)
-  console.log('ECharts instance created')
 
   // Get computed CSS colors (ECharts renders on Canvas — CSS variables don't work)
   const computedStyle = getComputedStyle(document.documentElement)
@@ -997,11 +993,12 @@ function getProcessColor(name) {
 
 .timeline-card {
   min-height: 400px;
-  border: 3px solid var(--text-color) !important;
+  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent) !important;
   box-shadow: 0 0 0 transparent;
   transition: transform 0.12s ease-out, box-shadow 0.15s ease-out;
 
   &:hover {
+    border-color: var(--text-color);
     transform: translate(-2px, -2px);
     box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
   }
