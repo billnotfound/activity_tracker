@@ -1,6 +1,6 @@
 <template>
   <div class="time-wheel">
-    <div class="wheel-frame" :class="{ wide }" :data-label="label" ref="frameRef">
+    <div class="wheel-frame" :class="{ wide, scrolling, frameless }" :data-label="label" ref="frameRef">
       <div
         class="wheel-track"
         ref="trackRef"
@@ -27,10 +27,11 @@
 import { ref, computed, watch, onUnmounted } from 'vue'
 
 const props = defineProps({
-  modelValue: { type: Number, required: true },
+  modelValue: { type: [Number, String], required: true },
   items: { type: Array, required: true },
   suffix: { type: String, default: '' },
   wide: { type: Boolean, default: false },
+  frameless: { type: Boolean, default: false },
   label: { type: String, default: '' }
 })
 
@@ -40,6 +41,8 @@ const frameRef = ref(null)
 const trackRef = ref(null)
 const dragStartY = ref(0)
 const dragAccum = ref(0)
+const scrolling = ref(false)
+let scrollTimer = null
 
 const ITEM_HEIGHT = 44
 
@@ -84,7 +87,7 @@ const trackStyle = computed(() => {
 })
 
 function formatItem(item) {
-  return String(item).padStart(2, '0')
+  return String(item)
 }
 
 function clampIdx(idx) {
@@ -104,6 +107,9 @@ function tryChange(delta) {
 }
 
 function onWheel(event) {
+  scrolling.value = true
+  if (scrollTimer) clearTimeout(scrollTimer)
+  scrollTimer = setTimeout(() => { scrolling.value = false }, 150)
   if (event.deltaY > 0) {
     tryChange(1)
   } else if (event.deltaY < 0) {
@@ -114,6 +120,8 @@ function onWheel(event) {
 // ── Vertical drag ──
 
 function startDrag(event) {
+  scrolling.value = true
+  if (scrollTimer) clearTimeout(scrollTimer)
   dragStartY.value = event.clientY
   dragAccum.value = 0
   document.addEventListener('mousemove', onDrag)
@@ -136,6 +144,7 @@ function onDrag(event) {
 }
 
 function stopDrag() {
+  scrollTimer = setTimeout(() => { scrolling.value = false }, 150)
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)
 }
@@ -169,6 +178,7 @@ function stopTouch() {
 }
 
 onUnmounted(() => {
+  if (scrollTimer) clearTimeout(scrollTimer)
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)
   document.removeEventListener('touchmove', onTouchMove)
@@ -189,13 +199,47 @@ onUnmounted(() => {
   height: 44px;
   overflow: hidden;
   background: transparent;
-  border: 3px solid #1a1a1a;
-  box-shadow: 5px 5px 0 color-mix(in srgb, var(--primary-color) 40%, transparent);
+  border: 3px solid var(--text-color);
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
   cursor: grab;
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
   contain: layout style paint;
+
+  &:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 5px 5px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  }
 
   &:active {
     cursor: grabbing;
+  }
+
+  &.scrolling {
+    transform: translate(0, -1px);
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  }
+
+  &.frameless {
+    border: none;
+    box-shadow: none;
+    background: transparent;
+    width: auto;
+    min-width: 48px;
+
+    &:hover {
+      transform: none;
+      box-shadow: none;
+    }
+
+    &.scrolling {
+      transform: none;
+      box-shadow: none;
+    }
+
+    .wheel-item {
+      padding-left: 4px;
+      padding-right: 4px;
+    }
   }
 
   &.wide {
@@ -214,8 +258,8 @@ onUnmounted(() => {
     font-weight: 700;
     color: var(--primary-color);
     background: var(--surface-card);
-    border: 2px solid #1a1a1a;
-    box-shadow: 3px 3px 0 color-mix(in srgb, var(--primary-color) 30%, transparent);
+    border: 2px solid var(--text-color);
+    box-shadow: 3px 3px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
     white-space: nowrap;
     z-index: 10;
     pointer-events: none;
@@ -243,13 +287,15 @@ onUnmounted(() => {
   justify-content: center;
   font-size: 0.95rem;
   font-weight: 500;
-  color: #555;
+  color: var(--surface-400);
   cursor: pointer;
+  transition: color 0.12s ease, font-weight 0.12s ease, opacity 0.12s ease;
 
   &.active {
     font-size: 1.05rem;
     font-weight: 700;
     color: var(--primary-color);
+    animation: wheelFlicker 0.18s ease;
 
     .suffix {
       font-size: 0.65rem;
@@ -258,5 +304,27 @@ onUnmounted(() => {
       opacity: 0.7;
     }
   }
+}
+
+@keyframes wheelFlicker {
+  0% { opacity: 0.3; }
+  100% { opacity: 1; }
+}
+
+// ── Frameless: no frame chrome, only active item visible ──
+
+.wheel-frame.frameless .wheel-item {
+  width: auto;
+  white-space: nowrap;
+}
+
+.wheel-frame.frameless .wheel-item:not(.active) {
+  opacity: 0;
+}
+
+.wheel-frame.frameless .wheel-item.active {
+  font-size: inherit;
+  font-weight: inherit;
+  color: inherit;
 }
 </style>

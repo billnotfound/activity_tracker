@@ -61,10 +61,10 @@
                 :key="m.id || m.startTime"
                 :class="{ playing: m.playbackStatus === 'Playing' }"
               >
-                <td>{{ m.durationFmt }}</td>
-                <td>{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</td>
-                <td>{{ m.title }}</td>
-                <td>{{ m.artist }}</td>
+                <td><span :key="m.durationFmt" class="flicker-text">{{ m.durationFmt }}</span></td>
+                <td><span :key="m.playbackStatus" class="flicker-text">{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</span></td>
+                <td><span :key="m.title" class="flicker-text">{{ m.title }}</span></td>
+                <td><span :key="m.artist" class="flicker-text">{{ m.artist }}</span></td>
               </tr>
               <tr v-if="!displayMedia.length">
                 <td colspan="4" class="no-data">{{ t('dashboard.media.noData') }}</td>
@@ -355,6 +355,12 @@ async function renderCharts(data) {
   const icons = iconDataList.map(d => d.icon)
   const colors = iconDataList.map(d => d.colorPrimary)
 
+  // Resolve CSS variables for ECharts (Canvas doesn't support CSS custom properties)
+  const cs = getComputedStyle(document.documentElement)
+  const textColor = cs.getPropertyValue('--text-color').trim()
+  const borderColor = cs.getPropertyValue('--border-color').trim()
+  const surface200 = cs.getPropertyValue('--surface-200').trim()
+
   // Focus duration chart
   if (!focusChart) {
     focusChart = echarts.init(focusChartRef.value)
@@ -381,15 +387,15 @@ async function renderCharts(data) {
           return acc
         }, {})
       },
-      axisLine: { lineStyle: { color: 'var(--border-color)', width: 2 } },
+      axisLine: { lineStyle: { color: borderColor, width: 2 } },
     },
     yAxis: {
       type: 'value',
       name: t('dashboard.chart.durationAxis'),
-      nameTextStyle: { color: 'var(--text-color)', fontWeight: 600 },
-      axisLabel: { color: 'var(--text-color)' },
-      axisLine: { lineStyle: { color: 'var(--border-color)', width: 2 } },
-      splitLine: { lineStyle: { type: 'dashed', color: 'var(--surface-200)' } },
+      nameTextStyle: { color: textColor, fontWeight: 600 },
+      axisLabel: { color: textColor },
+      axisLine: { lineStyle: { color: borderColor, width: 2 } },
+      splitLine: { lineStyle: { type: 'dashed', color: surface200 } },
     },
     series: [
       {
@@ -398,7 +404,7 @@ async function renderCharts(data) {
           value: val,
           itemStyle: {
             color: colors[idx],
-            borderColor: 'var(--border-color)',
+            borderColor: borderColor,
             borderWidth: 2,
           },
         })),
@@ -420,7 +426,8 @@ async function renderCharts(data) {
       textStyle: { color: 'var(--text-color)', fontWeight: 600 },
       formatter: params => {
         const p = params[0]
-        return `<strong>${p.name}</strong><br/>${p.value} ${t('dashboard.chart.durationUnit')}`
+        const totalSec = Math.round(p.value * 60)
+        return `<strong>${p.name}</strong><br/>${fmtShortDur(totalSec)}`
       },
     },
   })
@@ -612,5 +619,15 @@ async function renderCharts(data) {
     color: var(--surface-400);
     font-style: italic;
   }
+}
+
+.flicker-text {
+  display: inline-block;
+  animation: textFlicker 0.15s ease;
+}
+
+@keyframes textFlicker {
+  0% { opacity: 0.35; }
+  100% { opacity: 1; }
 }
 </style>

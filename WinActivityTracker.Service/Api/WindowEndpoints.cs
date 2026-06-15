@@ -108,7 +108,7 @@ public static class WindowEndpoints
         var events = await db.SystemEvents
             .AsNoTracking()
             .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
-                && e.Timestamp >= start && e.Timestamp <= end)
+                && e.Timestamp < end)
             .OrderBy(e => e.Timestamp)
             .Select(e => new
             {
@@ -117,6 +117,13 @@ public static class WindowEndpoints
                 e.DurationSeconds
             })
             .ToListAsync();
+
+        // Filter in-memory: keep only events that actually overlap [start, end].
+        // A sleep starting before 'start' but lasting into the range must be included
+        // so the frontend can draw the partial dashed box.
+        events = events
+            .Where(e => e.Timestamp.AddSeconds(e.DurationSeconds) > start)
+            .ToList();
 
         return Results.Ok(events);
     }

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Horizontal arrow (default, wider screens) -->
+
+<svg
+   class="arrow-h"
+   viewBox="0 0 48 20"
+   width="48"
+   height="20"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="arrow.svg"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1">
+    <inkscape:path-effect
+       effect="bspline"
+       id="path-effect2"
+       is_visible="true"
+       lpeversion="1.3"
+       weight="33.333333"
+       steps="2"
+       helper_size="0"
+       apply_no_weight="true"
+       apply_with_weight="true"
+       only_selected="false"
+       uniform="false" />
+    <inkscape:path-effect
+       effect="bspline"
+       id="path-effect1"
+       is_visible="true"
+       lpeversion="1.3"
+       weight="33.333333"
+       steps="2"
+       helper_size="0"
+       apply_no_weight="true"
+       apply_with_weight="true"
+       only_selected="false"
+       uniform="false" />
+  </defs>
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#eeeeee"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#505050"
+     inkscape:zoom="24"
+     inkscape:cx="26.4375"
+     inkscape:cy="11.916667"
+     inkscape:window-width="2415"
+     inkscape:window-height="1560"
+     inkscape:window-x="133"
+     inkscape:window-y="-12"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="svg1" />
+  <path
+     style="fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+     d="m 0.54166667,10.375 c 12.75000033,0 25.50000033,0 38.25000033,0"
+     id="path1"
+     inkscape:path-effect="#path-effect1"
+     inkscape:original-d="m 0.54166667,10.375 c 12.75000033,0 25.50000033,0 38.25000033,0"
+     transform="translate(-0.04166667)" />
+  <path
+     style="fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-opacity:1"
+     d="M 33.208333,5.1666667 38.791667,10.375 33.1875,16.020833"
+     id="path2"
+     sodipodi:nodetypes="ccc" />
+</svg>

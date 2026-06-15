@@ -57,7 +57,9 @@ export function fmtDuration(s) {
 }
 
 export function fmtShortDur(s) {
-  if (s < 60) return s + 's'
-  if (s < 3600) return Math.round(s / 60) + 'm'
-  return (s / 3600).toFixed(1) + 'h'
+  const strip = v => v.replace(/\.0+$/, '')
+  if (s < 60) return strip(s.toFixed(0)) + 's'
+  if (s < 3600) return strip((s / 60).toFixed(1)) + 'm'
+  if (s < 86400) return strip((s / 3600).toFixed(1)) + 'h'
+  return strip((s / 86400).toFixed(1)) + 'd'
 }

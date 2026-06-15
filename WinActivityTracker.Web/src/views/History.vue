@@ -39,6 +39,10 @@
               <span class="legend-box visible"></span>
               {{ t('history.legend.visible') }}
             </span>
+            <span class="legend-item">
+              <span class="legend-box offline"></span>
+              {{ t('history.legend.offline') }}
+            </span>
           </div>
         </div>
       </template>
@@ -49,7 +53,7 @@
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { toLocalTime, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
+import { toLocalTime, parseUtcTs, toLocalDatetimeString, fmtShortDur } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -322,6 +326,9 @@ async function renderTimeline(myLoadId) {
     .slice(0, 15)
     .map(([name]) => name)
 
+  // O(1) lookup map: replaces O(P) indexOf calls (hot path)
+  const processIndexMap = new Map(processList.map((name, i) => [name, i]))
+
   console.log('Top 15 processes:', processList)
 
   // Step 2.5: Fetch colors for all processes
@@ -346,11 +353,18 @@ async function renderTimeline(myLoadId) {
 
   console.log('Process colors:', colorMap)
 
-  // Step 3: Filter to only include top 15 processes (keep SystemSleep for now)
-  const filteredTimeline = timeline.value
-    .filter(item => processList.includes(item.processName))
+  // Step 3: Pre-parse all timestamps to avoid redundant Date construction (hot path)
+  const parsedTimeline = []
+  const processSet = new Set(processList)
+  for (const item of timeline.value) {
+    if (!processSet.has(item.processName)) continue
+    parsedTimeline.push({
+      ...item,
+      _ts: parseUtcTs(item.timestamp).getTime(),
+    })
+  }
 
-  console.log('Rendering', filteredTimeline.length, 'records (all data points)')
+  console.log('Rendering', parsedTimeline.length, 'records (all data points)')
 
   // Step 3.5: Build sleep period map for quick lookup
   const sleepPeriods = systemEvents.value.map(e => ({
@@ -358,146 +372,160 @@ async function renderTimeline(myLoadId) {
     end: parseUtcTs(e.timestamp).getTime() + e.durationSeconds * 1000
   }))
 
-  // Helper function to check if a timestamp is during sleep
-  const isDuringSleep = (timestamp) => {
-    const time = parseUtcTs(timestamp).getTime()
-    return sleepPeriods.some(period => time >= period.start && time < period.end)
+  // Sorted sleep periods enable early-exit in the inner check
+  sleepPeriods.sort((a, b) => a.start - b.start)
+
+  // O(log S) check using sorted sleep periods
+  function isDuringSleep(tsMs) {
+    for (const p of sleepPeriods) {
+      if (tsMs < p.start) return false  // sorted → no later period can match
+      if (tsMs < p.end) return true
+    }
+    return false
   }
 
   console.log('Sleep periods:', sleepPeriods.length)
-
-  // Build chart data
-  const focusedWindows = []
-  filteredTimeline.forEach(item => {
-    const processIndex = processList.indexOf(item.processName)
-    if (processIndex === -1) return
-
-    const start = parseUtcTs(item.timestamp).getTime()
-    const end = start + item.durationSeconds * 1000
-    const color = colorMap[item.processName]
-    const duringsSleep = isDuringSleep(item.timestamp)
-
-    focusedWindows.push({
-      name: item.processName,
-      value: [processIndex, start, end, item.durationSeconds],
-      itemStyle: {
-        color: duringsSleep ? 'transparent' : color,
-        borderColor: color,
-        borderWidth: duringsSleep ? 2 : 0,
-      },
-      // Store data for tooltip without creating closure
-      processName: item.processName,
-      windowTitle: item.windowTitle,
-      timestamp: item.timestamp,
-      durationSeconds: item.durationSeconds,
-      duringsSleep: duringsSleep,
-      itemColor: color
-    })
-  })
-
-  console.log('Created', focusedWindows.length, 'focused window chart items')
 
   // Calculate X-axis range from selected dates
   const xAxisMin = startDate.value.getTime()
   const xAxisMax = endDate.value.getTime()
   const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
 
-  // Step 4: Add background running windows (thin lines)
-  // Only show background lines during periods with activity (not during sleep/shutdown)
-  const backgroundWindows = []
-
-  // Build activity periods from focus changes
+  // Build focusedWindows + activityPeriods in a single pass
+  const focusedWindows = []
   const activityPeriods = []
-  filteredTimeline.forEach(item => {
-    const start = parseUtcTs(item.timestamp).getTime()
-    const end = start + item.durationSeconds * 1000
-    activityPeriods.push({ start, end })
-  })
+
+  for (const item of parsedTimeline) {
+    const processIndex = processIndexMap.get(item.processName)
+    if (processIndex === undefined) continue
+
+    if (isDuringSleep(item._ts)) continue
+
+    const end = item._ts + item.durationSeconds * 1000
+    const color = colorMap[item.processName]
+
+    focusedWindows.push({
+      name: item.processName,
+      value: [processIndex, item._ts, end, item.durationSeconds],
+      itemStyle: { color, borderColor: color, borderWidth: 0 },
+      processName: item.processName,
+      windowTitle: item.windowTitle,
+      timestamp: item.timestamp,
+      durationSeconds: item.durationSeconds,
+      duringsSleep: false,
+      itemColor: color,
+    })
+
+    activityPeriods.push({ start: item._ts, end })
+  }
+
+  console.log('Created', focusedWindows.length, 'focused window chart items')
 
   // Merge overlapping activity periods and sort
   activityPeriods.sort((a, b) => a.start - b.start)
   const mergedActivity = []
-  activityPeriods.forEach(period => {
-    if (mergedActivity.length === 0) {
-      mergedActivity.push({ ...period })
+  for (const period of activityPeriods) {
+    const last = mergedActivity[mergedActivity.length - 1]
+    if (last && period.start <= last.end) {
+      if (period.end > last.end) last.end = period.end
     } else {
-      const last = mergedActivity[mergedActivity.length - 1]
-      if (period.start <= last.end) {
-        // Overlapping, merge
-        last.end = Math.max(last.end, period.end)
-      } else {
-        mergedActivity.push({ ...period })
-      }
+      mergedActivity.push({ start: period.start, end: period.end })
     }
-  })
+  }
 
   console.log('Merged activity periods:', mergedActivity.length)
 
-  const MAX_BACKGROUND = 3000
-  let bgSkipped = 0
+  // Step 4: Add background running windows (thin lines)
+  const backgroundWindows = []
+  if (mergedActivity.length > 0) {
+    const MAX_BACKGROUND = 3000
+    let bgSkipped = 0
+    const actMin = mergedActivity[0].start
+    const actMax = mergedActivity[mergedActivity.length - 1].end
 
-  windowSessions.value.forEach(session => {
-    if (backgroundWindows.length >= MAX_BACKGROUND) return
-    const processIndex = processList.indexOf(session.processName)
-    if (processIndex === -1) return
-
-    const color = colorMap[session.processName]
-    const sessionOpenTime = parseUtcTs(session.openTime).getTime()
-    const sessionCloseTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
-
-    // Only show background lines during activity periods
-    for (const activityPeriod of mergedActivity) {
+    for (const session of windowSessions.value) {
       if (backgroundWindows.length >= MAX_BACKGROUND) break
-      // Find intersection between window session and activity period
-      const segmentStart = Math.max(sessionOpenTime, activityPeriod.start)
-      const segmentEnd = Math.min(sessionCloseTime, activityPeriod.end)
 
-      // Only create segment if there's actual overlap
-      if (segmentStart < segmentEnd) {
-        // Check if this segment is during sleep
-        const isDuringSleepPeriod = sleepPeriods.some(sleep =>
-          segmentStart >= sleep.start && segmentStart < sleep.end
-        )
+      const processIndex = processIndexMap.get(session.processName)
+      if (processIndex === undefined) continue
 
-        // Skip if during sleep
-        if (isDuringSleepPeriod) continue
+      const color = colorMap[session.processName]
+      const sessionOpenTime = parseUtcTs(session.openTime).getTime()
+      const sessionCloseTime = session.closeTime ? parseUtcTs(session.closeTime).getTime() : xAxisMax
 
-        // For large ranges, skip very short background segments
-        if (rangeInDays > 1 && (segmentEnd - segmentStart) < 60 * 1000) {
+      // Quick-reject: session entirely outside activity range
+      if (sessionCloseTime <= actMin || sessionOpenTime >= actMax) continue
+
+      // Binary-search the first activity period whose end > sessionOpenTime
+      let lo = 0, hi = mergedActivity.length
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1
+        if (mergedActivity[mid].end <= sessionOpenTime) lo = mid + 1
+        else hi = mid
+      }
+
+      for (let i = lo; i < mergedActivity.length; i++) {
+        if (backgroundWindows.length >= MAX_BACKGROUND) break
+        const ap = mergedActivity[i]
+        if (ap.start >= sessionCloseTime) break  // past the session
+
+        const segStart = Math.max(sessionOpenTime, ap.start)
+        const segEnd = Math.min(sessionCloseTime, ap.end)
+        if (segStart >= segEnd) continue
+
+        // Quick sleep check with early exit (sleep periods are sorted)
+        let inSleep = false
+        for (const s of sleepPeriods) {
+          if (segStart < s.start) break
+          if (segStart < s.end) { inSleep = true; break }
+        }
+        if (inSleep) continue
+
+        if (rangeInDays > 1 && (segEnd - segStart) < 60 * 1000) {
           bgSkipped++
           continue
         }
 
+        // Store raw data for shared tooltip (no per-item closure)
         backgroundWindows.push({
           name: session.processName,
-          value: [processIndex, segmentStart, segmentEnd, 0],
+          value: [processIndex, segStart, segEnd, 0],
           itemStyle: {
             color: 'transparent',
             borderColor: color,
             borderWidth: 1,
-            opacity: 0.3
+            opacity: 0.3,
           },
-          tooltip: {
-            formatter: () => {
-              const status = session.closeTime ? t('history.status.closed') : t('history.status.running')
-              return `<div style="font-weight:600;margin-bottom:4px;color:${color};">${session.processName}</div>
-                      <div style="font-size:0.9em;">${session.windowTitle}</div>
-                      <div style="margin-top:4px;color:var(--surface-500);">
-                        ${toLocalTime(session.openTime)} - ${session.closeTime ? toLocalTime(session.closeTime) : t('history.status.now')}
-                      </div>
-                      <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
-            },
-          },
+          _bgSession: session,
+          itemColor: color,
         })
       }
     }
-  })
 
-  if (bgSkipped > 0) console.log(`Skipped ${bgSkipped} short background segments (< 60s)`)
+    if (bgSkipped > 0) console.log(`Skipped ${bgSkipped} short background segments (< 60s)`)
+  }
+
   console.log('Created', backgroundWindows.length, 'background window chart items')
 
   // Combine background windows (rendered first, behind) and focused windows (on top)
   const allWindows = [...backgroundWindows, ...focusedWindows]
+
+  // Build sleep/shutdown area overlays for dashed boxes
+  const sleepAreas = systemEvents.value
+    .filter(e => e.durationSeconds > 3)
+    .map(e => {
+      const start = parseUtcTs(e.timestamp).getTime()
+      const end = start + e.durationSeconds * 1000
+      // Skip if entirely outside visible range
+      if (end <= xAxisMin || start >= xAxisMax) return null
+      return {
+        value: [Math.max(start, xAxisMin), Math.min(end, xAxisMax)],
+        eventType: e.eventType,
+        timestamp: e.timestamp,
+        durationSeconds: e.durationSeconds,
+      }
+    })
+    .filter(Boolean)
 
   // Dynamic time format based on range
   let timeFormatter
@@ -555,11 +583,39 @@ async function renderTimeline(myLoadId) {
   timelineChart = echarts.init(timelineChartRef.value)
   console.log('ECharts instance created')
 
-  // Get computed CSS colors (ECharts doesn't support CSS variables in tooltip)
+  // Get computed CSS colors (ECharts renders on Canvas — CSS variables don't work)
   const computedStyle = getComputedStyle(document.documentElement)
   const tooltipBg = computedStyle.getPropertyValue('--surface-card').trim()
   const tooltipBorder = computedStyle.getPropertyValue('--primary-color').trim()
   const tooltipText = computedStyle.getPropertyValue('--text-color').trim()
+  const secondaryColor = computedStyle.getPropertyValue('--secondary-color').trim()
+  const borderColor = computedStyle.getPropertyValue('--border-color').trim()
+  const surface200 = computedStyle.getPropertyValue('--surface-200').trim()
+
+  function renderSleepArea(params, api) {
+    const catCount = processList.length
+    const startX = api.coord([api.value(0), 0])[0]
+    const endX = api.coord([api.value(1), 0])[0]
+    const rowH = api.size([0, 1])[1]
+    const firstRowTop = api.coord([0, 0])[1] - rowH / 2
+    const lastRowBottom = api.coord([0, catCount - 1])[1] + rowH / 2
+
+    return {
+      type: 'rect',
+      shape: {
+        x: startX,
+        y: firstRowTop - 12,
+        width: Math.max(endX - startX, 2),
+        height: lastRowBottom - firstRowTop + 24,
+      },
+      style: {
+        fill: 'rgba(128, 128, 128, 0.06)',
+        stroke: secondaryColor,
+        lineWidth: 2,
+        lineDash: [10, 6],
+      },
+    }
+  }
 
   const option = {
     animation: false,
@@ -577,16 +633,16 @@ async function renderTimeline(myLoadId) {
       min: xAxisMin,
       max: xAxisMax,
       axisLabel: {
-        color: 'var(--text-color)',
+        color: tooltipText,
         fontWeight: 600,
         formatter: timeFormatter,
         rotate: rangeInDays > 3 ? 15 : 0,
       },
       axisLine: {
-        lineStyle: { color: 'var(--border-color)', width: 2 },
+        lineStyle: { color: borderColor, width: 2 },
       },
       splitLine: {
-        lineStyle: { type: 'dashed', color: 'var(--surface-200)' },
+        lineStyle: { type: 'dashed', color: surface200 },
       },
     },
     yAxis: {
@@ -607,6 +663,26 @@ async function renderTimeline(myLoadId) {
     },
     series: [
       {
+        name: 'sleepAreas',
+        type: 'custom',
+        z: 0,
+        renderItem: renderSleepArea,
+        data: sleepAreas,
+        tooltip: {
+          formatter: (params) => {
+            const data = params.data
+            if (!data) return ''
+            const typeName = data.eventType === 'Sleep'
+              ? t('history.status.sleepEvent')
+              : t('history.status.shutdownEvent')
+            return `<div style="font-weight:600;margin-bottom:4px;color:${secondaryColor};">${typeName}</div>
+                    <div style="color:var(--text-color);">${toLocalTime(data.timestamp)}</div>
+                    <div style="margin-top:4px;color:var(--surface-400);">${t('common.duration')}: ${fmtShortDur(data.durationSeconds)}</div>`
+          },
+        },
+      },
+      {
+        name: 'windows',
         type: 'custom',
         renderItem: renderBar,
         encode: {
@@ -627,13 +703,22 @@ async function renderTimeline(myLoadId) {
         const data = params.data
         if (!data) return ''
 
-        const sleepWarning = data.duringsSleep ? `<div style="color:#FFA500;font-size:0.85em;">⚠️ ${t('history.status.sleepPeriod')}</div>` : ''
+        if (data._bgSession) {
+          const s = data._bgSession
+          const status = s.closeTime ? t('history.status.closed') : t('history.status.running')
+          return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${s.processName}</div>
+                  <div style="font-size:0.9em;">${s.windowTitle}</div>
+                  <div style="margin-top:4px;color:var(--surface-500);">
+                    ${toLocalTime(s.openTime)} - ${s.closeTime ? toLocalTime(s.closeTime) : t('history.status.now')}
+                  </div>
+                  <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
+        }
+
         return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${data.processName}</div>
                 <div style="font-size:0.9em;">${data.windowTitle}</div>
                 <div style="margin-top:4px;color:var(--primary-color);">
-                  ${toLocalTime(data.timestamp)} · ${data.durationSeconds.toFixed(1)}s
-                </div>
-                ${sleepWarning}`
+                  ${toLocalTime(data.timestamp)} · ${fmtShortDur(data.durationSeconds)}
+                </div>`
       }
     },
   }
@@ -757,6 +842,14 @@ function getProcessColor(name) {
 
 .timeline-card {
   min-height: 400px;
+  border: 3px solid var(--text-color) !important;
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+
+  &:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  }
 }
 
 .easter-egg-chart {
@@ -825,7 +918,6 @@ function getProcessColor(name) {
 .legend-box {
   width: 24px;
   height: 12px;
-  border: 2px solid var(--border-color);
 
   &.focus {
     background: var(--primary-color);
@@ -833,7 +925,14 @@ function getProcessColor(name) {
 
   &.visible {
     background: var(--accent-color);
-    opacity: 0.5;
+    height: 2px;
+    opacity: 0.6;
+  }
+
+  &.offline {
+    background: transparent;
+    border: 2px dashed var(--secondary-color);
+    opacity: 0.7;
   }
 }
 
