@@ -40,6 +40,10 @@
               {{ t('history.legend.visible') }}
             </span>
             <span class="legend-item">
+              <span class="legend-box idle"></span>
+              {{ t('history.legend.idle') }}
+            </span>
+            <span class="legend-item">
               <span class="legend-box offline"></span>
               {{ t('history.legend.offline') }}
             </span>
@@ -311,28 +315,70 @@ async function renderTimeline(myLoadId) {
 
   console.log('Rendering timeline with', timeline.value.length, 'records')
 
-  // Step 1: Use all data to calculate process statistics (for accurate representation)
-  const processStats = {}
+  // Step 1: Group by day (4 AM boundary), compute top 20 per day
+  const DAY_START = 4 * 60 * 60 * 1000
+  const getDayKey = (tsMs) => {
+    const d = new Date(tsMs - DAY_START)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  const dayStats = {}
   timeline.value.forEach(item => {
-    if (!processStats[item.processName]) {
-      processStats[item.processName] = 0
-    }
-    processStats[item.processName] += item.durationSeconds
+    const tsMs = parseUtcTs(item.timestamp).getTime()
+    const dk = getDayKey(tsMs)
+    if (!dayStats[dk]) dayStats[dk] = {}
+    dayStats[dk][item.processName] = (dayStats[dk][item.processName] || 0) + item.durationSeconds
   })
 
-  // Step 2: Sort processes by total duration (descending) and take top 15
-  const processList = Object.entries(processStats)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 15)
-    .map(([name]) => name)
+  // Step 2: Top 20 per day, build day→process set and process→days map
+  const dayTopSet = {}
+  const processDays = {}
+  const allProcs = new Set()
 
-  // O(1) lookup map: replaces O(P) indexOf calls (hot path)
-  const processIndexMap = new Map(processList.map((name, i) => [name, i]))
+  for (const [dk, stats] of Object.entries(dayStats)) {
+    const top20 = Object.entries(stats).sort((a, b) => b[1] - a[1]).slice(0, 20).map(e => e[0])
+    dayTopSet[dk] = new Set(top20)
+    for (const p of top20) {
+      allProcs.add(p)
+      if (!processDays[p]) processDays[p] = new Set()
+      processDays[p].add(dk)
+    }
+  }
 
-  console.log('Top 15 processes:', processList)
+  // Step 3: Greedy row assignment — most frequent first, minimize rows
+  const sortedProcs = [...allProcs].sort((a, b) => processDays[b].size - processDays[a].size)
+  const rowProcs = []
+  const processRow = new Map()
 
-  // Step 2.5: Fetch colors for all processes
-  const colorPromises = processList.map(async (processName) => {
+  for (const proc of sortedProcs) {
+    const procDaySet = processDays[proc]
+    let row = -1
+    for (let r = 0; r < rowProcs.length; r++) {
+      let conflict = false
+      for (const existing of rowProcs[r]) {
+        for (const d of procDaySet) {
+          if (processDays[existing].has(d)) { conflict = true; break }
+        }
+        if (conflict) break
+      }
+      if (!conflict) { row = r; break }
+    }
+    if (row === -1) {
+      row = rowProcs.length
+      rowProcs.push([])
+    }
+    rowProcs[row].push(proc)
+    processRow.set(proc, row)
+  }
+
+  // Row labels (axis labels hidden — used only for ECharts category mapping)
+  const processList = rowProcs.map((_, i) => String(i + 1))
+  const allProcessNames = [...allProcs]
+
+  console.log(`${allProcessNames.length} processes across ${Object.keys(dayStats).length} days, ${rowProcs.length} rows`)
+
+  // Step 3.5: Fetch colors for all processes
+  const colorPromises = allProcessNames.map(async (processName) => {
     try {
       const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
       if (response.ok) {
@@ -347,24 +393,26 @@ async function renderTimeline(myLoadId) {
 
   const processColors = await Promise.all(colorPromises)
   const colorMap = {}
-  processList.forEach((name, idx) => {
+  allProcessNames.forEach((name, idx) => {
     colorMap[name] = processColors[idx]
   })
 
-  console.log('Process colors:', colorMap)
-
-  // Step 3: Pre-parse all timestamps to avoid redundant Date construction (hot path)
+  // Step 4: Pre-parse timestamps, filter by per-day top-20
   const parsedTimeline = []
-  const processSet = new Set(processList)
+  const processSet = new Set(allProcessNames)
   for (const item of timeline.value) {
     if (!processSet.has(item.processName)) continue
+    const tsMs = parseUtcTs(item.timestamp).getTime()
+    const dk = getDayKey(tsMs)
+    const topSet = dayTopSet[dk]
+    if (!topSet || !topSet.has(item.processName)) continue
     parsedTimeline.push({
       ...item,
-      _ts: parseUtcTs(item.timestamp).getTime(),
+      _ts: tsMs,
     })
   }
 
-  console.log('Rendering', parsedTimeline.length, 'records (all data points)')
+  console.log('Rendering', parsedTimeline.length, 'records (filtered by daily top-20)')
 
   // Step 3.5: Build sleep period map for quick lookup
   const sleepPeriods = systemEvents.value.map(e => ({
@@ -391,13 +439,47 @@ async function renderTimeline(myLoadId) {
   const xAxisMax = endDate.value.getTime()
   const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
 
+  // Step 3.6: Detect idle periods from gaps in the FULL timeline data (before top-15 filter).
+  // Idle = no focus change recorded for >= idleThreshold (default 2 min), excluding sleep.
+  const IDLE_GAP_MS = 2 * 60 * 1000  // 2 minutes
+  const MIN_IDLE_MS = 10 * 1000       // ignore sub-10s idle fragments
+
+  // Sort full timeline by timestamp, exclude sleep, then find gaps
+  const fullSorted = [...timeline.value]
+    .map(item => parseUtcTs(item.timestamp).getTime())
+    .filter(ts => !isDuringSleep(ts))
+    .sort((a, b) => a - b)
+
+  const idleAreas = []
+  if (fullSorted.length > 1) {
+    for (let i = 1; i < fullSorted.length; i++) {
+      const gap = fullSorted[i] - fullSorted[i - 1]
+      if (gap >= IDLE_GAP_MS) {
+        const idleStart = fullSorted[i - 1]
+        const idleEnd = fullSorted[i]
+        if (idleEnd - idleStart >= MIN_IDLE_MS) {
+          // Clip to visible range
+          if (idleEnd > xAxisMin && idleStart < xAxisMax) {
+            idleAreas.push({
+              value: [Math.max(idleStart, xAxisMin), Math.min(idleEnd, xAxisMax), 0],
+              durationMs: idleEnd - idleStart,
+              areaType: 'idle',
+            })
+          }
+        }
+      }
+    }
+  }
+
+  console.log('Idle areas detected:', idleAreas.length)
+
   // Build focusedWindows + activityPeriods in a single pass
   const focusedWindows = []
   const activityPeriods = []
 
   for (const item of parsedTimeline) {
-    const processIndex = processIndexMap.get(item.processName)
-    if (processIndex === undefined) continue
+    const rowIdx = processRow.get(item.processName)
+    if (rowIdx === undefined) continue
 
     if (isDuringSleep(item._ts)) continue
 
@@ -406,7 +488,7 @@ async function renderTimeline(myLoadId) {
 
     focusedWindows.push({
       name: item.processName,
-      value: [processIndex, item._ts, end, item.durationSeconds],
+      value: [rowIdx, item._ts, end, item.durationSeconds],
       itemStyle: { color, borderColor: color, borderWidth: 0 },
       processName: item.processName,
       windowTitle: item.windowTitle,
@@ -446,8 +528,8 @@ async function renderTimeline(myLoadId) {
     for (const session of windowSessions.value) {
       if (backgroundWindows.length >= MAX_BACKGROUND) break
 
-      const processIndex = processIndexMap.get(session.processName)
-      if (processIndex === undefined) continue
+      const rowIdx = processRow.get(session.processName)
+      if (rowIdx === undefined) continue
 
       const color = colorMap[session.processName]
       const sessionOpenTime = parseUtcTs(session.openTime).getTime()
@@ -489,7 +571,7 @@ async function renderTimeline(myLoadId) {
         // Store raw data for shared tooltip (no per-item closure)
         backgroundWindows.push({
           name: session.processName,
-          value: [processIndex, segStart, segEnd, 0],
+          value: [rowIdx, segStart, segEnd, 0],
           itemStyle: {
             color: 'transparent',
             borderColor: color,
@@ -519,10 +601,11 @@ async function renderTimeline(myLoadId) {
       // Skip if entirely outside visible range
       if (end <= xAxisMin || start >= xAxisMax) return null
       return {
-        value: [Math.max(start, xAxisMin), Math.min(end, xAxisMax)],
+        value: [Math.max(start, xAxisMin), Math.min(end, xAxisMax), 1],
         eventType: e.eventType,
         timestamp: e.timestamp,
         durationSeconds: e.durationSeconds,
+        areaType: 'sleep',
       }
     })
     .filter(Boolean)
@@ -592,27 +675,48 @@ async function renderTimeline(myLoadId) {
   const borderColor = computedStyle.getPropertyValue('--border-color').trim()
   const surface200 = computedStyle.getPropertyValue('--surface-200').trim()
 
-  function renderSleepArea(params, api) {
-    const catCount = processList.length
+  function renderIdleRect(params, api) {
     const startX = api.coord([api.value(0), 0])[0]
     const endX = api.coord([api.value(1), 0])[0]
     const rowH = api.size([0, 1])[1]
-    const firstRowTop = api.coord([0, 0])[1] - rowH / 2
-    const lastRowBottom = api.coord([0, catCount - 1])[1] + rowH / 2
+    const centerY = api.coord([0, 0])[1]
 
     return {
       type: 'rect',
       shape: {
         x: startX,
-        y: firstRowTop - 12,
+        y: centerY - rowH * 0.4,
         width: Math.max(endX - startX, 2),
-        height: lastRowBottom - firstRowTop + 24,
+        height: rowH * 0.8,
       },
       style: {
-        fill: 'rgba(128, 128, 128, 0.06)',
+        fill: 'rgba(128, 128, 128, 0.15)',
         stroke: secondaryColor,
         lineWidth: 2,
-        lineDash: [10, 6],
+        lineDash: [],
+      },
+    }
+  }
+
+  function renderSleepRect(params, api) {
+    const startX = api.coord([api.value(0), 0])[0]
+    const endX = api.coord([api.value(1), 0])[0]
+    const rowH = api.size([0, 1])[1]
+    const centerY = api.coord([0, 0])[1]
+
+    return {
+      type: 'rect',
+      shape: {
+        x: startX,
+        y: centerY - rowH * 0.4,
+        width: Math.max(endX - startX, 2),
+        height: rowH * 0.8,
+      },
+      style: {
+        fill: 'rgba(128, 128, 128, 0.12)',
+        stroke: secondaryColor,
+        lineWidth: 2,
+        lineDash: [8, 4],
       },
     }
   }
@@ -621,52 +725,100 @@ async function renderTimeline(myLoadId) {
     animation: false,
     progressive: 200,
     progressiveThreshold: 500,
-    grid: {
-      left: 20,
-      right: 40,
-      top: 40,
-      bottom: 60,
-      containLabel: true,
-    },
-    xAxis: {
-      type: 'time',
-      min: xAxisMin,
-      max: xAxisMax,
-      axisLabel: {
-        color: tooltipText,
-        fontWeight: 600,
-        formatter: timeFormatter,
-        rotate: rangeInDays > 3 ? 15 : 0,
+    grid: [
+      {
+        left: 20,
+        right: 40,
+        top: 40,
+        bottom: 40,
+        containLabel: true,
       },
-      axisLine: {
-        lineStyle: { color: borderColor, width: 2 },
+      {
+        left: 20,
+        right: 40,
+        height: 32,
+        bottom: 4,
+        containLabel: false,
       },
-      splitLine: {
-        lineStyle: { type: 'dashed', color: surface200 },
+    ],
+    xAxis: [
+      {
+        type: 'time',
+        gridIndex: 0,
+        min: xAxisMin,
+        max: xAxisMax,
+        axisLabel: {
+          color: tooltipText,
+          fontWeight: 600,
+          formatter: timeFormatter,
+          rotate: rangeInDays > 3 ? 15 : 0,
+        },
+        axisLine: {
+          lineStyle: { color: borderColor, width: 2 },
+        },
+        splitLine: {
+          lineStyle: { type: 'dashed', color: surface200 },
+        },
       },
-    },
-    yAxis: {
-      type: 'category',
-      data: processList,
-      axisLabel: {
-        show: false,
+      {
+        type: 'time',
+        gridIndex: 1,
+        min: xAxisMin,
+        max: xAxisMax,
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
       },
-      axisLine: {
-        show: false,
+    ],
+    yAxis: [
+      {
+        type: 'category',
+        gridIndex: 0,
+        data: processList,
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
       },
-      axisTick: {
-        show: false,
+      {
+        type: 'category',
+        gridIndex: 1,
+        data: [''],
+        axisLabel: { show: false },
+        axisLine: { show: false },
+        axisTick: { show: false },
+        splitLine: { show: false },
       },
-      splitLine: {
-        show: false,
-      },
-    },
+    ],
     series: [
+      {
+        name: 'idleAreas',
+        type: 'custom',
+        z: 0,
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        renderItem: renderIdleRect,
+        data: idleAreas,
+        tooltip: {
+          formatter: (params) => {
+            const data = params.data
+            if (!data) return ''
+            const durMin = Math.floor(data.durationMs / 60000)
+            const durHr = Math.floor(durMin / 60)
+            const durStr = durHr > 0 ? `${durHr}h ${durMin % 60}m` : `${durMin}m`
+            return `<div style="font-weight:600;margin-bottom:4px;color:${secondaryColor};">${t('history.status.idlePeriod')}</div>
+                    <div style="margin-top:4px;color:var(--surface-400);">${t('common.duration')}: ${durStr}</div>`
+          },
+        },
+      },
       {
         name: 'sleepAreas',
         type: 'custom',
         z: 0,
-        renderItem: renderSleepArea,
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        renderItem: renderSleepRect,
         data: sleepAreas,
         tooltip: {
           formatter: (params) => {
@@ -684,6 +836,8 @@ async function renderTimeline(myLoadId) {
       {
         name: 'windows',
         type: 'custom',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
         renderItem: renderBar,
         encode: {
           x: [1, 2],
@@ -892,7 +1046,7 @@ function getProcessColor(name) {
 
 .timeline-chart {
   width: 100%;
-  height: 400px;
+  height: 440px;
   margin-bottom: 16px;
   border: 2px solid var(--primary-color); /* 调试：确认容器可见 */
   background: var(--surface-card);
@@ -927,6 +1081,12 @@ function getProcessColor(name) {
     background: var(--accent-color);
     height: 2px;
     opacity: 0.6;
+  }
+
+  &.idle {
+    background: transparent;
+    border: 2px solid var(--secondary-color);
+    opacity: 0.7;
   }
 
   &.offline {
