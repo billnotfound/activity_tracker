@@ -133,8 +133,9 @@ var webTask = Task.Run(() => app.RunAsync());
 
 // Poll /api/status until Kestrel is ready.
 using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(100) };
-var deadline = DateTime.UtcNow.AddMilliseconds(800);
+var deadline = DateTime.UtcNow.AddSeconds(10);
 var ready = false;
+var delay = 50; // start with 50ms, exponential backoff
 while (DateTime.UtcNow < deadline)
 {
     try
@@ -143,7 +144,8 @@ while (DateTime.UtcNow < deadline)
         if (resp.IsSuccessStatusCode) { ready = true; break; }
     }
     catch { /* not ready */ }
-    await Task.Delay(TimeSpan.FromMilliseconds(3));
+    await Task.Delay(delay);
+    delay = Math.Min(delay * 2, 500); // double each retry, cap at 500ms
 }
 
 if (!ready)

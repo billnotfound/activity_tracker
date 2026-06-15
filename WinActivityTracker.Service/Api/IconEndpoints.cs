@@ -85,33 +85,47 @@ public static class IconEndpoints
                 });
             }
 
-            // Extract icon and calculate hash
-            byte[] pngData;
-            string c1, c2, c3;
-            try
+            // Extract icon and calculate hash (CPU-bound — offload from request thread)
+            var iconResult = await Task.Run(() =>
             {
-                using var icon = Icon.ExtractAssociatedIcon(exePath);
-                if (icon == null)
+                try
                 {
-                    return Results.Ok(new
+                    using var icon = Icon.ExtractAssociatedIcon(exePath);
+                    if (icon == null) return null;
+
+                    using var bitmap = icon.ToBitmap();
+                    var colors = ExtractColors(bitmap);
+
+                    using var ms = new MemoryStream();
+                    bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                    return new IconExtractResult
                     {
-                        processName,
-                        iconHash = "default",
-                        iconData = "",
-                        colorPrimary = "#6B7FD7",
-                        colorSecondary = "#DD7596",
-                        colorAccent = "#06D6A0"
-                    });
+                        PngData = ms.ToArray(),
+                        ColorPrimary = colors.primary,
+                        ColorSecondary = colors.secondary,
+                        ColorAccent = colors.accent
+                    };
                 }
+                catch (Exception ex)
+                {
+                    return new IconExtractResult { Error = ex.Message };
+                }
+            });
 
-                using var bitmap = icon.ToBitmap();
-                (c1, c2, c3) = ExtractColors(bitmap);
-
-                using var ms = new MemoryStream();
-                bitmap.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-                pngData = ms.ToArray();
+            if (iconResult == null)
+            {
+                return Results.Ok(new
+                {
+                    processName,
+                    iconHash = "default",
+                    iconData = "",
+                    colorPrimary = "#6B7FD7",
+                    colorSecondary = "#DD7596",
+                    colorAccent = "#06D6A0"
+                });
             }
-            catch (Exception ex)
+
+            if (iconResult.Error != null)
             {
                 return Results.Ok(new
                 {
@@ -121,11 +135,11 @@ public static class IconEndpoints
                     colorPrimary = "#6B7FD7",
                     colorSecondary = "#DD7596",
                     colorAccent = "#06D6A0",
-                    error = ex.Message
+                    error = iconResult.Error
                 });
             }
 
-            var hash = Convert.ToHexString(SHA256.HashData(pngData)).ToLowerInvariant();
+            var hash = Convert.ToHexString(SHA256.HashData(iconResult.PngData)).ToLowerInvariant();
 
             // Check if icon already exists in database
             var existingIcon = await db.ProcessIcons.FirstOrDefaultAsync(i => i.IconHash == hash);
@@ -167,10 +181,10 @@ public static class IconEndpoints
             db.ProcessIcons.Add(new ProcessIcon
             {
                 IconHash = hash,
-                IconData = pngData,
-                ColorPrimary = c1,
-                ColorSecondary = c2,
-                ColorAccent = c3
+                IconData = iconResult.PngData,
+                ColorPrimary = iconResult.ColorPrimary,
+                ColorSecondary = iconResult.ColorSecondary,
+                ColorAccent = iconResult.ColorAccent
             });
 
             // Create mapping for this process name
@@ -188,10 +202,10 @@ public static class IconEndpoints
             {
                 processName,
                 iconHash = hash,
-                iconData = Convert.ToBase64String(pngData),
-                colorPrimary = c1,
-                colorSecondary = c2,
-                colorAccent = c3
+                iconData = Convert.ToBase64String(iconResult.PngData),
+                colorPrimary = iconResult.ColorPrimary,
+                colorSecondary = iconResult.ColorSecondary,
+                colorAccent = iconResult.ColorAccent
             });
         }
         catch (Exception ex)
@@ -250,4 +264,13 @@ public static class IconEndpoints
             top.Count > 2 ? hex(top[2]) : "#000000"
         );
     }
+}
+
+internal sealed class IconExtractResult
+{
+    public byte[] PngData { get; set; } = [];
+    public string ColorPrimary { get; set; } = "#6B7FD7";
+    public string ColorSecondary { get; set; } = "#DD7596";
+    public string ColorAccent { get; set; } = "#06D6A0";
+    public string? Error { get; set; }
 }

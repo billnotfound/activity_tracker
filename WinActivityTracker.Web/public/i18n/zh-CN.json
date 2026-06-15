@@ -257,6 +257,8 @@
   "admin.pathsSaved": "路径已保存（重启生效）",
 
   "tags.rulesSaved": "规则已保存",
+  "tags.allSkippedPrefix": "所有规则均以 '_' 开头，该前缀为系统保留。",
+  "tags.skippedPrefixCount": "已跳过 {0} 条以 '_' 开头的规则（系统保留前缀）。",
   "tags.jsonError": "tags.json 错误: {0}",
 
   "tray.openDashboard": "打开仪表盘",

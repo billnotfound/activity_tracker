@@ -852,6 +852,7 @@ async function renderTimeline(myLoadId) {
       borderWidth: 2,
       textStyle: {
         color: tooltipText,
+        fontFamily: 'Ubuntu Mono',
       },
       formatter: (params) => {
         const data = params.data
@@ -860,7 +861,7 @@ async function renderTimeline(myLoadId) {
         if (data._bgSession) {
           const s = data._bgSession
           const status = s.closeTime ? t('history.status.closed') : t('history.status.running')
-          return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${s.processName}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${data.itemColor};">${s.processName}</div>
                   <div style="font-size:0.9em;">${s.windowTitle}</div>
                   <div style="margin-top:4px;color:var(--surface-500);">
                     ${toLocalTime(s.openTime)} - ${s.closeTime ? toLocalTime(s.closeTime) : t('history.status.now')}
@@ -868,7 +869,7 @@ async function renderTimeline(myLoadId) {
                   <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
         }
 
-        return `<div style="font-weight:600;margin-bottom:4px;color:${data.itemColor};">${data.processName}</div>
+        return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${data.itemColor};">${data.processName}</div>
                 <div style="font-size:0.9em;">${data.windowTitle}</div>
                 <div style="margin-top:4px;color:var(--primary-color);">
                   ${toLocalTime(data.timestamp)} · ${fmtShortDur(data.durationSeconds)}
@@ -997,12 +998,12 @@ function getProcessColor(name) {
 .timeline-card {
   min-height: 400px;
   border: 3px solid var(--text-color) !important;
-  box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
-  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out;
+  box-shadow: 0 0 0 transparent;
+  transition: transform 0.12s ease-out, box-shadow 0.15s ease-out;
 
   &:hover {
     transform: translate(-2px, -2px);
-    box-shadow: 6px 6px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
   }
 }
 

@@ -51,14 +51,16 @@ public static class FocusEndpoints
 
         // Exclude records whose timestamp falls inside a sleep/shutdown window.
         // Applied BEFORE GroupBy so TotalSeconds and SwitchCount both exclude sleep time.
-        var filtered = ExcludeOffPeriods(
-            db.FocusChanges
-                .AsNoTracking()
-                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-                .Where(f => f.Timestamp >= start && f.Timestamp <= end),
-            offPeriods);
+        var baseQuery = db.FocusChanges
+            .AsNoTracking()
+            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
+            .Where(f => f.Timestamp >= start && f.Timestamp <= end);
 
-        var data = await filtered
+        var filtered = ExcludeOffPeriods(baseQuery, offPeriods);
+
+        // Run summary and adjusted-switch-count queries concurrently
+        // (both hit FocusChanges with the same filter; no reason to wait).
+        var summaryTask = filtered
             .GroupBy(f => f.ProcessName)
             .Select(g => new
             {
@@ -69,7 +71,12 @@ public static class FocusEndpoints
             .OrderByDescending(x => x.TotalSeconds)
             .ToListAsync();
 
-        var adj = await ComputeAdjustedSwitchCounts(db, start, end, offPeriods);
+        var adjTask = ComputeAdjustedSwitchCounts(filtered);
+
+        await Task.WhenAll(summaryTask, adjTask);
+
+        var data = summaryTask.Result;
+        var adj = adjTask.Result;
 
         var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
 
@@ -118,16 +125,8 @@ public static class FocusEndpoints
     }
 
     private static async Task<Dictionary<string, int>> ComputeAdjustedSwitchCounts(
-        AppDbContext db, DateTime start, DateTime end,
-        List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
+        IQueryable<FocusChange> filtered)
     {
-        var filtered = ExcludeOffPeriods(
-            db.FocusChanges
-                .AsNoTracking()
-                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-                .Where(f => f.Timestamp >= start && f.Timestamp <= end),
-            offPeriods);
-
         var timestamps = await filtered
             .OrderBy(f => f.Timestamp)
             .Select(f => new { f.Timestamp, f.ProcessName })

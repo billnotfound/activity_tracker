@@ -257,6 +257,8 @@
   "admin.pathsSaved": "Paths saved (restart to apply)",
 
   "tags.rulesSaved": "Rules saved",
+  "tags.allSkippedPrefix": "All rules start with '_', which is reserved for internal use.",
+  "tags.skippedPrefixCount": "{0} rule(s) starting with '_' were skipped (reserved prefix).",
   "tags.jsonError": "tags.json error: {0}",
 
   "tray.openDashboard": "Open Dashboard",

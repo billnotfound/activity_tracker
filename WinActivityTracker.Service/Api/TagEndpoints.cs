@@ -69,7 +69,15 @@ public static class TagEndpoints
                 return;
             }
 
+            var skipped = rules.Where(r => r.Tag.StartsWith('_')).ToList();
             rules = rules.Where(r => !r.Tag.StartsWith('_')).ToList();
+
+            if (rules.Count == 0)
+            {
+                response.StatusCode = 400;
+                await response.WriteAsJsonAsync(new { error = I18nService._("tags.allSkippedPrefix") });
+                return;
+            }
 
             var appPaths = request.HttpContext.RequestServices.GetRequiredService<AppPaths>();
             var path = Path.Combine(appPaths.ConfigDir, "tags.json");
@@ -78,6 +86,19 @@ public static class TagEndpoints
             var tmp = path + ".tmp";
             await File.WriteAllTextAsync(tmp, json);
             File.Move(tmp, path, overwrite: true);
+
+            if (skipped.Count > 0)
+            {
+                response.StatusCode = 200;
+                await response.WriteAsJsonAsync(new
+                {
+                    saved = rules.Count,
+                    skipped = skipped.Count,
+                    skippedTags = skipped.Select(s => s.Tag).ToList(),
+                    message = I18nService._("tags.rulesSaved") + " (" + I18nService._("tags.skippedPrefixCount", skipped.Count) + ")"
+                });
+                return;
+            }
 
             response.StatusCode = 200;
             await response.WriteAsJsonAsync(new { saved = rules.Count, message = I18nService._("tags.rulesSaved") });

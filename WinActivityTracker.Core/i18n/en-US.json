@@ -83,6 +83,8 @@
   "tags.error.saveFailed": "Save failed ({status})",
   "tags.error.backendUnreachable": "Cannot reach backend: {message}",
   "tags.rulesSaved": "tags.json saved. Hot-reload takes effect immediately.",
+  "tags.allSkippedPrefix": "All rules start with '_', which is reserved for internal use.",
+  "tags.skippedPrefixCount": "{0} rule(s) starting with '_' were skipped (reserved prefix).",
   "tags.jsonError": "JSON parse/serialize error: {0}",
 
   "appPaths.configDirChanged": "[AppPaths] Config directory changed: {0} → {1}",

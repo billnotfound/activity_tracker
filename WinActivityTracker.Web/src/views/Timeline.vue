@@ -39,7 +39,7 @@
               <tbody>
                 <tr v-for="d in sortedTimeline" :key="d.timestamp + '|' + d.processName">
                   <td>{{ toLocal(d.timestamp) }}</td>
-                  <td><strong>{{ d.processName }}</strong></td>
+                  <td><strong class="mono">{{ d.processName }}</strong></td>
                   <td>{{ d.windowTitle }}</td>
                   <td>{{ t('time.shortS', { n: d.durationSeconds.toFixed(1) }) }}</td>
                 </tr>
@@ -57,7 +57,7 @@
               <thead><tr><th>{{ t('timeline.table.process') }}</th><th>{{ t('timeline.table.title') }}</th><th>{{ t('timeline.table.focus') }}</th></tr></thead>
               <tbody>
                 <tr v-for="w in windows" :key="w.processName + '|' + w.title" :class="{ 'table-primary': w.isFocused }">
-                  <td>{{ w.processName }}</td>
+                  <td class="mono">{{ w.processName }}</td>
                   <td>{{ w.title }}</td>
                   <td>{{ w.isFocused ? '✅' : '' }}</td>
                 </tr>

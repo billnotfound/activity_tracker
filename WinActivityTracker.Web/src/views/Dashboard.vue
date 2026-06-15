@@ -423,11 +423,11 @@ async function renderCharts(data) {
       backgroundColor: 'var(--surface-card)',
       borderColor: 'var(--primary-color)',
       borderWidth: 2,
-      textStyle: { color: 'var(--text-color)', fontWeight: 600 },
+      textStyle: { color: 'var(--text-color)', fontWeight: 600, fontFamily: 'Ubuntu Mono' },
       formatter: params => {
         const p = params[0]
         const totalSec = Math.round(p.value * 60)
-        return `<strong>${p.name}</strong><br/>${fmtShortDur(totalSec)}`
+        return `<strong style="font-family:'Ubuntu Mono'">${p.name}</strong><br/>${fmtShortDur(totalSec)}`
       },
     },
   })

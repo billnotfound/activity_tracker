@@ -352,6 +352,7 @@ async function saveRules() {
 
   &.compact {
     font-size: 0.9rem;
+    font-family: 'Ubuntu Mono', 'Consolas', monospace;
   }
 
   &:focus {

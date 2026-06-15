@@ -84,6 +84,8 @@
   "tags.error.saveFailed": "保存失败 ({status})",
   "tags.error.backendUnreachable": "无法连接后端: {message}",
   "tags.rulesSaved": "tags.json 已保存，热重载即刻生效。",
+  "tags.allSkippedPrefix": "所有规则均以 '_' 开头，该前缀为系统保留。",
+  "tags.skippedPrefixCount": "已跳过 {0} 条以 '_' 开头的规则（系统保留前缀）。",
   "tags.jsonError": "JSON 解析或序列化失败: {0}",
 
   "appPaths.configDirChanged": "[AppPaths] 配置路径已变更: {0} → {1}",
