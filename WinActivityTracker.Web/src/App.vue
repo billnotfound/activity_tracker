@@ -12,7 +12,8 @@
             <img :src="brandIconPath" alt="Logo" class="brand-icon" />
           </router-link>
         </div>
-        <div class="navbar-menu">
+        <div class="navbar-menu" ref="navMenuRef" @mousemove="onNavMouseMove" @mouseleave="onNavMouseLeave">
+          <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving }"></div>
           <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }">
             {{ t('nav.dashboard') }}
           </router-link>
@@ -48,7 +49,7 @@
 import { useI18n } from './i18n/index.js'
 import { useTheme } from './composables/useTheme.js'
 import { useRoute } from 'vue-router'
-import { watch, onMounted, computed } from 'vue'
+import { watch, onMounted, nextTick, ref, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
 import timerIcon from './icon/timer.svg'
 import settingsIcon from './icon/settings.svg'
@@ -92,6 +93,94 @@ watch(() => route.path, (newPath) => {
 // Update on mount to ensure initial state is correct
 onMounted(() => {
   updateFavicon(route.path)
+  initNavFrame()
+})
+
+// ── Nav sliding frame ──
+
+const navMenuRef = ref(null)
+const navFrameStyle = ref({})
+const navMoving = ref(false)
+let navRafId = null
+let navTargetEl = null
+
+function startNavAnim(el) {
+  navTargetEl = el || navTargetEl
+  if (!navTargetEl) return
+  navMoving.value = true
+  if (navRafId) return
+
+  const tick = () => {
+    if (!navTargetEl || !navMenuRef.value) {
+      navRafId = null
+      navMoving.value = false
+      return
+    }
+    const curLeft = parseFloat(navFrameStyle.value.left) || 0
+    const curWid = parseFloat(navFrameStyle.value.width) || 0
+    const tgtLeft = navTargetEl.offsetLeft
+    const tgtWid = navTargetEl.offsetWidth
+    const dx = tgtLeft - curLeft
+    const dw = tgtWid - curWid
+
+    if (Math.abs(dx) < 0.5 && Math.abs(dw) < 0.5) {
+      navFrameStyle.value = { left: tgtLeft + 'px', width: tgtWid + 'px' }
+      navRafId = null
+      navMoving.value = false
+      return
+    }
+
+    navFrameStyle.value = {
+      left: (curLeft + dx * 0.2) + 'px',
+      width: (curWid + dw * 0.2) + 'px'
+    }
+    navRafId = requestAnimationFrame(tick)
+  }
+  navRafId = requestAnimationFrame(tick)
+}
+
+function onNavMouseMove(e) {
+  const menu = navMenuRef.value
+  if (!menu) return
+  const items = menu.querySelectorAll('.nav-item')
+  let nearest = null, minDist = Infinity
+  for (const item of items) {
+    const r = item.getBoundingClientRect()
+    const cx = r.left + r.width / 2
+    const dist = Math.abs(e.clientX - cx)
+    if (dist < minDist) { minDist = dist; nearest = item }
+  }
+  if (nearest && nearest !== navTargetEl) startNavAnim(nearest)
+}
+
+function onNavMouseLeave() {
+  const menu = navMenuRef.value
+  if (!menu) return
+  const active = menu.querySelector('.nav-item.active')
+  if (active) startNavAnim(active)
+}
+
+function initNavFrame() {
+  nextTick(() => {
+    const menu = navMenuRef.value
+    if (!menu) return
+    const active = menu.querySelector('.nav-item.active')
+    if (active) {
+      navFrameStyle.value = {
+        left: active.offsetLeft + 'px',
+        width: active.offsetWidth + 'px'
+      }
+    }
+  })
+}
+
+watch(() => route.path, () => {
+  nextTick(() => {
+    const menu = navMenuRef.value
+    if (!menu) return
+    const active = menu.querySelector('.nav-item.active')
+    if (active) startNavAnim(active)
+  })
 })
 </script>
 
@@ -174,6 +263,7 @@ onMounted(() => {
 }
 
 .navbar-menu {
+  position: relative;
   display: flex;
   gap: 4px;
 
@@ -186,7 +276,35 @@ onMounted(() => {
   }
 }
 
+.nav-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent);
+  pointer-events: none;
+  box-shadow: 0 0 0 transparent;
+  z-index: 0;
+  transition: box-shadow 0.15s ease-out;
+
+  &.moving {
+    box-shadow: 0 0 0 transparent !important;
+  }
+}
+
+.navbar-menu:hover .nav-frame:not(.moving) {
+  border-color: var(--text-color);
+  transform: translateY(-2px);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  transition:
+    box-shadow 0.15s ease-out,
+    transform 0.12s ease-out,
+    border-color 0s 0s;
+}
+
 .nav-item {
+  position: relative;
+  z-index: 1;
   padding: 10px 18px;
   color: var(--text-color);
   text-decoration: none;
@@ -196,7 +314,6 @@ onMounted(() => {
   font-size: 0.9rem;
   border: 2px solid transparent;
   background: transparent;
-  position: relative;
   transition: all 0.2s ease;
 
   @media (max-width: 768px) {
@@ -205,34 +322,8 @@ onMounted(() => {
     letter-spacing: 0.3px;
   }
 
-  // Underline only on hover
-  &::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 3px;
-    background: var(--primary-color);
-    transition: width 0.3s ease;
-  }
-
   &:hover {
     transform: translateY(-2px);
-
-    &::after {
-      width: 70%;
-    }
-  }
-
-  // Active state - border only, no background fill
-  &.active {
-    border-bottom: 3px solid var(--primary-color);
-
-    &::after {
-      display: none;
-    }
   }
 }
 
