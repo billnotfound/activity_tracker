@@ -640,18 +640,30 @@ async function renderCharts(data) {
   align-items: center;
 
   :deep(.wheel-frame) {
-    border-color: color-mix(in srgb, var(--text-color) 60%, transparent);
+    border-color: color-mix(in srgb, var(--text-color) 80%, transparent);
     box-shadow: 0 0 0 transparent;
+    transition:
+      transform 0.12s ease-out,
+      box-shadow 0.12s ease-out,
+      border-color 0.2s 5s;
 
     &:hover {
       transform: translate(-2px, -2px);
       border-color: var(--text-color);
       box-shadow: 5px 5px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+      transition:
+        transform 0.12s ease-out,
+        box-shadow 0.12s ease-out,
+        border-color 0s 0s;
     }
 
     &.scrolling {
       border-color: var(--text-color);
       box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+      transition:
+        transform 0.12s ease-out,
+        box-shadow 0.12s ease-out,
+        border-color 0s 0s;
     }
   }
 }
