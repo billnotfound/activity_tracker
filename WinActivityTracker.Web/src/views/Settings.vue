@@ -54,7 +54,7 @@
 
           <h3 class="section-title">{{ t('settings.appearance.darkMode') }}</h3>
           <div class="toggle-row">
-            <InputSwitch v-model="theme.isDark" @change="theme.toggleDark" />
+            <InputSwitch v-model="theme.isDark" />
             <span class="toggle-label">{{ theme.isDark ? t('settings.appearance.dark') : t('settings.appearance.light') }}</span>
           </div>
 
@@ -84,7 +84,7 @@
 
           <h3 class="section-title">{{ t('settings.appearance.autoColor') }}</h3>
           <div class="toggle-row">
-            <InputSwitch v-model="theme.autoColor" @change="v => theme.setAutoColor(v)" />
+            <InputSwitch v-model="theme.autoColor" />
             <span class="toggle-label">{{ t('settings.appearance.autoColorHelp') }}</span>
           </div>
         </MemphisCard>
@@ -141,6 +141,18 @@
               <Checkbox v-model="form.mergeSameProcessSwitches" :binary="true" inputId="merge" />
               <label for="merge">{{ t('settings.mergeSwitchesLabel') }}</label>
             </div>
+          </div>
+
+          <div class="divider"></div>
+
+          <h3 class="section-title">{{ t('settings.exclusionsLabel') }}</h3>
+          <div class="input-field">
+            <textarea
+              v-model="excludeText"
+              class="exclude-input"
+              rows="3"
+              :placeholder="t('settings.exclusionsLabel')"
+            ></textarea>
           </div>
         </MemphisCard>
       </TabPanel>
@@ -661,6 +673,22 @@ async function runReset() {
   label {
     font-weight: 600;
     color: var(--text-color);
+  }
+}
+
+.exclude-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 2px solid var(--surface-200);
+  background: var(--surface-card);
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.9rem;
+  resize: vertical;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
   }
 }
 

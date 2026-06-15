@@ -257,13 +257,13 @@ async function loadData() {
     timeline.value = sampledData
     console.log('✅ timeline.value set to:', timeline.value.length, 'records')
 
-    // Load system events (sleep/shutdown periods)
+    // Load system events (sleep/shutdown/idle periods)
     const eventsUrl = `${apiBase}/api/system/events?from=${fromStr}&to=${toStr}`
     console.log('Fetching system events:', eventsUrl)
     const r3 = await fetch(eventsUrl)
     if (r3.ok) {
       systemEvents.value = await r3.json()
-      console.log('System events:', systemEvents.value.length, 'sleep/shutdown periods')
+      console.log('System events:', systemEvents.value.length, 'events')
     } else {
       systemEvents.value = []
     }
@@ -446,39 +446,55 @@ async function renderTimeline(myLoadId) {
   const xAxisMax = endDate.value.getTime()
   const rangeInDays = (xAxisMax - xAxisMin) / (1000 * 60 * 60 * 24)
 
+  // Build idle areas from backend Idle SystemEvents (new data, precise)
+  const backendIdleAreas = systemEvents.value
+    .filter(e => e.eventType === 'Idle' && e.durationSeconds >= 10)
+    .map(e => {
+      const start = parseUtcTs(e.timestamp).getTime()
+      const end = start + e.durationSeconds * 1000
+      if (end <= xAxisMin || start >= xAxisMax) return null
+      return {
+        value: [Math.max(start, xAxisMin), Math.min(end, xAxisMax), 0],
+        durationMs: e.durationSeconds * 1000,
+        areaType: 'idle',
+      }
+    })
+    .filter(Boolean)
+
+  console.log('Idle events from backend:', backendIdleAreas.length)
+
   // Step 3.6: Detect idle periods from gaps in the FULL timeline data (before top-15 filter).
-  // Idle = no focus change recorded for >= idleThreshold (default 2 min), excluding sleep.
+  // Fallback for old data before backend Idle events existed.
   const IDLE_GAP_MS = 2 * 60 * 1000  // 2 minutes
   const MIN_IDLE_MS = 10 * 1000       // ignore sub-10s idle fragments
 
-  // Sort full timeline by timestamp, exclude sleep, then find gaps
   const fullSorted = [...timeline.value]
     .map(item => parseUtcTs(item.timestamp).getTime())
     .filter(ts => !isDuringSleep(ts))
     .sort((a, b) => a - b)
 
-  const idleAreas = []
+  const gapIdleAreas = []
   if (fullSorted.length > 1) {
     for (let i = 1; i < fullSorted.length; i++) {
       const gap = fullSorted[i] - fullSorted[i - 1]
       if (gap >= IDLE_GAP_MS) {
         const idleStart = fullSorted[i - 1]
         const idleEnd = fullSorted[i]
-        if (idleEnd - idleStart >= MIN_IDLE_MS) {
-          // Clip to visible range
-          if (idleEnd > xAxisMin && idleStart < xAxisMax) {
-            idleAreas.push({
-              value: [Math.max(idleStart, xAxisMin), Math.min(idleEnd, xAxisMax), 0],
-              durationMs: idleEnd - idleStart,
-              areaType: 'idle',
-            })
-          }
+        if (idleEnd - idleStart >= MIN_IDLE_MS && idleEnd > xAxisMin && idleStart < xAxisMax) {
+          gapIdleAreas.push({
+            value: [Math.max(idleStart, xAxisMin), Math.min(idleEnd, xAxisMax), 0],
+            durationMs: idleEnd - idleStart,
+            areaType: 'idle',
+          })
         }
       }
     }
   }
 
-  console.log('Idle areas detected:', idleAreas.length)
+  console.log('Idle areas from gaps (fallback):', gapIdleAreas.length)
+
+  // Merge both sources: backend events + gap fallback for old data without Idle events
+  const idleAreas = [...backendIdleAreas, ...gapIdleAreas]
 
   // Build focusedWindows + activityPeriods in a single pass
   const focusedWindows = []
@@ -599,9 +615,9 @@ async function renderTimeline(myLoadId) {
   // Combine background windows (rendered first, behind) and focused windows (on top)
   const allWindows = [...backgroundWindows, ...focusedWindows]
 
-  // Build sleep/shutdown area overlays for dashed boxes
+  // Build sleep/shutdown area overlays from backend events (exclude Idle)
   const sleepAreas = systemEvents.value
-    .filter(e => e.durationSeconds > 3)
+    .filter(e => (e.eventType === 'Sleep' || e.eventType === 'Shutdown') && e.durationSeconds > 3)
     .map(e => {
       const start = parseUtcTs(e.timestamp).getTime()
       const end = start + e.durationSeconds * 1000
@@ -911,35 +927,6 @@ function renderBar(params, api) {
       width: Math.max(end[0] - start[0], 2),
       height: height,
     }
-  }
-
-  // Debug: log first render
-  if (params.dataIndex === 0) {
-    const debugInfo = {
-      dataIndex: params.dataIndex,
-      categoryIndex,
-      isBackground,
-      durationSeconds,
-      value0: api.value(0),
-      value1: api.value(1),
-      value1Date: new Date(api.value(1)).toISOString(),
-      value2: api.value(2),
-      value2Date: new Date(api.value(2)).toISOString(),
-      value3: api.value(3),
-      startCoord: [start[0], start[1]],
-      endCoord: [end[0], end[1]],
-      size: [api.size([0, 1])[0], api.size([0, 1])[1]],
-      rectShape: {
-        x: rectShape.x,
-        y: rectShape.y,
-        width: rectShape.width,
-        height: rectShape.height
-      },
-      hasStyle: !!api.style(),
-      fill: api.style()?.fill
-    }
-    console.log('renderBar called for first item:')
-    console.log(JSON.stringify(debugInfo, null, 2))
   }
 
   return {

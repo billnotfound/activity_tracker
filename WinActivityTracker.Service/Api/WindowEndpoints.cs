@@ -107,7 +107,7 @@ public static class WindowEndpoints
 
         var events = await db.SystemEvents
             .AsNoTracking()
-            .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
+            .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown || e.EventType == SystemEventTypes.Idle)
                 && e.Timestamp < end)
             .OrderBy(e => e.Timestamp)
             .Select(e => new

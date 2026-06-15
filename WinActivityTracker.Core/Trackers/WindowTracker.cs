@@ -25,6 +25,7 @@ public class WindowTracker : BackgroundService
     private DateTime _focusStart = DateTime.UtcNow;
     private DateTime _lastPollTime = DateTime.UtcNow;
     private bool _wasIdle;
+    private DateTime? _idleStartedAt;
 
     private readonly Dictionary<IntPtr, (long DbId, string Process, string Title)> _openWindows = new();
 
@@ -64,6 +65,7 @@ public class WindowTracker : BackgroundService
                 {
                     _logger.LogDebug("Sleep gap detected: {Gap}s — resetting focus state",
                         (now - _lastPollTime).TotalSeconds);
+                    _idleStartedAt = null;
                     if (_settings.Settings.TrackingEnabled)
                     {
                         SaveFocusChange(_lastPollTime);
@@ -75,6 +77,9 @@ public class WindowTracker : BackgroundService
 
                 if (!_settings.Settings.TrackingEnabled)
                 {
+                    if (_wasIdle) FlushIdleEvent();
+                    _wasIdle = false;
+                    _idleStartedAt = null;
                     _lastPollTime = now;
                     await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
                     continue;
@@ -88,9 +93,11 @@ public class WindowTracker : BackgroundService
                     _logger.LogDebug("User went idle");
                     SaveFocusChange();
                     _wasIdle = true;
+                    _idleStartedAt = DateTime.UtcNow;
                 }
                 else if (!isIdle)
                 {
+                    if (_wasIdle) FlushIdleEvent();
                     _wasIdle = false;
                     TrackForegroundWindow();
                     await SyncWindowSessions();
@@ -185,6 +192,26 @@ public class WindowTracker : BackgroundService
                 DurationSeconds = duration
             });
         });
+    }
+
+    private void FlushIdleEvent()
+    {
+        if (!_idleStartedAt.HasValue) return;
+        var idleDuration = (DateTime.UtcNow - _idleStartedAt.Value).TotalSeconds;
+        if (idleDuration >= 10)
+        {
+            var idleStart = _idleStartedAt.Value;
+            _writeQueue.TryWrite(db =>
+            {
+                db.SystemEvents.Add(new SystemEvent
+                {
+                    EventType = SystemEventTypes.Idle,
+                    Timestamp = idleStart,
+                    DurationSeconds = idleDuration
+                });
+            });
+        }
+        _idleStartedAt = null;
     }
 
     private async Task SyncWindowSessions()

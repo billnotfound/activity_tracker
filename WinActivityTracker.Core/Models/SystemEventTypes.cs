@@ -6,6 +6,7 @@ public static class SystemEventTypes
     public const string Wake = "Wake";
     public const string Shutdown = "Shutdown";
     public const string Start = "Start";
+    public const string Idle = "Idle";
 }
 
 public static class SystemMarkers

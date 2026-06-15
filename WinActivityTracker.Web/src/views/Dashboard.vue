@@ -17,7 +17,7 @@
           {{ p.label }}
         </button>
       </div>
-      <div class="date-wheels">
+      <div class="date-wheels" :class="{ dimmed: !isToday }">
         <TimeWheel v-model="wheelYear" :items="yearOptions" wide :label="t('common.year')" @carry="(d) => carryDate('year', d)" />
         <TimeWheel v-model="wheelMonth" :items="monthOptions" :label="t('common.month')" @carry="(d) => carryDate('month', d)" />
         <TimeWheel v-model="wheelDay" :items="dayOptions" :label="t('common.day')" @carry="(d) => carryDate('day', d)" />
@@ -103,6 +103,7 @@ const periods = [
 ]
 
 const period = ref('today')
+const isToday = computed(() => period.value === 'today')
 const pickDate = ref(toLocalDateString())
 const mergeSameProcess = ref(true)
 const summary = ref([])
@@ -232,41 +233,45 @@ let timer = null
 
 function setPeriod(p) {
   period.value = p
+  if (p === 'today') {
+    const now = new Date()
+    wheelYear.value = now.getFullYear()
+    wheelMonth.value = now.getMonth() + 1
+    wheelDay.value = now.getDate()
+  }
   clearInterval(timer)
   loadSummary()
   timer = setInterval(loadSummary, 2000)
 }
 
 function onPickDate() {
-  period.value = 'today'
   clearInterval(timer)
   loadSummary()
   timer = setInterval(loadSummary, 2000)
 }
 
 function periodRange() {
-  const now = new Date()
-  const to = toLocalDateString(now)
+  const [y, m, d] = pickDate.value.split('-').map(Number)
+  const endDate = new Date(y, m - 1, d)
+  const to = toLocalDateString(endDate)
+
+  if (period.value === 'today') return [pickDate.value, pickDate.value]
+
+  let startDate
   switch (period.value) {
-    case 'week': {
-      const d = new Date(now - 7 * 86400000)
-      return [toLocalDateString(d), to]
-    }
-    case 'month': {
-      const d = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate())
-      return [toLocalDateString(d), to]
-    }
-    case 'year': {
-      const d = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate())
-      return [toLocalDateString(d), to]
-    }
-    case 'halfYear': {
-      const d = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate())
-      return [toLocalDateString(d), to]
-    }
+    case 'week':
+      startDate = new Date(endDate); startDate.setDate(startDate.getDate() - 7); break
+    case 'month':
+      startDate = new Date(endDate); startDate.setMonth(startDate.getMonth() - 1); break
+    case 'halfYear':
+      startDate = new Date(endDate); startDate.setMonth(startDate.getMonth() - 6); break
+    case 'year':
+      startDate = new Date(endDate); startDate.setFullYear(startDate.getFullYear() - 1); break
     default:
       return [pickDate.value, pickDate.value]
   }
+
+  return [toLocalDateString(startDate), to]
 }
 
 const mediaWithDuration = computed(() => {
@@ -638,6 +643,7 @@ async function renderCharts(data) {
   display: flex;
   gap: 4px;
   align-items: center;
+  transition: opacity 0.25s ease;
 
   :deep(.wheel-frame) {
     border-color: color-mix(in srgb, var(--text-color) 80%, transparent);
@@ -664,6 +670,26 @@ async function renderCharts(data) {
         transform 0.12s ease-out,
         box-shadow 0.12s ease-out,
         border-color 0s 0s;
+    }
+  }
+
+  &.dimmed {
+    opacity: 0.45;
+
+    :deep(.wheel-frame) {
+      border-color: transparent;
+      box-shadow: none;
+
+      &:hover {
+        transform: none;
+        border-color: transparent;
+        box-shadow: none;
+      }
+
+      &.scrolling {
+        border-color: transparent;
+        box-shadow: none;
+      }
     }
   }
 }
