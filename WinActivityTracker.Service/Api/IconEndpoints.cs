@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
+using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Api;
 
@@ -53,7 +54,9 @@ public static class IconEndpoints
                 }
             }
 
-            // No cached mapping, try to get from running process
+            // No cached icon data — try live PID→path resolution.
+            // Uses QueryFullProcessImageName which works cross-integrity-level,
+            // unlike Process.MainModule.FileName which fails for admin processes.
             string? exePath = null;
             try
             {
@@ -63,14 +66,20 @@ public static class IconEndpoints
                         : processName
                 ).FirstOrDefault();
 
-                exePath = runningProc?.MainModule?.FileName;
+                if (runningProc != null)
+                    exePath = IconService.GetProcessImagePath(runningProc.Id);
             }
             catch
             {
-                // Process not running or access denied
+                // Process not running or unexpected error
             }
 
-            // If process is not running and no cache, return default
+            // Fallback: use ExePath from a previous successful extraction.
+            // The .exe file on disk is usually readable by all users — this
+            // recovers icons for admin processes that were cached when non-elevated.
+            if (string.IsNullOrEmpty(exePath) && mapping != null && !string.IsNullOrEmpty(mapping.ExePath))
+                exePath = mapping.ExePath;
+
             if (string.IsNullOrEmpty(exePath))
             {
                 return Results.Ok(new

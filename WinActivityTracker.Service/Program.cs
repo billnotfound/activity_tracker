@@ -126,7 +126,7 @@ host.Services.GetRequiredService<PortWatcher>().Start();
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
 
 Application.SetCompatibleTextRenderingDefault(false);
-Application.Run(new TrayApplicationContext(host.Services, dashboard));
+Application.Run(new TrayApplicationContext(host.Services, dashboard, autoShowStatus: !silent));
 
 // ===== Clean shutdown =====
 try

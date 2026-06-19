@@ -2,10 +2,12 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Interop;
 using WinActivityTracker.Core.Models;
 
 namespace WinActivityTracker.Core.Services;
@@ -46,13 +48,36 @@ public class IconService
         }
     }
 
+    /// <summary>
+    /// Resolves PID → full executable path using QueryFullProcessImageName with
+    /// PROCESS_QUERY_LIMITED_INFORMATION. Crosses integrity levels — works for
+    /// admin-elevated processes where Process.MainModule.FileName would fail.
+    /// </summary>
+    public static string? GetProcessImagePath(int pid)
+    {
+        var hProcess = NativeMethods.OpenProcess(
+            NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)pid);
+        if (hProcess == IntPtr.Zero) return null;
+        try
+        {
+            var sb = new StringBuilder(260);
+            var size = (uint)sb.Capacity;
+            return NativeMethods.QueryFullProcessImageName(hProcess, 0, sb, ref size)
+                ? sb.ToString()
+                : null;
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(hProcess);
+        }
+    }
+
     private async Task EnsureIconAsync(int pid)
     {
         string? path;
         try
         {
-            using var proc = Process.GetProcessById(pid);
-            path = proc.MainModule?.FileName;
+            path = GetProcessImagePath(pid);
         }
         catch
         {

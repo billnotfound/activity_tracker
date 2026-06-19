@@ -11,4 +11,5 @@ public class ProcessIconMapping
     public string ExePath { get; set; } = string.Empty;       // Full path for reference
     public string IconHash { get; set; } = string.Empty;      // FK to ProcessIcon.IconHash
     public DateTime LastSeen { get; set; }                    // When this mapping was last updated
+    public DateTime FirstSeen { get; set; }                   // When this icon version was first observed
 }

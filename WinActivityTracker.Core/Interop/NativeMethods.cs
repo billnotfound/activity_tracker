@@ -109,6 +109,17 @@ public static class NativeMethods
     // ===== Process enumeration via CreateToolhelp32Snapshot =====
     // Avoids Process.GetProcesses() — no managed Process objects, no kernel handles.
 
+    // QueryFullProcessImageName with PROCESS_QUERY_LIMITED_INFORMATION resolves
+    // PID → full .exe path across integrity levels (e.g., non-admin → admin process).
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool QueryFullProcessImageName(
+        IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
+
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public const uint TH32CS_SNAPNOHEAPS = 0x40000000;
 
