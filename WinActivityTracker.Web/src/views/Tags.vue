@@ -236,7 +236,6 @@ async function saveRules() {
 .page-title {
   font-size: 1.5rem;
   font-weight: 700;
-  text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 24px;
   color: var(--text-color);
@@ -286,7 +285,6 @@ async function saveRules() {
 .card-title {
   font-size: 1.1rem;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-color);
 }
@@ -309,7 +307,6 @@ async function saveRules() {
   background: transparent;
   color: var(--text-color);
   font-weight: 600;
-  text-transform: uppercase;
   font-size: 0.85rem;
   letter-spacing: 0.5px;
   cursor: pointer;

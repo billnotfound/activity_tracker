@@ -50,6 +50,7 @@ public class DashboardServer
         builder.Services.AddSingleton(_services.GetRequiredService<TagService>());
         builder.Services.AddSingleton(_services.GetRequiredService<TitleNormalizer>());
         builder.Services.AddSingleton(_services.GetRequiredService<ProcessNameCache>());
+        builder.Services.AddSingleton(_services.GetRequiredService<IconService>());
 
         builder.Services.ConfigureHttpJsonOptions(o =>
         {

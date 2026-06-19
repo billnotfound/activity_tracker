@@ -457,12 +457,19 @@ async function renderCharts(data) {
   const labels = top.map(d => d.processName)
   const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
 
-  // Fetch icons and colors for all processes (cached)
+  // Compute reference time for time-aware icon queries
+  const [fromDate, toDate] = periodRange()
+  const atTime = period.value === 'today'
+    ? new Date().toISOString()
+    : new Date(toDate + 'T23:59:59').toISOString()
+
+  // Fetch icons and colors for all processes (cached by process+atTime)
   const iconPromises = labels.map(async (processName) => {
-    const cached = iconCache.get(processName)
+    const cacheKey = `${processName}|${atTime}`
+    const cached = iconCache.get(cacheKey)
     if (cached) return cached
     try {
-      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`)
       if (response.ok) {
         const iconData = await response.json()
         const result = {
@@ -473,7 +480,7 @@ async function renderCharts(data) {
           colorSecondary: iconData.colorSecondary || '#DD7596',
           colorAccent: iconData.colorAccent || '#06D6A0'
         }
-        iconCache.set(processName, result)
+        iconCache.set(cacheKey, result)
         return result
       }
     } catch (e) {
@@ -485,7 +492,7 @@ async function renderCharts(data) {
       colorSecondary: '#DD7596',
       colorAccent: '#06D6A0'
     }
-    iconCache.set(processName, fallback)
+    iconCache.set(cacheKey, fallback)
     return fallback
   })
 
@@ -627,7 +634,6 @@ async function renderCharts(data) {
   background: transparent;
   color: var(--text-color);
   font-weight: 600;
-  text-transform: uppercase;
   font-size: 0.85rem;
   letter-spacing: 0.5px;
   cursor: pointer;
@@ -728,7 +734,6 @@ async function renderCharts(data) {
 .card-title {
   font-size: 1.1rem;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 16px;
   color: var(--text-color);
@@ -790,7 +795,6 @@ async function renderCharts(data) {
       padding: 12px 16px;
       text-align: left;
       font-weight: 600;
-      text-transform: uppercase;
       font-size: 0.85rem;
       letter-spacing: 0.5px;
       border-bottom: 2px solid var(--primary-color);

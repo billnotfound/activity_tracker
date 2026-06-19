@@ -11,7 +11,12 @@ internal static class EmbeddedResourceReader
 
     private static string ResolveBaseDir()
     {
+        // Assembly.Location returns "" in single-file publish; AppContext.BaseDirectory
+        // returns the exe dir in all modes. Try Assembly.Location first for dev (where
+        // Core output ≠ Service output), then fall back to AppContext.BaseDirectory.
+#pragma warning disable IL3000
         var loc = typeof(EmbeddedResourceReader).Assembly.Location;
+#pragma warning restore IL3000
         if (!string.IsNullOrEmpty(loc))
             return Path.GetDirectoryName(loc)!;
 

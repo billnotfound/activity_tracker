@@ -63,7 +63,6 @@
   background: transparent;
   color: var(--text-color, $memphis-fallback-text);
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   padding: 10px 20px;
   position: relative;
@@ -144,7 +143,6 @@
   color: var(--text-color, $memphis-fallback-text);
   font-weight: 600;
   font-size: 0.85rem;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   position: relative;
   transition: all $memphis-transition-fast;

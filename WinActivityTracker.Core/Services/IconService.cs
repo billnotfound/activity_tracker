@@ -72,7 +72,7 @@ public class IconService
         }
     }
 
-    private async Task EnsureIconAsync(int pid)
+    private async Task EnsureIconAsync(int pid, string? processName = null)
     {
         string? path;
         try
@@ -116,26 +116,64 @@ public class IconService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var existing = await db.ProcessIcons.FirstOrDefaultAsync(i => i.IconHash == hash);
-        if (existing != null)
+        var existingIcon = await db.ProcessIcons.FirstOrDefaultAsync(i => i.IconHash == hash);
+        if (existingIcon == null)
         {
-            _cache[path] = hash;
-            _logger.LogDebug("IconService: reuse existing icon {Hash} for {Path}", hash[..12], path);
-            return;
+            db.ProcessIcons.Add(new ProcessIcon
+            {
+                IconHash = hash,
+                IconData = pngData,
+                ColorPrimary = c1,
+                ColorSecondary = c2,
+                ColorAccent = c3
+            });
+            await db.SaveChangesAsync();
+            _logger.LogInformation("IconService: stored icon {Hash} ({Path}) colors={C1} {C2} {C3}",
+                hash[..12], Path.GetFileName(path), c1, c2, c3);
         }
 
-        db.ProcessIcons.Add(new ProcessIcon
-        {
-            IconHash = hash,
-            IconData = pngData,
-            ColorPrimary = c1,
-            ColorSecondary = c2,
-            ColorAccent = c3
-        });
-        await db.SaveChangesAsync();
         _cache[path] = hash;
-        _logger.LogInformation("IconService: stored icon {Hash} ({Path}) colors={C1} {C2} {C3}",
-            hash[..12], Path.GetFileName(path), c1, c2, c3);
+
+        // Version-aware mapping: if processName is known, track icon versions
+        if (!string.IsNullOrEmpty(processName))
+        {
+            var latestMapping = await db.ProcessIconMappings
+                .Where(m => m.ProcessName == processName && m.ExePath == path)
+                .OrderByDescending(m => m.FirstSeen)
+                .FirstOrDefaultAsync();
+
+            if (latestMapping == null)
+            {
+                db.ProcessIconMappings.Add(new ProcessIconMapping
+                {
+                    ProcessName = processName,
+                    ExePath = path,
+                    IconHash = hash,
+                    LastSeen = DateTime.UtcNow,
+                    FirstSeen = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync();
+            }
+            else if (latestMapping.IconHash != hash)
+            {
+                _logger.LogInformation("IconService: icon changed for {Process} — old={OldHash} new={NewHash}",
+                    processName, latestMapping.IconHash[..12], hash[..12]);
+                db.ProcessIconMappings.Add(new ProcessIconMapping
+                {
+                    ProcessName = processName,
+                    ExePath = path,
+                    IconHash = hash,
+                    LastSeen = DateTime.UtcNow,
+                    FirstSeen = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync();
+            }
+            else
+            {
+                latestMapping.LastSeen = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+            }
+        }
     }
 
     /// <summary>
@@ -190,6 +228,27 @@ public class IconService
     }
 
     /// <summary>
+    /// Returns the icon (PNG data + colors) valid at the given point in time.
+    /// Finds the mapping with the largest FirstSeen ≤ at, then joins to ProcessIcons.
+    /// Returns null if no icon was known at that time.
+    /// </summary>
+    public async Task<ProcessIcon?> GetIconForTimeAsync(string processName, DateTime at)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        var mapping = await db.ProcessIconMappings
+            .Where(m => m.ProcessName == processName && m.FirstSeen <= at)
+            .OrderByDescending(m => m.FirstSeen)
+            .FirstOrDefaultAsync();
+
+        if (mapping == null) return null;
+
+        return await db.ProcessIcons
+            .FirstOrDefaultAsync(i => i.IconHash == mapping.IconHash);
+    }
+
+    /// <summary>
     /// Extracts and saves icon for a specific process name.
     /// Returns true if successful, false otherwise.
     /// </summary>
@@ -206,7 +265,7 @@ public class IconService
             }
 
             var pid = processes[0].Id;
-            await EnsureIconAsync(pid);
+            await EnsureIconAsync(pid, processName);
             return true;
         }
         catch (Exception ex)

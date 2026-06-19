@@ -42,7 +42,6 @@ code, pre, .code, .mono {
   border-radius: 0 !important;
   border-width: 2px !important;
   font-weight: 600 !important;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   transition: all 0.2s ease !important;
   
@@ -83,7 +82,6 @@ code, pre, .code, .mono {
     border: none !important;
     border-bottom: 2px solid var(--primary-color) !important;
     font-weight: 600 !important;
-    text-transform: uppercase;
     letter-spacing: 0.5px;
     font-size: 0.9rem;
   }
@@ -132,7 +130,6 @@ code, pre, .code, .mono {
       border: 2px solid var(--surface-200) !important;
       background: var(--surface-card) !important;
       font-weight: 600 !important;
-      text-transform: uppercase;
       letter-spacing: 0.5px;
       font-size: 0.9rem;
       padding: 12px 24px !important;

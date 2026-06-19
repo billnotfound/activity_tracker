@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <style>
+    .e { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+  <g style="stroke-width:6.9">
+    <path class="e" d="m 25.677,39.629 v -28.597 l 13.938,14.404"/>
+    <path class="e" d="M 25.677,11.032 11.739,25.397"/>
+  </g>
+</svg>

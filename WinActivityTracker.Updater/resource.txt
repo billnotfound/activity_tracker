@@ -15,15 +15,13 @@ runtimeconfig.template.json
 taskmonitor114.exe
 taskmonitor114.staticwebassets.endpoints.json
 web.config
-wwwroot/assets/index-CwnKeGbL.js
-wwwroot/assets/index-DdpmWBGa.css
+wwwroot/assets/index-C8iCJ0mB.js
+wwwroot/assets/index-CVgYesgc.css
 wwwroot/assets/primeicons-C6QP2o4f.woff2
 wwwroot/assets/primeicons-DMOk5skT.eot
 wwwroot/assets/primeicons-Dr5RGzOO.svg
 wwwroot/assets/primeicons-MpK4pl85.ttf
 wwwroot/assets/primeicons-WjwUDZjB.woff
-wwwroot/assets/settings-pNUlQnof.svg
-wwwroot/assets/timer-E5FLENHv.svg
 wwwroot/assets/Ubuntu-B-B4SpqNjB.ttf
 wwwroot/assets/Ubuntu-M-DGr15L66.ttf
 wwwroot/assets/UbuntuMono-B-T2SEfgbH.ttf
@@ -33,4 +31,6 @@ wwwroot/i18n/en-US.json
 wwwroot/i18n/zh-CN.json
 wwwroot/index.html
 wwwroot/settings.ico
+wwwroot/settings.svg
 wwwroot/timer.ico
+wwwroot/timer.svg

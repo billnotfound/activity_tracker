@@ -71,7 +71,8 @@ builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
 builder.Services.AddHostedService<HeartbeatService>();
-builder.Services.AddHostedService<IconCacheService>();
+builder.Services.AddSingleton<IconCacheService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<IconCacheService>());
 
 // On-demand web server
 builder.Services.AddSingleton<PortWatcher>(sp => new PortWatcher(apiPort, async () =>
@@ -95,7 +96,12 @@ await ProgramStartup.InitializeDatabase(host.Services);
 // ===== Process cache init =====
 var processCache = host.Services.GetRequiredService<ProcessNameCache>();
 processCache.RefreshAll();
-processCache.StartWmiWatch();
+// WMI requires admin privileges; skip on non-elevated to avoid loading WMI COM (~10-15MB native).
+var isAdmin = new System.Security.Principal.WindowsPrincipal(
+    System.Security.Principal.WindowsIdentity.GetCurrent())
+    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+if (isAdmin)
+    processCache.StartWmiWatch();
 
 // ===== Start trackers =====
 await host.StartAsync();

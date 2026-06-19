@@ -38,16 +38,16 @@ public class IconCacheService : BackgroundService
     {
         _logger.LogInformation("IconCacheService started");
 
-        // Load existing icons into cache on startup
         await LoadExistingIconsToCache();
 
-        // Poll for new processes every 10 seconds
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await CheckForNewProcesses(stoppingToken);
-                await Task.Delay(10000, stoppingToken); // Check every 10 seconds
+                // Drain any queued extractions, then wait for hourly re-check
+                await ProcessExtractionQueue();
+                await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+                await RecheckAllKnownProcesses();
             }
             catch (TaskCanceledException)
             {
@@ -55,12 +55,28 @@ public class IconCacheService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error checking for new processes");
-                await Task.Delay(5000, stoppingToken);
+                _logger.LogError(ex, "IconCacheService error");
             }
         }
 
         _logger.LogInformation("IconCacheService stopped");
+    }
+
+    /// <summary>
+    /// Called by trackers when a new process gains focus. If the process
+    /// isn't in the cache, queues it for icon extraction. Returns immediately
+    /// — extraction happens on a background task.
+    /// </summary>
+    public void NotifyProcess(string processName)
+    {
+        if (_extractedIcons.ContainsKey(processName)) return;
+        _extractionQueue.Enqueue(processName);
+        _logger.LogDebug("IconCacheService: queued {Process} for icon extraction", processName);
+        _ = Task.Run(async () =>
+        {
+            try { await ProcessExtractionQueue(); }
+            catch (Exception ex) { _logger.LogError(ex, "NotifyProcess extraction error"); }
+        });
     }
 
     private async Task LoadExistingIconsToCache()
@@ -80,70 +96,54 @@ public class IconCacheService : BackgroundService
         }
     }
 
-    private async Task CheckForNewProcesses(CancellationToken stoppingToken)
+    /// <summary>
+    /// Hourly batch re-check of all known processes for icon changes.
+    /// Calls ExtractAndSaveIconAsync which triggers hash comparison in
+    /// EnsureIconAsync — creates versioned mapping if icon changed.
+    /// </summary>
+    private async Task RecheckAllKnownProcesses()
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-        // Get distinct process names from recent focus changes (last hour)
-        var recentProcesses = await db.FocusChanges
-            .Where(fc => fc.Timestamp >= DateTime.UtcNow.AddHours(-1))
-            .Select(fc => fc.ProcessName)
-            .Distinct()
-            .ToListAsync(stoppingToken);
-
-        foreach (var processName in recentProcesses)
+        _logger.LogDebug("Hourly icon re-check for {Count} processes", _extractedIcons.Count);
+        foreach (var (processName, hasIcon) in _extractedIcons)
         {
-            // Check if icon is already in cache
-            if (_extractedIcons.ContainsKey(processName))
+            if (!hasIcon) continue;
+            try
             {
-                continue; // Already extracted
+                await _iconService.ExtractAndSaveIconAsync(processName);
             }
-
-            // Add to extraction queue
-            _extractionQueue.Enqueue(processName);
-            _logger.LogInformation("Found new process without icon: {ProcessName}", processName);
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Re-check failed for {Process}", processName);
+            }
         }
-
-        // Process extraction queue
-        await ProcessExtractionQueue(stoppingToken);
     }
 
-    private async Task ProcessExtractionQueue(CancellationToken stoppingToken)
+    private async Task ProcessExtractionQueue()
     {
         while (_extractionQueue.TryDequeue(out var processName))
         {
             try
             {
-                // Double-check cache (in case another thread extracted it)
                 if (_extractedIcons.ContainsKey(processName))
-                {
                     continue;
-                }
 
-                await _extractionSemaphore.WaitAsync(stoppingToken);
+                await _extractionSemaphore.WaitAsync();
                 try
                 {
-                    // Triple-check inside semaphore
                     if (_extractedIcons.ContainsKey(processName))
-                    {
                         continue;
-                    }
 
                     _logger.LogInformation("Extracting icon for new process: {ProcessName}", processName);
 
-                    // Extract icon
                     var success = await _iconService.ExtractAndSaveIconAsync(processName);
 
                     if (success)
                     {
-                        // Add to cache
                         _extractedIcons.TryAdd(processName, true);
                         _logger.LogInformation("Successfully extracted icon for {ProcessName}", processName);
                     }
                     else
                     {
-                        // Mark as attempted (don't retry immediately)
                         _extractedIcons.TryAdd(processName, false);
                         _logger.LogWarning("Failed to extract icon for {ProcessName}", processName);
                     }

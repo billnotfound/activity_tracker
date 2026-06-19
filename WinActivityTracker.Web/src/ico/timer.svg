@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <style>
+    .c { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+  <path class="c" style="stroke-width:1.6" d="m 7.236,26.151 c 0.212,0.833 0.423,1.666 0.76,2.623 0.337,0.957 0.798,2.037 1.406,3.084 0.608,1.048 1.362,2.062 1.999,2.822 0.638,0.76 1.159,1.265 1.68,1.77" transform="rotate(1.686,-42.013,-23.466)"/>
+  <path class="c" style="stroke-width:1.6" d="m 26.202,5.876 c 0.416,0.055 0.833,0.111 1.232,0.197 0.399,0.086 0.781,0.204 1.162,0.321" transform="translate(0.339,0.431)"/>
+  <circle class="c" cx="24.996" cy="25.441" r="21.5" style="stroke-width:1.6"/>
+  <path class="c" style="stroke-width:3.6" d="M 25.066,24.941 35.298,19.768"/>
+  <path class="c" style="stroke-width:1.6" d="m 24.8,25.169 0,17.078"/>
+  <path class="c" style="stroke-width:2.4" d="M 24.952,25.055 12.933,16.459"/>
+</svg>

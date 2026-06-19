@@ -9,7 +9,7 @@
         <div class="navbar-brand">
           <div class="brand-deco"></div>
           <router-link to="/" class="brand-link">
-            <img :src="brandIconPath" alt="Logo" class="brand-icon" />
+            <span v-html="brandIconRaw" class="brand-icon"></span>
           </router-link>
         </div>
         <div class="navbar-menu" ref="navMenuRef" @mousemove="onNavMouseMove" @mouseleave="onNavMouseLeave">
@@ -34,7 +34,7 @@
         </div>
       </div>
     </nav>
-    
+
     <main class="main-content memphis-background">
       <div class="page-container">
         <PageTransition>
@@ -51,48 +51,53 @@ import { useTheme } from './composables/useTheme.js'
 import { useRoute } from 'vue-router'
 import { watch, onMounted, nextTick, ref, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
-import timerIcon from './icon/timer.svg'
-import settingsIcon from './icon/settings.svg'
+import timerIconRaw from './ico/timer.svg?raw'
+import settingsIconRaw from './ico/settings.svg?raw'
 
 const { t } = useI18n()
 const { isDark, toggleDark } = useTheme()
 const route = useRoute()
 
-// Brand icon changes based on current route
-const brandIconPath = computed(() => {
+// Brand icon raw SVG content changes based on current route
+const brandIconRaw = computed(() => {
   const path = route.path
   if (path === '/settings' || path === '/tags') {
-    return settingsIcon
+    return settingsIconRaw
   }
-  return timerIcon
+  return timerIconRaw
 })
 
-// Update favicon based on route
+// Update favicon based on route and dark mode
 function updateFavicon(path) {
   const isSettings = path === '/settings' || path === '/tags'
-  const iconPath = isSettings ? '/settings.ico' : '/timer.ico'
+  const svgRaw = isSettings ? settingsIconRaw : timerIconRaw
 
-  // Update main favicon
+  const dark = document.documentElement.classList.contains('dark-mode')
+  const strokeColor = dark
+    ? '#ffffff'
+    : getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || '#6B7FD7'
+  const svgContent = svgRaw.replace(/stroke:\s*currentColor/g, 'stroke: ' + strokeColor)
+  const dataUri = 'data:image/svg+xml,' + encodeURIComponent(svgContent)
+
   const favicon = document.getElementById('favicon')
   if (favicon) {
-    favicon.href = iconPath + '?v=' + Date.now() // Add timestamp to force refresh
+    favicon.type = 'image/svg+xml'
+    favicon.href = dataUri
   }
-
-  // Update shortcut icon
   const shortcutIcon = document.getElementById('shortcut-icon')
   if (shortcutIcon) {
-    shortcutIcon.href = iconPath + '?v=' + Date.now()
+    shortcutIcon.type = 'image/svg+xml'
+    shortcutIcon.href = dataUri
   }
 }
 
-// Dynamic favicon based on route
-watch(() => route.path, (newPath) => {
-  updateFavicon(newPath)
-})
+// Dynamic favicon based on route and dark mode
+watch([() => route.path, isDark], () => {
+  updateFavicon(route.path)
+}, { immediate: true })
 
 // Update on mount to ensure initial state is correct
 onMounted(() => {
-  updateFavicon(route.path)
   initNavFrame()
 })
 
@@ -215,7 +220,7 @@ watch(() => route.path, () => {
 
 .navbar-brand {
   position: relative;
-  
+
   .brand-deco {
     position: absolute;
     top: -6px;
@@ -227,7 +232,7 @@ watch(() => route.path, () => {
     opacity: 0;
     transition: opacity 0.3s;
   }
-  
+
   .brand-link {
     font-size: 1.5rem;
     font-weight: 700;
@@ -245,6 +250,18 @@ watch(() => route.path, () => {
       width: 28px;
       height: 28px;
       display: block;
+      color: color-mix(in srgb, var(--primary-color) 80%, transparent);
+      transition: color 0.3s;
+
+      :deep(svg) {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+    }
+
+    .dark-mode & .brand-icon {
+      color: #ffffff;
     }
 
     &:hover {
@@ -256,7 +273,7 @@ watch(() => route.path, () => {
       }
     }
   }
-  
+
   &:hover .brand-deco {
     opacity: 1;
   }
@@ -309,7 +326,6 @@ watch(() => route.path, () => {
   color: var(--text-color);
   text-decoration: none;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   font-size: 0.9rem;
   border: 2px solid transparent;
@@ -345,7 +361,7 @@ watch(() => route.path, () => {
   align-items: center;
   justify-content: center;
   position: relative;
-  
+
   // Small accent dot - only show on hover
   &::before {
     content: '';
@@ -359,16 +375,16 @@ watch(() => route.path, () => {
     opacity: 0;
     transition: opacity 0.3s;
   }
-  
+
   &:hover {
     border-color: var(--primary-color);
     transform: translateY(-2px);
-    
+
     &::before {
       opacity: 1;
     }
   }
-  
+
   &:active {
     transform: translateY(0);
   }

@@ -18,6 +18,7 @@ public class WindowTracker : BackgroundService
     private readonly IdleDetector _idleDetector;
     private readonly SettingsService _settings;
     private readonly ProcessNameCache _processCache;
+    private readonly IconCacheService _iconCache;
     private readonly ILogger<WindowTracker> _logger;
 
     private string _currentProcess = string.Empty;
@@ -39,13 +40,14 @@ public class WindowTracker : BackgroundService
 
     public WindowTracker(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
         IdleDetector idleDetector, SettingsService settings, ProcessNameCache processCache,
-        ILogger<WindowTracker> logger)
+        IconCacheService iconCache, ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _writeQueue = writeQueue;
         _idleDetector = idleDetector;
         _settings = settings;
         _processCache = processCache;
+        _iconCache = iconCache;
         _logger = logger;
     }
 
@@ -162,6 +164,9 @@ public class WindowTracker : BackgroundService
             _currentProcess = processName;
             _currentTitle = title;
             _focusStart = DateTime.UtcNow;
+
+            // Notify icon cache when a new process gains focus (event-driven, no polling)
+            _iconCache.NotifyProcess(processName);
 
             _logger.LogDebug("Focus: {Process} - {Title}", processName, title);
         }

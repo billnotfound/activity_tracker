@@ -23,7 +23,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>taskmonitor114</AssemblyName>
     <!-- Application icon (visible in Explorer, taskbar, etc.) -->
-    <ApplicationIcon>..\WinActivityTracker.Web\src\icon\timer1.ico</ApplicationIcon>
+    <ApplicationIcon>..\WinActivityTracker.Web\src\icon\timer.ico</ApplicationIcon>
     <!-- Desktop tray app → Workstation GC (single-heap, aggressive return to OS).
          Server GC (default for Web SDK) creates per-CPU heaps ~16MB each. -->
     <ServerGarbageCollection>false</ServerGarbageCollection>
@@ -31,6 +31,9 @@
     <GCConserveMemory>9</GCConserveMemory>
     <!-- Strip localized exception messages from runtime, saves ~2-3MB. -->
     <UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <!-- Pre-compile IL to native on publish, saves JIT code cache memory (~10-15MB).
+         Only affects dotnet publish, not dotnet build/run. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
     <!-- Only Windows targets: win-x64 and win-x86. -->
     <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
     <!-- Trimming is applied only for self-contained publish via publish.ps1 /p: flags.
@@ -53,10 +56,10 @@
 
   <!-- Embed icon files as resources -->
   <ItemGroup>
-    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\timer1.ico">
+    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\timer.ico">
       <LogicalName>timer.ico</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\settings1.ico">
+    <EmbeddedResource Include="..\WinActivityTracker.Web\src\icon\settings.ico">
       <LogicalName>settings.ico</LogicalName>
     </EmbeddedResource>
   </ItemGroup>

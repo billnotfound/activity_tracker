@@ -18,7 +18,9 @@ public static class IconEndpoints
 
     private static async Task<IResult> GetProcessIcon(
         string processName,
-        AppDbContext db)
+        AppDbContext db,
+        IconService iconService,
+        HttpContext httpContext)
     {
         try
         {
@@ -26,6 +28,28 @@ public static class IconEndpoints
             processName = processName.Trim();
             if (string.IsNullOrEmpty(processName))
                 return Results.BadRequest(new { error = "Process name is required" });
+
+            // Time-aware query: if ?at= is provided, find the icon valid at that time
+            if (httpContext.Request.Query.TryGetValue("at", out var atValues) &&
+                DateTime.TryParse(atValues.FirstOrDefault(), null,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var atTime))
+            {
+                var timeIcon = await iconService.GetIconForTimeAsync(processName, atTime.ToUniversalTime());
+                if (timeIcon != null)
+                {
+                    return Results.Ok(new
+                    {
+                        processName,
+                        iconHash = timeIcon.IconHash,
+                        iconData = Convert.ToBase64String(timeIcon.IconData),
+                        colorPrimary = timeIcon.ColorPrimary,
+                        colorSecondary = timeIcon.ColorSecondary,
+                        colorAccent = timeIcon.ColorAccent,
+                        cached = true
+                    });
+                }
+                // Fall through to live extraction if no icon valid at that time
+            }
 
             // First, try to find cached mapping for this process name
             var mapping = await db.ProcessIconMappings
@@ -154,13 +178,30 @@ public static class IconEndpoints
             var existingIcon = await db.ProcessIcons.FirstOrDefaultAsync(i => i.IconHash == hash);
             if (existingIcon != null)
             {
-                // Update or create mapping for this process name
+                // Version-aware mapping: find latest mapping, check for hash change
                 var existingMapping = await db.ProcessIconMappings
-                    .FirstOrDefaultAsync(m => m.ProcessName == processName && m.ExePath == exePath);
+                    .Where(m => m.ProcessName == processName && m.ExePath == exePath)
+                    .OrderByDescending(m => m.FirstSeen)
+                    .FirstOrDefaultAsync();
 
                 if (existingMapping != null)
                 {
-                    existingMapping.LastSeen = DateTime.UtcNow;
+                    if (existingMapping.IconHash != hash)
+                    {
+                        // Icon changed — create new versioned mapping, keep old one
+                        db.ProcessIconMappings.Add(new ProcessIconMapping
+                        {
+                            ProcessName = processName,
+                            ExePath = exePath,
+                            IconHash = hash,
+                            LastSeen = DateTime.UtcNow,
+                            FirstSeen = DateTime.UtcNow
+                        });
+                    }
+                    else
+                    {
+                        existingMapping.LastSeen = DateTime.UtcNow;
+                    }
                 }
                 else
                 {
@@ -169,7 +210,8 @@ public static class IconEndpoints
                         ProcessName = processName,
                         ExePath = exePath,
                         IconHash = hash,
-                        LastSeen = DateTime.UtcNow
+                        LastSeen = DateTime.UtcNow,
+                        FirstSeen = DateTime.UtcNow
                     });
                 }
                 await db.SaveChangesAsync();
@@ -202,7 +244,8 @@ public static class IconEndpoints
                 ProcessName = processName,
                 ExePath = exePath,
                 IconHash = hash,
-                LastSeen = DateTime.UtcNow
+                LastSeen = DateTime.UtcNow,
+                FirstSeen = DateTime.UtcNow
             });
 
             await db.SaveChangesAsync();

@@ -135,6 +135,7 @@ internal static class ProgramStartup
         await EnsureMissingTables(db);
         await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;PRAGMA cache_size=-2000");
         MigrateMediaSessions(db);
+        MigrateProcessIconMappings(db);
         await EnsureMissingIndexes(db);
     }
 
@@ -220,6 +221,25 @@ internal static class ProgramStartup
             "UPDATE MediaSessionRecords SET EndTime = COALESCE(" +
             "(SELECT MIN(m2.StartTime) FROM MediaSessionRecords m2 WHERE m2.StartTime > MediaSessionRecords.StartTime), " +
             "StartTime) WHERE EndTime IS NULL OR EndTime = StartTime");
+    }
+
+    /// <summary>
+    /// Adds FirstSeen column to ProcessIconMappings for icon versioning.
+    /// Existing rows are backfilled with their LastSeen value.
+    /// </summary>
+    private static void MigrateProcessIconMappings(AppDbContext db)
+    {
+        var columns = db.Database.SqlQuery<ColumnInfo>($"""
+            SELECT name FROM pragma_table_info('ProcessIconMappings')
+        """).Select(c => c.Name).ToHashSet();
+
+        if (!columns.Contains("FirstSeen"))
+        {
+            db.Database.ExecuteSqlRaw(
+                "ALTER TABLE ProcessIconMappings ADD COLUMN FirstSeen TEXT NOT NULL DEFAULT '0001-01-01T00:00:00'");
+            db.Database.ExecuteSqlRaw(
+                "UPDATE ProcessIconMappings SET FirstSeen = LastSeen WHERE FirstSeen = '0001-01-01T00:00:00'");
+        }
     }
 
     private sealed class ColumnInfo { public string Name { get; set; } = string.Empty; }

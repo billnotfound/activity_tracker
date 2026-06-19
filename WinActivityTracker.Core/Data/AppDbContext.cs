@@ -95,6 +95,7 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ProcessName);
             e.HasIndex(x => x.IconHash);
+            e.HasIndex(x => new { x.ProcessName, x.FirstSeen });
         });
     }
 }

@@ -384,10 +384,11 @@ async function renderTimeline(myLoadId) {
 
   console.log(`${allProcessNames.length} processes across ${Object.keys(dayStats).length} days, ${rowProcs.length} rows`)
 
-  // Step 3.5: Fetch colors for all processes
+  // Step 3.5: Fetch colors for all processes (time-aware — use range start date)
+  const atTime = startDate.value.toISOString()
   const colorPromises = allProcessNames.map(async (processName) => {
     try {
-      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}`)
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`)
       if (response.ok) {
         const iconData = await response.json()
         return iconData.colorPrimary || '#6B7FD7'
@@ -1074,7 +1075,6 @@ function getProcessColor(name) {
 .card-title {
   font-size: 1.1rem;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 16px;
   color: var(--text-color);

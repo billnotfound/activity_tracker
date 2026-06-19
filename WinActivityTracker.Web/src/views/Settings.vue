@@ -480,7 +480,6 @@ async function runReset() {
 .page-title {
   font-size: 1.5rem;
   font-weight: 700;
-  text-transform: uppercase;
   letter-spacing: 1px;
   margin-bottom: 24px;
   color: var(--text-color);
@@ -508,7 +507,6 @@ async function runReset() {
 .section-title {
   font-size: 1rem;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 16px;
   color: var(--text-color);
