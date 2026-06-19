@@ -465,21 +465,27 @@ async function renderTimeline(myLoadId) {
 
   // Step 3.6: Detect idle periods from gaps in the FULL timeline data (before top-15 filter).
   // Fallback for old data before backend Idle events existed.
+  // Each entry has a start (timestamp) and end (timestamp + duration). A real idle gap
+  // is when the END of one entry is far from the START of the next — NOT when two
+  // consecutive starts are far apart (which is normal for long-duration entries like games).
   const IDLE_GAP_MS = 2 * 60 * 1000  // 2 minutes
   const MIN_IDLE_MS = 10 * 1000       // ignore sub-10s idle fragments
 
   const fullSorted = [...timeline.value]
-    .map(item => parseUtcTs(item.timestamp).getTime())
-    .filter(ts => !isDuringSleep(ts))
-    .sort((a, b) => a - b)
+    .map(item => ({
+      start: parseUtcTs(item.timestamp).getTime(),
+      end: parseUtcTs(item.timestamp).getTime() + (item.durationSeconds ?? item.duration ?? 0) * 1000,
+    }))
+    .filter(item => !isDuringSleep(item.start))
+    .sort((a, b) => a.start - b.start)
 
   const gapIdleAreas = []
   if (fullSorted.length > 1) {
     for (let i = 1; i < fullSorted.length; i++) {
-      const gap = fullSorted[i] - fullSorted[i - 1]
+      const gap = fullSorted[i].start - fullSorted[i - 1].end
       if (gap >= IDLE_GAP_MS) {
-        const idleStart = fullSorted[i - 1]
-        const idleEnd = fullSorted[i]
+        const idleStart = fullSorted[i - 1].end
+        const idleEnd = fullSorted[i].start
         if (idleEnd - idleStart >= MIN_IDLE_MS && idleEnd > xAxisMin && idleStart < xAxisMax) {
           gapIdleAreas.push({
             value: [Math.max(idleStart, xAxisMin), Math.min(idleEnd, xAxisMax), 0],
@@ -494,7 +500,52 @@ async function renderTimeline(myLoadId) {
   console.log('Idle areas from gaps (fallback):', gapIdleAreas.length)
 
   // Merge both sources: backend events + gap fallback for old data without Idle events
-  const idleAreas = [...backendIdleAreas, ...gapIdleAreas]
+  let idleAreas = [...backendIdleAreas, ...gapIdleAreas]
+
+  // Step 3.7: Subtract sleep/shutdown periods from idle areas so idle never overlaps with sleep.
+  // Both backend Idle events and gap-detected idle can span into sleep when the system
+  // auto-suspends during user AFK time. Sleep takes precedence in the display.
+  {
+    const sleepPeriods = systemEvents.value
+      .filter(e => (e.eventType === 'Sleep' || e.eventType === 'Shutdown') && e.durationSeconds > 3)
+      .map(e => ({
+        start: parseUtcTs(e.timestamp).getTime(),
+        end: parseUtcTs(e.timestamp).getTime() + e.durationSeconds * 1000,
+      }))
+      .filter(s => s.end > xAxisMin && s.start < xAxisMax)
+      .sort((a, b) => a.start - b.start)
+
+    if (sleepPeriods.length > 0) {
+      const clipped = []
+      for (const idle of idleAreas) {
+        let segStart = idle.value[0]
+        const segEnd = idle.value[1]
+        for (const s of sleepPeriods) {
+          if (s.end <= segStart) continue       // sleep before segment
+          if (s.start >= segEnd) break           // sleep after segment (sorted, no more overlap)
+          if (s.start > segStart) {
+            // Non-overlapping portion before the sleep
+            clipped.push({
+              value: [segStart, s.start, 0],
+              durationMs: s.start - segStart,
+              areaType: 'idle',
+            })
+          }
+          segStart = Math.max(segStart, s.end)   // advance past this sleep
+          if (segStart >= segEnd) break          // nothing left
+        }
+        if (segStart < segEnd) {
+          // Remaining portion after all sleep periods
+          clipped.push({
+            value: [segStart, segEnd, 0],
+            durationMs: segEnd - segStart,
+            areaType: 'idle',
+          })
+        }
+      }
+      idleAreas = clipped
+    }
+  }
 
   // Build focusedWindows + activityPeriods in a single pass
   const focusedWindows = []

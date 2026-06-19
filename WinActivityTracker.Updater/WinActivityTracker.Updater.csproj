@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>updater</AssemblyName>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <GCConserveMemory>9</GCConserveMemory>
+    <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
+
+    <!-- resource.txt is generated from Service publish output before build.
+         Falls back gracefully if the publish directory doesn't exist. -->
+    <ServicePublishDir Condition="'$(ServicePublishDir)' == ''">..\publish\monitor-win-x64</ServicePublishDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="resource.txt" Condition="Exists('resource.txt')" />
+    <EmbeddedResource Include="old.resource.txt" Condition="Exists('old.resource.txt')" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.8" />
+  </ItemGroup>
+
+  <!-- Generate resource.txt from Service publish output if available -->
+  <Target Name="GenerateResourceManifest" BeforeTargets="BeforeBuild"
+          Condition="Exists('$(ServicePublishDir)') And '$(CI)' != 'true'"
+          Inputs="@(ServicePublishFiles)" Outputs="$(MSBuildProjectDirectory)\resource.txt">
+    <ItemGroup>
+      <ServicePublishFiles Include="$(ServicePublishDir)\**\*" />
+    </ItemGroup>
+    <Message Text="Generating resource.txt from $(ServicePublishDir)..." Importance="high" />
+    <WriteLinesToFile
+      File="$(MSBuildProjectDirectory)\resource.txt"
+      Lines="@(ServicePublishFiles->'%(RecursiveDir)%(Filename)%(Extension)')"
+      Overwrite="true"
+      WriteOnlyWhenDifferent="true" />
+  </Target>
+
+</Project>
