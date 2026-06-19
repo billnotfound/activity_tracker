@@ -15,8 +15,8 @@ runtimeconfig.template.json
 taskmonitor114.exe
 taskmonitor114.staticwebassets.endpoints.json
 web.config
-wwwroot/assets/index-B37LzbSb.css
-wwwroot/assets/index-CoJiTiqc.js
+wwwroot/assets/index-CwnKeGbL.js
+wwwroot/assets/index-DdpmWBGa.css
 wwwroot/assets/primeicons-C6QP2o4f.woff2
 wwwroot/assets/primeicons-DMOk5skT.eot
 wwwroot/assets/primeicons-Dr5RGzOO.svg

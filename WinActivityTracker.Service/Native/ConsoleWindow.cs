@@ -14,7 +14,7 @@ public class ConsoleWindow : Form
     private readonly ConsoleMirror _mirror;
     private readonly Action _onTick;
 
-    public ConsoleWindow(int apiPort, ConsoleMirror mirror)
+    public ConsoleWindow(ConsoleMirror mirror)
     {
         _mirror = mirror;
 

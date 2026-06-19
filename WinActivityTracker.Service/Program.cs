@@ -1,14 +1,15 @@
-// taskmonitor114 — background monitoring with system tray and Web API.
+// taskmonitor114 — background monitoring with system tray and on-demand Web API.
 //
-// Architecture: main thread runs WinForms tray; background thread runs ASP.NET Core.
-// Windows Service mode skips WinForms when !Environment.UserInteractive.
+// Architecture: Host (trackers) runs always. DashboardServer (Kestrel + Vue SPA)
+// starts on-demand when the user opens the dashboard and stops after idle timeout.
+// PortWatcher listens when Kestrel is down and wakes it on incoming connections,
+// so a frozen-tab refresh never gets "connection refused".
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Core.Trackers;
 using WinActivityTracker.Service;
-using WinActivityTracker.Service.Api;
 using WinActivityTracker.Service.Native;
 
 if (Environment.UserInteractive)
@@ -21,13 +22,11 @@ if (Environment.UserInteractive)
 var silent = args.Any(a => a is "--autostart" or "--silent");
 var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 
-// Reduce idle thread count — tray app doesn't need CPU-count worker threads.
 ThreadPool.SetMinThreads(1, 1);
 
 var appPaths = new AppPaths();
 appPaths.MigrateIfNeeded();
 
-// ===== I18n: detect language from OS (WinForms follows system, Web UI has its own picker) =====
 var lang = System.Globalization.CultureInfo.CurrentUICulture.Name.StartsWith("zh")
     ? "zh-CN" : "en-US";
 var i18n = new I18nService(lang);
@@ -45,24 +44,15 @@ if (!isTesting)
 var mirror = new ConsoleMirror(Console.Out);
 Console.SetOut(mirror);
 
-// ===== DI setup =====
-var builder = WebApplication.CreateSlimBuilder(args);
-builder.Logging.AddConsole();
-builder.Services.ConfigureHttpJsonOptions(o =>
-{
-    o.SerializerOptions.PropertyNameCaseInsensitive = true;
-    o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-});
-builder.Services.AddSingleton(mirror);
-builder.WebHost.ConfigureKestrel(o =>
-{
-    o.Limits.MaxConcurrentConnections = 10;
-    o.AddServerHeader = false;
-});
-
 var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
     ?? Path.Combine(appPaths.DataDir, "activity.db");
 
+// ===== Host — trackers run as HostedServices, always active =====
+var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+builder.Services.AddSingleton(mirror);
 builder.Services.AddSingleton(appPaths);
 builder.Services.AddSingleton(i18n);
 builder.Services.AddSingleton<SettingsService>();
@@ -74,95 +64,74 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
 builder.Services.AddSingleton<IdleDetector>();
 builder.Services.AddSingleton<WriteQueue>();
+
+// Trackers (BackgroundService)
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WriteQueue>());
 builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
 builder.Services.AddHostedService<HeartbeatService>();
 builder.Services.AddHostedService<IconCacheService>();
-builder.Services.AddWindowsService(options => { options.ServiceName = "taskmonitor114"; });
-builder.Services.AddCors(c => c.AddDefaultPolicy(p =>
-    p.WithOrigins($"http://localhost:{apiPort}", "http://localhost:5000").AllowAnyMethod().AllowAnyHeader()));
 
-var app = builder.Build();
-app.UseCors();
-
-// ===== SPA static files (production mode) =====
-var webRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
-var serveSpa = Directory.Exists(webRoot);
-Microsoft.Extensions.FileProviders.PhysicalFileProvider? fp = null;
-if (serveSpa)
+// On-demand web server
+builder.Services.AddSingleton<PortWatcher>(sp => new PortWatcher(apiPort, async () =>
 {
-    fp = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webRoot);
-    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fp });
-    app.UseStaticFiles(new StaticFileOptions { FileProvider = fp });
-}
+    var dashboard = sp.GetRequiredService<DashboardServer>();
+    await dashboard.StartAsync();
+}));
+builder.Services.AddSingleton<DashboardServer>(sp =>
+{
+    var portWatcher = sp.GetRequiredService<PortWatcher>();
+    return new DashboardServer(sp, dbPath, apiPort, portWatcher);
+});
+
+builder.Services.AddWindowsService(options => { options.ServiceName = "taskmonitor114"; });
+
+var host = builder.Build();
 
 // ===== DB init =====
-await ProgramStartup.InitializeDatabase(app.Services);
+await ProgramStartup.InitializeDatabase(host.Services);
 
-// ===== Process cache init: snapshot once, then WMI events keep it current =====
-var processCache = app.Services.GetRequiredService<ProcessNameCache>();
+// ===== Process cache init =====
+var processCache = host.Services.GetRequiredService<ProcessNameCache>();
 processCache.RefreshAll();
 processCache.StartWmiWatch();
 
-// ===== API endpoints =====
-app.MapAdminEndpoints();
-app.MapFocusEndpoints();
-app.MapMediaEndpoints();
-app.MapWindowEndpoints();
-app.MapTagEndpoints();
-app.MapIconEndpoints();
+// ===== Start trackers =====
+await host.StartAsync();
 
-if (serveSpa && fp != null)
-    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });
+var dashboard = host.Services.GetRequiredService<DashboardServer>();
 
-app.Urls.Add($"http://localhost:{apiPort}");
+// ===== Test mode: start DashboardServer for integration tests, skip WinForms =====
+if (isTesting)
+{
+    await dashboard.StartAsync();
+    await host.WaitForShutdownAsync();
+    return;
+}
 
-// ===== Startup: dual-thread or service mode =====
+// ===== Windows Service mode: start Kestrel immediately =====
 if (!Environment.UserInteractive)
 {
     Console.WriteLine($"WinActivityTracker starting as Windows Service on http://localhost:{apiPort}");
-    await app.RunAsync();
+    await dashboard.StartAsync();
+    await host.WaitForShutdownAsync();
     ProgramStartup.DeletePidFile(appPaths.DataDir);
     return;
 }
 
+// ===== Interactive mode: PortWatcher owns the port until dashboard is opened =====
+host.Services.GetRequiredService<PortWatcher>().Start();
+
 Console.WriteLine($"WinActivityTracker starting on http://localhost:{apiPort}");
-var webTask = Task.Run(() => app.RunAsync());
-
-// Poll /api/status until Kestrel is ready.
-using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(100) };
-var deadline = DateTime.UtcNow.AddSeconds(10);
-var ready = false;
-var delay = 50; // start with 50ms, exponential backoff
-while (DateTime.UtcNow < deadline)
-{
-    try
-    {
-        var resp = await http.GetAsync($"http://127.0.0.1:{apiPort}/api/status");
-        if (resp.IsSuccessStatusCode) { ready = true; break; }
-    }
-    catch { /* not ready */ }
-    await Task.Delay(delay);
-    delay = Math.Min(delay * 2, 500); // double each retry, cap at 500ms
-}
-
-if (!ready)
-{
-    Console.Error.WriteLine("WARNING: API did not respond within 800ms — startup may be slow.");
-    if (!silent)
-        MessageBox.Show(I18nService._("program.startupSlowMessage"),
-            I18nService._("program.startupSlowTitle"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
-}
 
 Application.SetCompatibleTextRenderingDefault(false);
-Application.Run(new TrayApplicationContext(app.Services, apiPort, autoShowStatus: !silent));
+Application.Run(new TrayApplicationContext(host.Services, dashboard));
 
-// Record clean shutdown.
+// ===== Clean shutdown =====
 try
 {
-    using var shutdownScope = app.Services.CreateScope();
+    using var shutdownScope = host.Services.CreateScope();
     var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
     shutdownDb.SystemEvents.Add(new SystemEvent
     {
@@ -175,5 +144,7 @@ catch (Exception ex) { Console.WriteLine($"Failed to record shutdown: {ex.Messag
 
 ProgramStartup.DeletePidFile(appPaths.DataDir);
 
-await app.StopAsync();
-try { await webTask; } catch (OperationCanceledException) { }
+if (dashboard.IsRunning)
+    await dashboard.StopAsync();
+
+await host.StopAsync();

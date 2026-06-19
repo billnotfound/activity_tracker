@@ -56,7 +56,7 @@ public class SettingsService
         },
         ["ApiPort"] = new[] {
             "// ===== 服务器 =====",
-            "// API 和 Web UI 的监听端口。修改后需重启生效。默认 5200。"
+            "// API 和 Web UI 的监听端口。修改后需重启生效。默认 32579。"
         },
         ["AutoCleanup"] = new[] {
             "// 预留：true 时定期自动清理。尚未启用。"

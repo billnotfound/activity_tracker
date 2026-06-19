@@ -4,6 +4,8 @@
 // not the system console — closing it does not exit the application.
 //
 // On first launch, StatusWindow opens after 1s delay.
+// "Open Dashboard" / double-click starts the on-demand DashboardServer,
+// waits for Kestrel to be ready, then opens the browser.
 using System.Diagnostics;
 using System.Drawing;
 
@@ -17,25 +19,21 @@ public class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon _trayIcon = null!;
     private readonly IServiceProvider _services;
-    private readonly int _apiPort;
+    private readonly DashboardServer _dashboard;
 
     private const string AutoStartKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string AutoStartValue = "taskmonitor114";
 
-    // Set by Program.cs before Application.Run() so native windows can access DI.
     public static IServiceProvider ServiceProvider { get; set; } = null!;
 
-    // autoShowStatus: when true, opens the StatusWindow shortly after startup
-    // (first-launch behavior — user clicked the exe and expects to see something).
-    public TrayApplicationContext(IServiceProvider services, int apiPort, bool autoShowStatus = false)
+    public TrayApplicationContext(IServiceProvider services, DashboardServer dashboard, bool autoShowStatus = false)
     {
         _services = services;
-        _apiPort = apiPort;
+        _dashboard = dashboard;
         ServiceProvider = services;
 
         if (autoShowStatus)
         {
-            // Delay to let the web host fully start before the StatusWindow queries the API
             var timer = new System.Windows.Forms.Timer { Interval = 1000 };
             timer.Tick += (_, _) => { timer.Stop(); timer.Dispose(); ShowStatusWindow(); };
             timer.Start();
@@ -45,7 +43,11 @@ public class TrayApplicationContext : ApplicationContext
 
         // --- Dashboard ---
         var dashboardItem = new ToolStripMenuItem(I18nService._("tray.openDashboard"));
-        dashboardItem.Click += (_, _) => OpenUrl($"http://localhost:{_apiPort}");
+        dashboardItem.Click += async (_, _) =>
+        {
+            await _dashboard.StartAsync();
+            OpenUrl($"http://localhost:{_dashboard.Port}");
+        };
         dashboardItem.Font = new Font(dashboardItem.Font, FontStyle.Bold);
         menu.Items.Add(dashboardItem);
 
@@ -74,7 +76,6 @@ public class TrayApplicationContext : ApplicationContext
         menu.Items.Add(toggleItem);
 
         // --- Auto-start ---
-        // Sync registry → settings.json on startup so settings.json is the truth.
         SyncAutoStartOnStartup();
 
         var settings = _services.GetRequiredService<SettingsService>();
@@ -88,7 +89,7 @@ public class TrayApplicationContext : ApplicationContext
 
         menu.Items.Add(new ToolStripSeparator());
 
-        // --- Console toggle (in-app window, not system console) ---
+        // --- Console toggle ---
         var consoleItem = new ToolStripMenuItem(I18nService._("tray.showConsole"));
         consoleItem.Click += (_, _) =>
         {
@@ -101,7 +102,7 @@ public class TrayApplicationContext : ApplicationContext
             {
                 if (_consoleWindow == null || _consoleWindow.IsDisposed)
                 {
-                    _consoleWindow = new ConsoleWindow(_apiPort, _services.GetRequiredService<ConsoleMirror>());
+                    _consoleWindow = new ConsoleWindow(_services.GetRequiredService<ConsoleMirror>());
                     _consoleWindow.FormClosed += (_, _) => consoleItem.Text = I18nService._("tray.showConsole");
                 }
                 _consoleWindow.Show();
@@ -130,7 +131,11 @@ public class TrayApplicationContext : ApplicationContext
             Visible = true
         };
 
-        _trayIcon.DoubleClick += (_, _) => OpenUrl($"http://localhost:{_apiPort}");
+        _trayIcon.DoubleClick += async (_, _) =>
+        {
+            await _dashboard.StartAsync();
+            OpenUrl($"http://localhost:{_dashboard.Port}");
+        };
     }
 
     // ===== Open URL in browser =====
@@ -160,7 +165,7 @@ public class TrayApplicationContext : ApplicationContext
         }
 
         var s = _services.GetRequiredService<SettingsService>();
-        _settingsWindow = new SettingsWindow(s, _apiPort);
+        _settingsWindow = new SettingsWindow(s);
         _settingsWindow.FormClosed += (_, _) => _settingsWindow = null;
         _settingsWindow.Show();
     }
@@ -174,7 +179,7 @@ public class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _statusWindow = new StatusWindow(_services, _apiPort);
+        _statusWindow = new StatusWindow(_services);
         _statusWindow.FormClosed += (_, _) => _statusWindow = null;
         _statusWindow.Show();
     }
@@ -182,27 +187,23 @@ public class TrayApplicationContext : ApplicationContext
     private SettingsWindow? _settingsWindow;
     private StatusWindow? _statusWindow;
 
-    // ===== In-app console (ConsoleWindow form, not system console) =====
+    // ===== In-app console =====
     private ConsoleWindow? _consoleWindow;
 
     // ===== Auto-start (registry ↔ settings.json) =====
 
-    // On startup: read settings.AutoStartEnabled (the single source of truth),
-    // then apply it to the registry — add or remove the Run key accordingly.
     private void SyncAutoStartOnStartup()
     {
         var settings = _services.GetRequiredService<SettingsService>();
         WriteRegistryAutoStart(settings.Settings.AutoStartEnabled);
     }
 
-    // Toggles both registry and settings.json. Called by tray menu checkbox.
     private void ToggleAutoStart(bool enable)
     {
         WriteRegistryAutoStart(enable);
         _services.GetRequiredService<SettingsService>().SetAutoStartEnabled(enable);
     }
 
-    // Writes/deletes the registry Run key. Also called by SettingsWindow.
     public static void WriteRegistryAutoStart(bool enable)
     {
         try

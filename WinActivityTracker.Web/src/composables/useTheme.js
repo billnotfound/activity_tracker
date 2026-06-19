@@ -138,10 +138,7 @@ export function useTheme() {
   const applyAutoColor = async (topProcess) => {
     if (!autoColor.value || !topProcess) return
     try {
-      const apiBase = window.location.hostname === 'localhost'
-        ? ''
-        : `http://${window.location.hostname}:5200`
-      const res = await fetch(`${apiBase}/api/icons/${topProcess}`)
+      const res = await fetch(`/api/icons/${topProcess}`)
       if (!res.ok) return
       const icon = await res.json()
       const next = { ...overrides.value }

@@ -1,13 +1,15 @@
 // Live status window — current focus, Top 5, tracking controls.
-// Uses TableLayoutPanel with Anchor — no hardcoded Y positions.
+// All data accessed directly via DI / EF Core — no HTTP dependency on Kestrel.
+using Microsoft.EntityFrameworkCore;
+using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
+using WinActivityTracker.Core.Trackers;
 
 namespace WinActivityTracker.Service.Native;
 
 public partial class StatusWindow : Form
 {
-    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(3) };
-    private readonly string _apiBase;
     private readonly System.Windows.Forms.Timer _refreshTimer;
 
     private Label _focusLabel = null!;
@@ -16,10 +18,8 @@ public partial class StatusWindow : Form
     private Label _offLabel = null!;
     private Button _toggleButton = null!;
 
-    public StatusWindow(IServiceProvider services, int apiPort)
+    public StatusWindow(IServiceProvider services)
     {
-        _apiBase = $"http://localhost:{apiPort}";
-
         Text = I18nService._("statusWindow.title");
         Size = new Size(560, 680);
         MinimumSize = new Size(440, 440);
@@ -120,7 +120,7 @@ public partial class StatusWindow : Form
                 Text = I18nService._("common.pauseTracking"), Size = new Size(120, 38),
                 Font = new Font("Microsoft YaHei UI", 9)
             };
-            _toggleButton.Click += async (_, _) => await ToggleTracking(services);
+            _toggleButton.Click += (_, _) => ToggleTracking(services);
             panel.Controls.Add(_toggleButton);
 
             var topMostCheck = new CheckBox
@@ -143,65 +143,96 @@ public partial class StatusWindow : Form
     {
         try
         {
-            var winResp = await _http.GetAsync($"{_apiBase}/api/windows/current");
-            if (winResp.IsSuccessStatusCode)
+            var processCache = services.GetRequiredService<ProcessNameCache>();
+
+            // 1. Current focus — direct P/Invoke, no API needed
+            var windows = WindowTracker.EnumerateVisibleWindows(processCache);
+            var focused = windows.FirstOrDefault(w => w.IsFocused);
+            _focusLabel.Text = focused != default
+                ? $"{focused.ProcessName} — {Truncate(focused.Title, 60)}"
+                : I18nService._("statusWindow.noFocusWindow");
+
+            // 2. Today summary — direct EF Core query
+            using var scope = services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var settings = services.GetRequiredService<SettingsService>();
+
+            var todayStart = DateTime.UtcNow.Date;
+            var todayEnd = todayStart.AddDays(1);
+
+            // Off periods (sleep/shutdown)
+            var offPeriods = await db.SystemEvents
+                .AsNoTracking()
+                .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
+                    && e.Timestamp >= todayStart && e.Timestamp <= todayEnd)
+                .Select(e => new { e.Timestamp, e.DurationSeconds })
+                .ToListAsync();
+
+            var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
+            _offLabel.Text = totalSleepSec > 0
+                ? I18nService._("statusWindow.offDuration", FmtDur(totalSleepSec))
+                : "";
+
+            // Focus changes for today
+            var changes = await db.FocusChanges
+                .AsNoTracking()
+                .Where(f => f.Timestamp >= todayStart && f.Timestamp <= todayEnd)
+                .OrderBy(f => f.Timestamp)
+                .Select(f => new { f.ProcessName, f.DurationSeconds, f.Timestamp })
+                .ToListAsync();
+
+            // Exclude off-period records
+            var filtered = changes
+                .Where(f => !offPeriods.Any(p =>
+                    f.Timestamp >= p.Timestamp && f.Timestamp < p.Timestamp.AddSeconds(p.DurationSeconds)))
+                .ToList();
+
+            // Summary: group by process, top 5
+            var summary = filtered
+                .GroupBy(f => f.ProcessName)
+                .Select(g => new
+                {
+                    ProcessName = g.Key,
+                    TotalSeconds = g.Sum(f => f.DurationSeconds),
+                    SwitchCount = g.Count()
+                })
+                .OrderByDescending(x => x.TotalSeconds)
+                .Take(5)
+                .ToList();
+
+            // Adjusted switch counts (merge consecutive same-process entries)
+            var adjSwitches = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            string? prevProc = null;
+            foreach (var f in filtered)
             {
-                var windows = await winResp.Content.ReadFromJsonAsync<List<WindowInfo>>();
-                var focused = windows?.FirstOrDefault(w => w.IsFocused);
-                _focusLabel.Text = focused != null
-                    ? $"{focused.ProcessName} — {Truncate(focused.Title, 60)}"
-                    : I18nService._("statusWindow.noFocusWindow");
+                if (f.ProcessName != prevProc)
+                    adjSwitches[f.ProcessName] = adjSwitches.GetValueOrDefault(f.ProcessName) + 1;
+                prevProc = f.ProcessName;
             }
 
-            var sumResp = await _http.GetAsync($"{_apiBase}/api/summary/today");
-            if (sumResp.IsSuccessStatusCode)
+            _topList.BeginUpdate();
+            _topList.Items.Clear();
+            foreach (var item in summary)
             {
-                var wrapped = await sumResp.Content.ReadFromJsonAsync<SummaryResponse>();
-                var summary = wrapped?.Items ?? [];
-                var totalOff = wrapped?.TotalSleepSeconds ?? 0;
-                _offLabel.Text = totalOff > 0 ? I18nService._("statusWindow.offDuration", FmtDur(totalOff)) : "";
-                var top5 = summary.Take(5).ToList();
-
-                // Load adjusted switch counts if merge is enabled
-                var svc = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
-                var adjustedSwitches = new Dictionary<string, int>();
-                if (svc.Settings.MergeSameProcessSwitches)
-                {
-                    var tlResp = await _http.GetAsync($"{_apiBase}/api/windows/timeline?from={DateTime.Now:yyyy-MM-dd}T00:00:00&to={DateTime.Now:yyyy-MM-dd}T23:59:59");
-                    if (tlResp.IsSuccessStatusCode)
-                    {
-                        var tlWrapped = await tlResp.Content.ReadFromJsonAsync<TimelineResponse>();
-                        var timeline = tlWrapped?.Data;
-                        if (timeline != null)
-                        {
-                            string prev = "";
-                            foreach (var t in timeline)
-                            {
-                                if (t.ProcessName != prev) adjustedSwitches[t.ProcessName] = adjustedSwitches.GetValueOrDefault(t.ProcessName) + 1;
-                                prev = t.ProcessName;
-                            }
-                        }
-                    }
-                }
-
-                _topList.BeginUpdate();
-                _topList.Items.Clear();
-                foreach (var item in top5)
-                {
-                    var lvi = new ListViewItem(item.ProcessName);
-                    lvi.SubItems.Add(FmtDur(item.TotalSeconds));
-                    var sc = adjustedSwitches.GetValueOrDefault(item.ProcessName, item.SwitchCount);
-                    lvi.SubItems.Add(sc.ToString());
-                    _topList.Items.Add(lvi);
-                }
-                _topList.EndUpdate();
+                var lvi = new ListViewItem(item.ProcessName);
+                lvi.SubItems.Add(FmtDur(item.TotalSeconds));
+                var sc = settings.Settings.MergeSameProcessSwitches
+                    ? adjSwitches.GetValueOrDefault(item.ProcessName, item.SwitchCount)
+                    : item.SwitchCount;
+                lvi.SubItems.Add(sc.ToString());
+                _topList.Items.Add(lvi);
             }
+            _topList.EndUpdate();
 
-            var settings = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
+            // 3. Tracking status
             var enabled = settings.Settings.TrackingEnabled;
-            _statusLabel.Text = enabled ? I18nService._("statusWindow.trackingRunning") : I18nService._("statusWindow.trackingPaused");
+            _statusLabel.Text = enabled
+                ? I18nService._("statusWindow.trackingRunning")
+                : I18nService._("statusWindow.trackingPaused");
             _statusLabel.ForeColor = enabled ? Color.DarkGreen : Color.DarkOrange;
-            _toggleButton.Text = enabled ? I18nService._("common.pauseTracking") : I18nService._("common.resumeTracking");
+            _toggleButton.Text = enabled
+                ? I18nService._("common.pauseTracking")
+                : I18nService._("common.resumeTracking");
         }
         catch (Exception ex)
         {
@@ -211,21 +242,12 @@ public partial class StatusWindow : Form
         }
     }
 
-    private async Task ToggleTracking(IServiceProvider services)
+    private void ToggleTracking(IServiceProvider services)
     {
-        var settings = services.GetRequiredService<WinActivityTracker.Core.Services.SettingsService>();
+        var settings = services.GetRequiredService<SettingsService>();
         settings.Settings.TrackingEnabled = !settings.Settings.TrackingEnabled;
-        try
-        {
-            await _http.PutAsJsonAsync($"{_apiBase}/api/settings", settings.Settings);
-        }
-        catch (Exception ex)
-        {
-            settings.Settings.TrackingEnabled = !settings.Settings.TrackingEnabled;
-            System.Diagnostics.Debug.WriteLine($"ToggleTracking error: {ex.Message}");
-            return;
-        }
-        await RefreshData(services);
+        settings.Save();
+        _ = RefreshData(services);
     }
 
     private static string FmtDur(double s)
@@ -237,10 +259,4 @@ public partial class StatusWindow : Form
 
     private static string Truncate(string text, int n)
         => text.Length <= n ? text : text[..(n - 3)] + "...";
-
-    private record WindowInfo(string ProcessName, string Title, bool IsFocused);
-    private record SummaryResponse(List<SummaryItem> Items, double TotalSleepSeconds);
-    private record SummaryItem(string ProcessName, double TotalSeconds, int SwitchCount);
-    private record TimelineItem(string ProcessName, double DurationSeconds);
-    private record TimelineResponse(List<TimelineItem> Data, long Total, int Offset, int Limit);
 }

@@ -77,9 +77,9 @@ internal static class ProgramStartup
 
     /// <summary>
     /// Reads ApiPort from settings.json (stripping // comment lines).
-    /// Falls back to 5200 if the file doesn't exist or can't be parsed.
+    /// Falls back to 32579 if the file doesn't exist or can't be parsed.
     /// </summary>
-    public static int ParsePortFromSettings(string settingsPath, int defaultPort = 5200)
+    public static int ParsePortFromSettings(string settingsPath, int defaultPort = 32579)
     {
         if (!File.Exists(settingsPath)) return defaultPort;
 

@@ -331,7 +331,7 @@ const form = reactive({
   mediaPollSeconds: 5,
   idleThresholdMinutes: 2,
   dataRetentionDays: 90,
-  apiPort: 5200,
+  apiPort: 32579,
 })
 
 const excludeText = ref('')
@@ -381,7 +381,7 @@ async function loadSettings() {
       mediaPollSeconds: s.mediaPollSeconds,
       idleThresholdMinutes: s.idleThresholdMinutes,
       dataRetentionDays: s.dataRetentionDays,
-      apiPort: s.apiPort || 5200,
+      apiPort: s.apiPort || 32579,
     })
     excludeText.value = (s.excludedProcesses || []).join(', ')
     statusOk.value = true

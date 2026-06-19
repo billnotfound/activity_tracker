@@ -22,7 +22,7 @@ public partial class SettingsWindow : Form
     private Label _statusLabel = null!;
 
 
-    public SettingsWindow(SettingsService settings, int apiPort)
+    public SettingsWindow(SettingsService settings)
     {
         _settings = settings;
 
@@ -132,7 +132,7 @@ public partial class SettingsWindow : Form
         {
             var g = MakeGroup(I18nService._("settingsWindow.serverGroup"), 78);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, I18nService._("settingsWindow.apiPortLabel"), out _apiPortInput, 1024, 65535, 5200);
+            AddRow(pan!, 0, I18nService._("settingsWindow.apiPortLabel"), out _apiPortInput, 1024, 65535, 32579);
         }
 
         // --- Buttons ---

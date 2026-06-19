@@ -62,7 +62,7 @@
   </ItemGroup>
 
   <!-- Copy Vue SPA build output (wwwroot) from Web project into Service output.
-       This lets the tray icon's "打开仪表盘" serve the full UI from port 5200.
+       This lets the tray icon's "打开仪表盘" serve the full UI from port 32579.
        Frontend must be built first: cd WinActivityTracker.Web && pnpm build
        (publish.ps1 does this automatically; for dotnet build run pnpm build manually.)
        Build target: copies to output dir for dotnet run / F5.

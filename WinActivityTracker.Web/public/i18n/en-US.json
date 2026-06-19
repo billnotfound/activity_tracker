@@ -164,7 +164,7 @@
   "settings.exclusionsHelp": "These processes will be filtered from focus records, window snapshots, background processes, and media records.",
   "settings.card.server": "Server",
   "settings.apiPortLabel": "API Port (requires restart)",
-  "settings.apiPortHelp": "Default 5200. Requires service restart to take effect.",
+  "settings.apiPortHelp": "Default 32579. Requires service restart to take effect.",
   "settings.card.paths": "File Paths (requires restart)",
   "settings.configDirLabel": "Config Directory — settings.json, tags.json, title_rules.json",
   "settings.dataDirLabel": "Data Directory — activity.db",

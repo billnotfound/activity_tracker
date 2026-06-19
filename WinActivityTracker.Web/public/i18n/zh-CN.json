@@ -164,7 +164,7 @@
   "settings.exclusionsHelp": "这些进程将从焦点、窗口快照、后台进程和媒体记录中全部过滤。",
   "settings.card.server": "服务器",
   "settings.apiPortLabel": "API 端口 (重启后生效)",
-  "settings.apiPortHelp": "默认 5200。修改后需重启 Service 才能生效。",
+  "settings.apiPortHelp": "默认 32579。修改后需重启 Service 才能生效。",
   "settings.card.paths": "文件路径 (重启后生效)",
   "settings.configDirLabel": "配置目录 — settings.json, tags.json, title_rules.json",
   "settings.dataDirLabel": "数据目录 — activity.db",

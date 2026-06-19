@@ -1,9 +1,8 @@
 // Vue application entry point.
 //
-// API base URL logic:
-//   - localhost dev: '' (Vite proxy in vite.config.js handles /api → :5200)
-//   - production: 'http://<hostname>:5200' (direct connection to the backend)
-//
+// API base: always uses relative URLs (''). In development, Vite's proxy
+// (vite.config.js) forwards /api → backend. In production, the SPA is served
+// from the same Kestrel origin, so /api resolves to the correct port automatically.
 // The apiBase is provided to all components via Vue's provide/inject system.
 // Components access it with: const apiBase = inject('apiBase')
 import { createApp } from 'vue'
@@ -21,9 +20,7 @@ import './styles/index.scss'
 // Theme management
 import { useTheme } from './composables/useTheme.js'
 
-const apiBase = window.location.hostname === 'localhost'
-  ? ''  // Vite proxy handles /api -> :5200 in dev
-  : `http://${window.location.hostname}:5200`
+const apiBase = ''
 
 async function boot() {
   await initI18n()

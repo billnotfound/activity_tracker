@@ -2,7 +2,7 @@
 //
 // Development (pnpm dev):
 //   - Dev server on port 5000 with HMR
-//   - /api/* proxied to the backend; set VITE_API_PORT env var if not 5200.
+//   - /api/* proxied to the backend; set VITE_API_PORT env var if not 32579.
 //     e.g.: VITE_API_PORT=54431 pnpm dev
 //
 // Production (pnpm build):
@@ -11,7 +11,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-const apiPort = process.env.VITE_API_PORT || '5200'
+const apiPort = process.env.VITE_API_PORT || '32579'
 
 export default defineConfig({
   plugins: [vue()],

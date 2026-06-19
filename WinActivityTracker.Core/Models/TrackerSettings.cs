@@ -42,10 +42,18 @@ public class TrackerSettings
     public bool AutoCleanup { get; set; } = true;
 
     // API server port. Requires restart to take effect (not hot-reloadable).
-    // Min: 1024, Max: 65535, Default: 5200.
-    public int ApiPort { get; set; } = 5200;
+    // Min: 1024, Max: 65535, Default: 32579.
+    public int ApiPort { get; set; } = 32579;
 
     // Whether the program is registered for auto-start (HKCU\...\Run).
     // Synced with registry on startup; toggled by both tray menu and settings window.
     public bool AutoStartEnabled { get; set; }
+
+    // When true, the web server starts immediately at launch (Windows Service mode).
+    // In interactive mode, the web server always starts on-demand via tray menu.
+    public bool WebServerEnabled { get; set; }
+
+    // Minutes of inactivity before the web server auto-stops. Default: 3.
+    // Dashboard frontend polling resets this timer continuously while the tab is open.
+    public int WebIdleTimeoutMinutes { get; set; } = 3;
 }
