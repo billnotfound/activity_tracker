@@ -13,9 +13,10 @@ public class MediaSessionTracker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SettingsService _settings;
     private readonly IdleDetector _idleDetector;
+    private readonly WriteQueue _writeQueue;
     private readonly ILogger<MediaSessionTracker> _logger;
 
-    private long? _currentSessionId;
+    private bool _hasActiveSession;
     private string _currentAppName = string.Empty;
     private string _currentTitle = string.Empty;
     private string _currentArtist = string.Empty;
@@ -25,11 +26,12 @@ public class MediaSessionTracker : BackgroundService
     private DateTime _lastPollTime = DateTime.UtcNow;
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
-        IdleDetector idleDetector, ILogger<MediaSessionTracker> logger)
+        IdleDetector idleDetector, WriteQueue writeQueue, ILogger<MediaSessionTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
         _idleDetector = idleDetector;
+        _writeQueue = writeQueue;
         _logger = logger;
     }
 
@@ -50,12 +52,12 @@ public class MediaSessionTracker : BackgroundService
 
                 var now = DateTime.UtcNow;
                 var gapSec = (now - _lastPollTime).TotalSeconds;
-                if (_currentSessionId != null && gapSec > _settings.Settings.MediaPollSeconds * 3)
+                if (_hasActiveSession && gapSec > _settings.Settings.MediaPollSeconds * 3)
                 {
                     _logger.LogDebug("MediaTracker: sleep gap detected ({Gap}s), closing session", gapSec);
                     using var gapScope = _scopeFactory.CreateScope();
                     var gapDb = gapScope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    await CloseCurrentSession(gapDb, _lastPollTime);
+                    CloseCurrentSession(gapDb, _lastPollTime);
                     await gapDb.SaveChangesAsync();
                 }
 
@@ -74,7 +76,7 @@ public class MediaSessionTracker : BackgroundService
         {
             using var shutdownScope = _scopeFactory.CreateScope();
             var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
-            await CloseCurrentSession(shutdownDb, DateTime.UtcNow);
+            CloseCurrentSession(shutdownDb, DateTime.UtcNow);
             await shutdownDb.SaveChangesAsync();
         }
         catch (Exception ex) { _logger.LogError(ex, "MediaSessionTracker shutdown cleanup error"); }
@@ -86,37 +88,34 @@ public class MediaSessionTracker : BackgroundService
 
         try
         {
-            using var scope = _scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            await CheckForWakeEvent();
 
-            await CheckForWakeEvent(db);
-
-            if (_currentSessionId == null)
-                await SeedCurrentSession(db);
+            if (!_hasActiveSession)
+                await SeedCurrentSession();
 
             var manager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
             var session = manager.GetCurrentSession();
 
             if (session == null)
             {
-                await CloseCurrentSession(db, DateTime.UtcNow);
-                await db.SaveChangesAsync();
+                if (_hasActiveSession)
+                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
                 return;
             }
 
             var appName = session.SourceAppUserModelId ?? string.Empty;
             if (_settings.Settings.ExcludedProcesses.Contains(appName, StringComparer.OrdinalIgnoreCase))
             {
-                await CloseCurrentSession(db, DateTime.UtcNow);
-                await db.SaveChangesAsync();
+                if (_hasActiveSession)
+                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
                 return;
             }
 
             var props = await session.TryGetMediaPropertiesAsync();
             if (props == null)
             {
-                await CloseCurrentSession(db, DateTime.UtcNow);
-                await db.SaveChangesAsync();
+                if (_hasActiveSession)
+                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
                 return;
             }
 
@@ -126,26 +125,28 @@ public class MediaSessionTracker : BackgroundService
 
             if (string.IsNullOrEmpty(title))
             {
-                await CloseCurrentSession(db, DateTime.UtcNow);
-                await db.SaveChangesAsync();
+                if (_hasActiveSession)
+                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
                 return;
             }
 
             _idleDetector.IsMediaPlaying = status == "Playing";
 
-            if (_currentSessionId != null
+            if (_hasActiveSession
                 && _currentAppName == appName
                 && _currentTitle == title
                 && _currentArtist == artist
                 && _currentStatus == status)
                 return;
 
-            await CloseCurrentSession(db, DateTime.UtcNow);
-            await StartNewSession(db, appName, title, artist, status, DateTime.UtcNow);
+            var now = DateTime.UtcNow;
+            _writeQueue.TryWrite(db =>
+            {
+                CloseCurrentSession(db, now);
+                StartNewSession(db, appName, title, artist, status, now);
+            });
 
             _logger.LogDebug("Media: {Artist} - {Title} [{Status}]", artist, title, status);
-
-            await db.SaveChangesAsync();
         }
         catch (Exception ex) when (ex is InvalidCastException
             or System.Runtime.InteropServices.InvalidComObjectException
@@ -158,42 +159,46 @@ public class MediaSessionTracker : BackgroundService
         }
     }
 
-    private async Task CloseCurrentSession(AppDbContext db, DateTime endTime)
+    private void CloseCurrentSession(AppDbContext db, DateTime endTime)
     {
-        if (_currentSessionId == null) return;
+        if (!_hasActiveSession) return;
 
-        var s = await db.MediaSessionRecords.FindAsync(_currentSessionId.Value);
-        if (s != null) s.EndTime = endTime;
+        // Find the active session (EndTime == null). There is at most one.
+        var sessions = db.MediaSessionRecords
+            .Where(m => m.EndTime == null)
+            .ToList();
+        foreach (var s in sessions) s.EndTime = endTime;
 
-        _currentSessionId = null;
+        _hasActiveSession = false;
         _currentAppName = string.Empty;
         _currentTitle = string.Empty;
         _currentArtist = string.Empty;
         _currentStatus = string.Empty;
     }
 
-    private async Task StartNewSession(AppDbContext db, string appName, string title, string artist, string status, DateTime startTime)
+    private void StartNewSession(AppDbContext db, string appName, string title, string artist, string status, DateTime startTime)
     {
-        var record = new MediaSessionRecord
+        db.MediaSessionRecords.Add(new MediaSessionRecord
         {
             StartTime = startTime,
             AppName = appName,
             Title = title,
             Artist = artist,
             PlaybackStatus = status
-        };
-        db.MediaSessionRecords.Add(record);
-        await db.SaveChangesAsync();
+        });
 
-        _currentSessionId = record.Id;
+        _hasActiveSession = true;
         _currentAppName = appName;
         _currentTitle = title;
         _currentArtist = artist;
         _currentStatus = status;
     }
 
-    private async Task SeedCurrentSession(AppDbContext db)
+    private async Task SeedCurrentSession()
     {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
         var orphan = await db.MediaSessionRecords
             .Where(m => m.EndTime == null)
             .OrderByDescending(m => m.StartTime)
@@ -202,12 +207,16 @@ public class MediaSessionTracker : BackgroundService
         if (orphan != null)
         {
             orphan.EndTime = orphan.StartTime;
+            await db.SaveChangesAsync();
             _logger.LogDebug("MediaTracker: closed orphan session from previous run (Id={Id})", orphan.Id);
         }
     }
 
-    private async Task CheckForWakeEvent(AppDbContext db)
+    private async Task CheckForWakeEvent()
     {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
         var newWake = await db.SystemEvents
             .Where(e => (e.EventType == SystemEventTypes.Wake || e.EventType == SystemEventTypes.Start)
                 && e.Timestamp > _lastWakeTime)
@@ -226,7 +235,7 @@ public class MediaSessionTracker : BackgroundService
             .FirstOrDefaultAsync();
 
         var sessionEndTime = offEvent?.Timestamp ?? newWake.Timestamp;
-        await CloseCurrentSession(db, sessionEndTime);
+        CloseCurrentSession(db, sessionEndTime);
 
         db.MediaSessionRecords.Add(new MediaSessionRecord
         {

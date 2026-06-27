@@ -78,9 +78,24 @@ public static class IconEndpoints
                 }
             }
 
-            // No cached icon data — try live PID→path resolution.
-            // Uses QueryFullProcessImageName which works cross-integrity-level,
-            // unlike Process.MainModule.FileName which fails for admin processes.
+            // No cached icon data — check system pressure before live extraction.
+            var pressure = httpContext.RequestServices.GetRequiredService<SystemPressure>().GetCurrent();
+            if (pressure != PressureLevel.Normal)
+            {
+                return Results.Ok(new
+                {
+                    processName,
+                    iconHash = "default",
+                    iconData = "",
+                    colorPrimary = "#6B7FD7",
+                    colorSecondary = "#DD7596",
+                    colorAccent = "#06D6A0",
+                    note = "Live extraction skipped due to system pressure"
+                });
+            }
+
+            // Try live PID→path resolution. Uses QueryFullProcessImageName which
+            // works cross-integrity-level, unlike Process.MainModule.FileName.
             string? exePath = null;
             try
             {

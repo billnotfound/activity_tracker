@@ -64,6 +64,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
 builder.Services.AddSingleton<IdleDetector>();
 builder.Services.AddSingleton<WriteQueue>();
+builder.Services.AddSingleton<SystemPressure>();
 
 // Trackers (BackgroundService)
 builder.Services.AddHostedService(sp => sp.GetRequiredService<WriteQueue>());

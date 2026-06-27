@@ -15,6 +15,7 @@ public class ProcessTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly ProcessNameCache _processCache;
     private readonly IconService _iconService;
+    private readonly SystemPressure _systemPressure;
     private readonly ILogger<ProcessTracker> _logger;
 
     private readonly Dictionary<int, (long DbId, string Name)> _runningProcesses = new();
@@ -27,12 +28,14 @@ public class ProcessTracker : BackgroundService
     private readonly List<(int Pid, string Name, Models.ProcessSession Session)> _reusableNewSessions = new();
 
     public ProcessTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
-        ProcessNameCache processCache, IconService iconService, ILogger<ProcessTracker> logger)
+        ProcessNameCache processCache, IconService iconService,
+        SystemPressure systemPressure, ILogger<ProcessTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
         _processCache = processCache;
         _iconService = iconService;
+        _systemPressure = systemPressure;
         _logger = logger;
     }
 
@@ -95,10 +98,18 @@ public class ProcessTracker : BackgroundService
 
     private async Task SyncProcessSessions()
     {
+        var pressure = _systemPressure.GetCurrent();
+        if (pressure >= PressureLevel.Critical)
+        {
+            _logger.LogDebug("Skipping process session sync (critical pressure)");
+            return;
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
+        var hasChanges = false;
 
         // Cache maintained by WMI events when active, otherwise poll.
         if (!_processCache.IsWmiActive)
@@ -136,6 +147,7 @@ public class ProcessTracker : BackgroundService
             var s = new Models.ProcessSession { ProcessName = name, ProcessId = pid, StartTime = now };
             db.ProcessSessions.Add(s);
             _reusableNewSessions.Add((pid, name, s));
+            hasChanges = true;
         }
 
         _reusableGoneIds.Clear();
@@ -147,6 +159,7 @@ public class ProcessTracker : BackgroundService
             {
                 _reusableGoneIds.Add(entry.DbId);
                 _reusableGonePids.Add(pid);
+                hasChanges = true;
             }
         }
 
@@ -158,16 +171,20 @@ public class ProcessTracker : BackgroundService
             foreach (var s in endedSessions) s.EndTime = now;
         }
 
-        await db.SaveChangesAsync();
+        if (hasChanges)
+            await db.SaveChangesAsync();
 
         foreach (var (pid, name, session) in _reusableNewSessions)
             _runningProcesses[pid] = (session.Id, name);
 
         foreach (var pid in _reusableGonePids) _runningProcesses.Remove(pid);
 
-        // Kick off icon collection for visible processes (fire-and-forget).
-        var visiblePids = _reusableVisiblePids.ToList();
-        _ = _iconService.EnsureIconsAsync(visiblePids);
+        // Icon collection for visible processes (fire-and-forget) — only in Normal pressure.
+        if (pressure == PressureLevel.Normal)
+        {
+            var visiblePids = _reusableVisiblePids.ToList();
+            _ = _iconService.EnsureIconsAsync(visiblePids);
+        }
     }
 
     private async Task CloseAllProcessSessions()

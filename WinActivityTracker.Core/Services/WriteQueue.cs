@@ -13,13 +13,18 @@ public sealed class WriteQueue : BackgroundService
     private readonly ILogger<WriteQueue> _logger;
 
     private const int BatchSize = 50;
+    private readonly int _capacity = 2000;
+    private DateTime _lastSuccessfulFlush = DateTime.UtcNow;
+
+    public int ChannelFillPercent => _channel.Reader.Count * 100 / _capacity;
+    public DateTime LastSuccessfulFlush => _lastSuccessfulFlush;
 
     public WriteQueue(IServiceScopeFactory scopeFactory, ILogger<WriteQueue> logger)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _channel = Channel.CreateBounded<Action<AppDbContext>>(
-            new BoundedChannelOptions(2000) { FullMode = BoundedChannelFullMode.DropOldest });
+            new BoundedChannelOptions(_capacity) { FullMode = BoundedChannelFullMode.DropOldest });
     }
 
     public bool TryWrite(Action<AppDbContext> writeOp)
@@ -47,7 +52,10 @@ public sealed class WriteQueue : BackgroundService
                 }
 
                 if (count > 0)
+                {
                     await db.SaveChangesAsync(stoppingToken);
+                    _lastSuccessfulFlush = DateTime.UtcNow;
+                }
             }
             catch (OperationCanceledException)
             {
@@ -73,7 +81,10 @@ public sealed class WriteQueue : BackgroundService
                     catch (Exception ex) { _logger.LogError(ex, "WriteQueue final drain op failed, skipping"); }
                 }
                 if (count > 0)
+                {
                     await finalDb.SaveChangesAsync(CancellationToken.None);
+                    _lastSuccessfulFlush = DateTime.UtcNow;
+                }
             }
             catch (Exception ex)
             {

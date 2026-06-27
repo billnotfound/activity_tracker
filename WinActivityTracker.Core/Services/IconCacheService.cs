@@ -14,6 +14,7 @@ public class IconCacheService : BackgroundService
     private readonly ILogger<IconCacheService> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IconService _iconService;
+    private readonly SystemPressure _systemPressure;
 
     // In-memory cache of process names that have icons extracted
     private readonly ConcurrentDictionary<string, bool> _extractedIcons = new();
@@ -27,11 +28,13 @@ public class IconCacheService : BackgroundService
     public IconCacheService(
         ILogger<IconCacheService> logger,
         IServiceScopeFactory scopeFactory,
-        IconService iconService)
+        IconService iconService,
+        SystemPressure systemPressure)
     {
         _logger = logger;
         _scopeFactory = scopeFactory;
         _iconService = iconService;
+        _systemPressure = systemPressure;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -103,6 +106,12 @@ public class IconCacheService : BackgroundService
     /// </summary>
     private async Task RecheckAllKnownProcesses()
     {
+        if (_systemPressure.GetCurrent() != PressureLevel.Normal)
+        {
+            _logger.LogDebug("Skipping hourly icon re-check (system pressure)");
+            return;
+        }
+
         _logger.LogDebug("Hourly icon re-check for {Count} processes", _extractedIcons.Count);
         foreach (var (processName, hasIcon) in _extractedIcons)
         {
@@ -120,6 +129,12 @@ public class IconCacheService : BackgroundService
 
     private async Task ProcessExtractionQueue()
     {
+        if (_systemPressure.GetCurrent() != PressureLevel.Normal)
+        {
+            _logger.LogDebug("Deferring icon extraction queue (system pressure)");
+            return;
+        }
+
         while (_extractionQueue.TryDequeue(out var processName))
         {
             try

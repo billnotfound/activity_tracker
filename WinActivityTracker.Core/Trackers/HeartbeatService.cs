@@ -4,19 +4,23 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
+using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Core.Trackers;
 
 public class HeartbeatService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly WriteQueue _writeQueue;
     private readonly ILogger<HeartbeatService> _logger;
     private const int IntervalSec = 30;
     private const int GapThresholdSec = 33;
 
-    public HeartbeatService(IServiceScopeFactory scopeFactory, ILogger<HeartbeatService> logger)
+    public HeartbeatService(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
+        ILogger<HeartbeatService> logger)
     {
         _scopeFactory = scopeFactory;
+        _writeQueue = writeQueue;
         _logger = logger;
     }
 
@@ -66,26 +70,37 @@ public class HeartbeatService : BackgroundService
         if (shutdown != null)
         {
             _logger.LogInformation("Shutdown detected: off for {Gap}s", gapSec);
-            shutdown.DurationSeconds = (now - shutdown.Timestamp).TotalSeconds;
-            db.SystemEvents.Add(new SystemEvent
+            // Route gap event writes through WriteQueue to avoid adding I/O
+            // pressure to the heartbeat's own SaveChangesAsync.
+            var sdId = shutdown.Id;
+            var sdDuration = (now - shutdown.Timestamp).TotalSeconds;
+            _writeQueue.TryWrite(wdb =>
             {
-                EventType = SystemEventTypes.Start,
-                Timestamp = now
+                var s = wdb.SystemEvents.Find(sdId);
+                if (s != null) s.DurationSeconds = sdDuration;
+                wdb.SystemEvents.Add(new SystemEvent
+                {
+                    EventType = SystemEventTypes.Start,
+                    Timestamp = now
+                });
             });
         }
         else
         {
             _logger.LogInformation("Sleep/wake: {Gap}s gap", gapSec);
-            db.SystemEvents.Add(new SystemEvent
+            _writeQueue.TryWrite(wdb =>
             {
-                EventType = SystemEventTypes.Sleep,
-                Timestamp = lastHeartbeat,
-                DurationSeconds = gapSec
-            });
-            db.SystemEvents.Add(new SystemEvent
-            {
-                EventType = SystemEventTypes.Wake,
-                Timestamp = now
+                wdb.SystemEvents.Add(new SystemEvent
+                {
+                    EventType = SystemEventTypes.Sleep,
+                    Timestamp = lastHeartbeat,
+                    DurationSeconds = gapSec
+                });
+                wdb.SystemEvents.Add(new SystemEvent
+                {
+                    EventType = SystemEventTypes.Wake,
+                    Timestamp = now
+                });
             });
         }
     }

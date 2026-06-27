@@ -19,6 +19,7 @@ public class WindowTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly ProcessNameCache _processCache;
     private readonly IconCacheService _iconCache;
+    private readonly SystemPressure _systemPressure;
     private readonly ILogger<WindowTracker> _logger;
 
     private string _currentProcess = string.Empty;
@@ -40,7 +41,7 @@ public class WindowTracker : BackgroundService
 
     public WindowTracker(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
         IdleDetector idleDetector, SettingsService settings, ProcessNameCache processCache,
-        IconCacheService iconCache, ILogger<WindowTracker> logger)
+        IconCacheService iconCache, SystemPressure systemPressure, ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _writeQueue = writeQueue;
@@ -48,6 +49,7 @@ public class WindowTracker : BackgroundService
         _settings = settings;
         _processCache = processCache;
         _iconCache = iconCache;
+        _systemPressure = systemPressure;
         _logger = logger;
     }
 
@@ -221,10 +223,18 @@ public class WindowTracker : BackgroundService
 
     private async Task SyncWindowSessions()
     {
+        if (_systemPressure.GetCurrent() != PressureLevel.Normal)
+        {
+            _logger.LogDebug("Skipping window session sync (pressure: {Pressure}, fill: {Fill}%)",
+                _systemPressure.GetCurrent(), _writeQueue.ChannelFillPercent);
+            return;
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var now = DateTime.UtcNow;
         var excluded = _settings.Settings.ExcludedProcesses;
+        var hasChanges = false;
 
         EnumerateVisibleWindowsInto(_reusableWindows, _processCache);
 
@@ -245,6 +255,7 @@ public class WindowTracker : BackgroundService
                     var s = new Models.WindowSession { ProcessName = process, WindowTitle = title, OpenTime = now };
                     db.WindowSessions.Add(s);
                     _reusablePendingAdds.Add((hwnd, s, process, title));
+                    hasChanges = true;
                 }
             }
             else
@@ -252,6 +263,7 @@ public class WindowTracker : BackgroundService
                 var s = new Models.WindowSession { ProcessName = process, WindowTitle = title, OpenTime = now };
                 db.WindowSessions.Add(s);
                 _reusablePendingAdds.Add((hwnd, s, process, title));
+                hasChanges = true;
             }
         }
 
@@ -262,6 +274,7 @@ public class WindowTracker : BackgroundService
             {
                 _reusableIdsToClose.Add(entry.DbId);
                 _reusableGoneHwnds.Add(hwnd);
+                hasChanges = true;
             }
         }
 
@@ -272,7 +285,8 @@ public class WindowTracker : BackgroundService
             _reusableIdsToClose.Clear();
         }
 
-        await db.SaveChangesAsync();
+        if (hasChanges)
+            await db.SaveChangesAsync();
 
         foreach (var (hwnd, session, process, title) in _reusablePendingAdds)
             _openWindows[hwnd] = (session.Id, process, title);

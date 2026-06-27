@@ -56,4 +56,16 @@ public class TrackerSettings
     // Minutes of inactivity before the web server auto-stops. Default: 3.
     // Dashboard frontend polling resets this timer continuously while the tab is open.
     public int WebIdleTimeoutMinutes { get; set; } = 3;
+
+    // ===== 写入压力节流 =====
+    // 是否启用压力节流。压力大时跳过非核心写入和图标提取。默认 true。
+    public bool PressureThrottlingEnabled { get; set; } = true;
+    // 高压力：WriteQueue 通道填充百分比阈值。最小 20，最大 90，默认 30。
+    public int PressureElevatedFillPercent { get; set; } = 30;
+    // 严重压力：WriteQueue 通道填充百分比阈值。最小 50，最大 95，默认 70。
+    public int PressureCriticalFillPercent { get; set; } = 70;
+    // 高压力：刷盘延迟秒数阈值。最小 1，默认 3。
+    public int PressureElevatedLatencySec { get; set; } = 3;
+    // 严重压力：刷盘延迟秒数阈值。最小 5，默认 10。
+    public int PressureCriticalLatencySec { get; set; } = 10;
 }

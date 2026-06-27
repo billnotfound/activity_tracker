@@ -20,12 +20,14 @@ namespace WinActivityTracker.Core.Services;
 public class IconService
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly SystemPressure _systemPressure;
     private readonly ILogger<IconService> _logger;
     private readonly ConcurrentDictionary<string, string> _cache = new(); // path → hash
 
-    public IconService(IServiceScopeFactory scopeFactory, ILogger<IconService> logger)
+    public IconService(IServiceScopeFactory scopeFactory, SystemPressure systemPressure, ILogger<IconService> logger)
     {
         _scopeFactory = scopeFactory;
+        _systemPressure = systemPressure;
         _logger = logger;
     }
 
@@ -74,6 +76,12 @@ public class IconService
 
     private async Task EnsureIconAsync(int pid, string? processName = null)
     {
+        if (_systemPressure.GetCurrent() != PressureLevel.Normal)
+        {
+            _logger.LogDebug("Deferring icon extraction for PID {Pid} (system pressure)", pid);
+            return;
+        }
+
         string? path;
         try
         {

@@ -64,6 +64,22 @@ public class SettingsService
         ["AutoStartEnabled"] = new[] {
             "// ===== 开机自启 =====",
             "// 启动时从注册表同步。"
+        },
+        ["PressureThrottlingEnabled"] = new[] {
+            "// ===== 写入压力节流 =====",
+            "// 是否启用写入压力节流。系统 I/O 压力大时自动跳过非核心写入。"
+        },
+        ["PressureElevatedFillPercent"] = new[] {
+            "// WriteQueue 通道填充百分比阈值 —— 触发高压力模式。范围 20-90，默认 30。"
+        },
+        ["PressureCriticalFillPercent"] = new[] {
+            "// WriteQueue 通道填充百分比阈值 —— 触发严重压力模式。范围 50-95，默认 70。"
+        },
+        ["PressureElevatedLatencySec"] = new[] {
+            "// 最近一次成功刷盘距今秒数阈值 —— 触发高压力模式。最小 1，默认 3。"
+        },
+        ["PressureCriticalLatencySec"] = new[] {
+            "// 最近一次成功刷盘距今秒数阈值 —— 触发严重压力模式。最小 5，默认 10。"
         }
     };
 
@@ -82,6 +98,10 @@ public class SettingsService
         ["IdleThresholdMinutes"] = (1, int.MaxValue),
         ["DataRetentionDays"] = (1, int.MaxValue),
         ["ApiPort"] = (1024, 65535),
+        ["PressureElevatedFillPercent"] = (20, 90),
+        ["PressureCriticalFillPercent"] = (50, 95),
+        ["PressureElevatedLatencySec"] = (1, int.MaxValue),
+        ["PressureCriticalLatencySec"] = (5, int.MaxValue),
     };
 
     private static readonly PropertyInfo[] SettingProperties = typeof(TrackerSettings)
