@@ -38,12 +38,21 @@ public class TitleNormalizer
         return _rules.Values.ToList();
     }
 
+    public string Apply(string process, string title)
+    {
+        ReloadIfChanged();
+        if (!_rules.TryGetValue(process, out var rule)) return title;
+        if (!rule.ApplyOnWrite) return title;
+        return rule.Apply(title) ?? title;
+    }
+
     public class TitleRule
     {
         public string? Process { get; set; }
         public string? Title { get; set; }
         public string? TitleRegex { get; set; }
         public string? TitleReplacement { get; set; }
+        public bool ApplyOnWrite { get; set; } = false;
 
         [JsonIgnore]
         public string? ErrorMessage { get; set; }

@@ -20,6 +20,7 @@ public class WindowTracker : BackgroundService
     private readonly ProcessNameCache _processCache;
     private readonly IconCacheService _iconCache;
     private readonly SystemPressure _systemPressure;
+    private readonly TitleNormalizer _titleNormalizer;
     private readonly ILogger<WindowTracker> _logger;
 
     private string _currentProcess = string.Empty;
@@ -41,7 +42,8 @@ public class WindowTracker : BackgroundService
 
     public WindowTracker(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
         IdleDetector idleDetector, SettingsService settings, ProcessNameCache processCache,
-        IconCacheService iconCache, SystemPressure systemPressure, ILogger<WindowTracker> logger)
+        IconCacheService iconCache, SystemPressure systemPressure, TitleNormalizer titleNormalizer,
+        ILogger<WindowTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _writeQueue = writeQueue;
@@ -50,6 +52,7 @@ public class WindowTracker : BackgroundService
         _processCache = processCache;
         _iconCache = iconCache;
         _systemPressure = systemPressure;
+        _titleNormalizer = titleNormalizer;
         _logger = logger;
     }
 
@@ -188,6 +191,8 @@ public class WindowTracker : BackgroundService
 
         _currentProcess = string.Empty;
         _currentTitle = string.Empty;
+
+        title = _titleNormalizer.Apply(process, title);
 
         _writeQueue.TryWrite(db =>
         {

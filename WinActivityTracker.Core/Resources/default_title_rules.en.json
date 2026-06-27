@@ -13,6 +13,7 @@
   { "_comment": "  title: fixed replacement title (optional)" },
   { "_comment": "  titleRegex: regex match pattern (optional)" },
   { "_comment": "  titleReplacement: regex replacement string (optional)" },
+  { "_comment": "  applyOnWrite: when true, the rule is applied in real-time before writing to DB (default false)" },
   { "_comment": "" },
   { "_comment": "=== Browsers ===" },
   { "process": "firefox",            "title": "Mozilla Firefox" },

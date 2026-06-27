@@ -13,6 +13,7 @@
   { "_comment": "  title: 固定替换后的标题（可选）" },
   { "_comment": "  titleRegex: 正则匹配模式（可选）" },
   { "_comment": "  titleReplacement: 正则替换内容（可选）" },
+  { "_comment": "  applyOnWrite: 为 true 时，规则在写入数据库前实时生效（默认 false）" },
   { "_comment": "" },
   { "_comment": "=== 浏览器 ===" },
   { "process": "firefox",            "title": "Mozilla Firefox" },
