@@ -26,4 +26,11 @@
     <PackageReference Include="System.Management" Version="10.0.9" />
   </ItemGroup>
 
+  <!-- Override transitive SQLitePCLRaw 2.1.11 (vulnerable: CVE-2025-6965 / GHSA-2m69-gcr7-jv3q,
+       SQLite < 3.50.2 memory corruption) with the patched 3.0.3 bundle which
+       ships SQLite 3.50.3. EF Core 10.0.8 pulls in 2.1.11 by default. -->
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+  </ItemGroup>
+
 </Project>

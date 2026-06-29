@@ -115,9 +115,9 @@ code, pre, .code, .mono {
   }
 }
 
-// PrimeVue TabView override - Memphis button style
-.p-tabview {
-  .p-tabview-nav {
+// PrimeVue Tabs override - Memphis button style
+.p-tabs {
+  .p-tablist {
     border: none !important;
     background: transparent !important;
     display: flex;
@@ -125,7 +125,7 @@ code, pre, .code, .mono {
     padding: 0 !important;
     margin-bottom: 24px;
 
-    .p-tabview-nav-link {
+    .p-tab {
       border-radius: 0 !important;
       border: 2px solid var(--surface-200) !important;
       background: var(--surface-card) !important;
@@ -149,7 +149,7 @@ code, pre, .code, .mono {
       }
     }
 
-    .p-highlight .p-tabview-nav-link {
+    .p-tab-active {
       background: var(--primary-color) !important;
       color: white !important;
       border-color: var(--primary-color) !important;
@@ -157,7 +157,7 @@ code, pre, .code, .mono {
     }
   }
 
-  .p-tabview-panels {
+  .p-tabpanels {
     border: none !important;
     border-radius: 0 !important;
     background: transparent !important;

@@ -11,10 +11,17 @@
       <span v-if="saving" class="spinner">⏳</span>
     </div>
 
-    <!-- TabView -->
-    <TabView class="memphis-tabview">
+    <!-- Tabs -->
+    <Tabs value="appearance" class="memphis-tabs">
+      <TabList>
+        <Tab value="appearance">{{ t('settings.tab.appearance') }}</Tab>
+        <Tab value="tracking">{{ t('settings.tab.tracking') }}</Tab>
+        <Tab value="database">{{ t('settings.tab.database') }}</Tab>
+        <Tab value="licenses">{{ t('settings.tab.licenses') }}</Tab>
+      </TabList>
+      <TabPanels>
       <!-- Appearance Tab -->
-      <TabPanel :header="t('settings.tab.appearance')">
+      <TabPanel value="appearance">
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.card.language') }}</h3>
           <div class="language-selector">
@@ -54,7 +61,7 @@
 
           <h3 class="section-title">{{ t('settings.appearance.darkMode') }}</h3>
           <div class="toggle-row">
-            <InputSwitch v-model="theme.isDark" />
+            <ToggleSwitch v-model="theme.isDark" />
             <span class="toggle-label">{{ theme.isDark ? t('settings.appearance.dark') : t('settings.appearance.light') }}</span>
           </div>
 
@@ -84,18 +91,18 @@
 
           <h3 class="section-title">{{ t('settings.appearance.autoColor') }}</h3>
           <div class="toggle-row">
-            <InputSwitch v-model="theme.autoColor" />
+            <ToggleSwitch v-model="theme.autoColor" />
             <span class="toggle-label">{{ t('settings.appearance.autoColorHelp') }}</span>
           </div>
         </MemphisCard>
       </TabPanel>
 
       <!-- Tracking Tab -->
-      <TabPanel :header="t('settings.tab.tracking')">
+      <TabPanel value="tracking">
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.tracking.status') }}</h3>
           <div class="toggle-row mb-3">
-            <InputSwitch v-model="form.trackingEnabled" />
+            <ToggleSwitch v-model="form.trackingEnabled" />
             <span class="toggle-label">
               <strong>{{ form.trackingEnabled ? t('settings.trackingEnabled') : t('settings.trackingPaused') }}</strong>
             </span>
@@ -158,7 +165,7 @@
       </TabPanel>
 
       <!-- Database Tab -->
-      <TabPanel :header="t('settings.tab.database')">
+      <TabPanel value="database">
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.database.dataRetention') }}</h3>
           <div class="input-field">
@@ -231,7 +238,7 @@
       </TabPanel>
 
       <!-- Third-Party Licenses Tab -->
-      <TabPanel :header="t('settings.tab.licenses')">
+      <TabPanel value="licenses">
         <MemphisCard>
           <h3 class="section-title">{{ t('licenses.pageTitle') }}</h3>
           <p class="license-intro">{{ t('licenses.description') }}</p>
@@ -281,7 +288,8 @@ https://ubuntu.com/legal/font-licence</pre>
           </div>
         </MemphisCard>
       </TabPanel>
-    </TabView>
+      </TabPanels>
+    </Tabs>
 
     <!-- Save Button -->
     <div class="save-section">
@@ -301,9 +309,12 @@ import { ref, reactive, inject, onMounted, computed } from 'vue'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
 import MemphisCard from '../components/MemphisCard.vue'
-import TabView from 'primevue/tabview'
+import Tabs from 'primevue/tabs'
+import TabList from 'primevue/tablist'
+import Tab from 'primevue/tab'
+import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
-import InputSwitch from 'primevue/inputswitch'
+import ToggleSwitch from 'primevue/toggleswitch'
 import InputNumber from 'primevue/inputnumber'
 import Checkbox from 'primevue/checkbox'
 import Button from 'primevue/button'
