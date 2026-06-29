@@ -16,7 +16,7 @@
     <!-- Error -->
     <div v-if="error" class="error-banner mb-3">
       {{ error }}
-      <button class="close-btn" @click="error = ''">✕</button>
+      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')">✕</button>
     </div>
 
     <!-- Visual timeline -->
@@ -61,7 +61,7 @@ import { toLocalTime, parseUtcTs, toLocalDatetimeString, fmtShortDur } from '../
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
-import * as echarts from 'echarts'
+import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
@@ -93,6 +93,14 @@ let timelineChart = null
 // only the call whose ID still matches when it reaches renderTimeline() proceeds.
 let loadId = 0
 
+// Cache process colors keyed by `${processName}|${atTime}` so re-renders
+// (e.g. theme toggle, resize) don't re-fetch /api/icons for the same range.
+const colorCache = new Map()
+
+// Aborted on unmount so in-flight fetches don't keep running after the
+// view is gone. Per-instance (re-created each time the view is mounted).
+const abortController = new AbortController()
+
 // Handle time change from picker
 function handleTimeChange({ start, end, valid, easterEgg }) {
   startDate.value = start
@@ -106,7 +114,7 @@ function handleTimeChange({ start, end, valid, easterEgg }) {
 
 onMounted(async () => {
   try {
-    const r = await fetch(`${apiBase}/api/settings`)
+    const r = await fetch(`${apiBase}/api/settings`, { signal: abortController.signal })
     if (r.ok) {
       const s = await r.json()
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
@@ -117,7 +125,7 @@ onMounted(async () => {
 
   // Fetch oldest record to constrain time picker
   try {
-    const r = await fetch(`${apiBase}/api/db/stats`)
+    const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
     if (r.ok) {
       const stats = await r.json()
       if (stats.oldestRecord) {
@@ -143,6 +151,7 @@ watch(isDark, () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  abortController.abort()
 
   if (timelineChart && !timelineChart.isDisposed()) {
     try {
@@ -188,7 +197,7 @@ async function loadData() {
     // Load summary
     const summaryUrl = `${apiBase}/api/summary/range?from=${fromStr}&to=${toStr}`
     console.log('Fetching summary:', summaryUrl)
-    const r1 = await fetch(summaryUrl)
+    const r1 = await fetch(summaryUrl, { signal: abortController.signal })
     if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
     const res = await r1.json()
     const rawData = Array.isArray(res) ? res : res.items || []
@@ -229,7 +238,7 @@ async function loadData() {
 
     const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromStr}&to=${toStr}&limit=${timelineLimit}`
     console.log('Fetching timeline:', timelineUrl, `(range: ${rangeInHours.toFixed(1)} hours / ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
-    const r2 = await fetch(timelineUrl)
+    const r2 = await fetch(timelineUrl, { signal: abortController.signal })
     if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
     const timelineRes = await r2.json()
     const timelineData = timelineRes.data || timelineRes
@@ -260,7 +269,7 @@ async function loadData() {
     // Load system events (sleep/shutdown/idle periods)
     const eventsUrl = `${apiBase}/api/system/events?from=${fromStr}&to=${toStr}`
     console.log('Fetching system events:', eventsUrl)
-    const r3 = await fetch(eventsUrl)
+    const r3 = await fetch(eventsUrl, { signal: abortController.signal })
     if (r3.ok) {
       systemEvents.value = await r3.json()
       console.log('System events:', systemEvents.value.length, 'events')
@@ -271,7 +280,7 @@ async function loadData() {
     // Load window sessions (for background running apps)
     const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromStr}&to=${toStr}&limit=10000`
     console.log('Fetching window sessions:', sessionsUrl)
-    const r4 = await fetch(sessionsUrl)
+    const r4 = await fetch(sessionsUrl, { signal: abortController.signal })
     if (r4.ok) {
       windowSessions.value = await r4.json()
       console.log('Window sessions:', windowSessions.value.length)
@@ -384,18 +393,25 @@ async function renderTimeline(myLoadId) {
 
   console.log(`${allProcessNames.length} processes across ${Object.keys(dayStats).length} days, ${rowProcs.length} rows`)
 
-  // Step 3.5: Fetch colors for all processes (time-aware — use range start date)
+  // Step 3.5: Fetch colors for all processes (time-aware — use range start date).
+  // Cached by process+atTime so re-renders (theme toggle, resize) don't re-fetch.
   const atTime = startDate.value.toISOString()
   const colorPromises = allProcessNames.map(async (processName) => {
+    const cacheKey = `${processName}|${atTime}`
+    const cached = colorCache.get(cacheKey)
+    if (cached) return cached
     try {
-      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`)
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`, { signal: abortController.signal })
       if (response.ok) {
         const iconData = await response.json()
-        return iconData.colorPrimary || '#6B7FD7'
+        const color = iconData.colorPrimary || '#6B7FD7'
+        colorCache.set(cacheKey, color)
+        return color
       }
     } catch (e) {
       console.warn(`Failed to fetch color for ${processName}:`, e)
     }
+    colorCache.set(cacheKey, '#6B7FD7')
     return '#6B7FD7'
   })
 
@@ -987,22 +1003,6 @@ function renderBar(params, api) {
     style: api.style(),
   }
 }
-
-function getProcessColor(name) {
-  const primary = getComputedStyle(document.documentElement)
-    .getPropertyValue('--primary-color')
-    .trim()
-  const secondary = getComputedStyle(document.documentElement)
-    .getPropertyValue('--secondary-color')
-    .trim()
-  const accent = getComputedStyle(document.documentElement)
-    .getPropertyValue('--accent-color')
-    .trim()
-
-  const colors = [primary, secondary, accent, '#06D6A0', '#9B5DE5', '#F15BB5']
-  const hash = name.split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
-  return colors[Math.abs(hash) % colors.length]
-}
 </script>
 
 <style lang="scss" scoped>
@@ -1084,7 +1084,6 @@ function getProcessColor(name) {
   width: 100%;
   height: 440px;
   margin-bottom: 16px;
-  border: 2px solid var(--primary-color); /* 调试：确认容器可见 */
   background: var(--surface-card);
 }
 

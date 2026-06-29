@@ -1,5 +1,17 @@
 import { ref, reactive } from 'vue'
 
+// i18n messages are bundled at build time (Vite JSON imports) instead of
+// fetched at runtime, so first paint doesn't block on a /i18n/*.json round-trip
+// — important here because DashboardServer starts on-demand and the first
+// dashboard open already pays a Kestrel cold-start.
+import zhCN from './zh-CN.json'
+import enUS from './en-US.json'
+
+const BUNDLED = {
+  'zh-CN': zhCN,
+  'en-US': enUS,
+}
+
 const locale = ref('zh-CN')
 export const messages = reactive({})
 
@@ -13,73 +25,42 @@ function detectLanguage() {
 
 export async function initI18n() {
   locale.value = detectLanguage()
-  await loadMessages(locale.value)
+  loadMessages(locale.value)
 }
 
-async function loadMessages(lang) {
-  let data = null
-
-  // Try requested locale
-  try {
-    const resp = await fetch(`/i18n/${lang}.json`)
-    if (resp.ok) {
-      data = await resp.json()
-      console.log(`[i18n] Loaded ${lang}: ${Object.keys(data).length} keys, ${resp.headers.get('content-type') || 'no content-type'}`)
-    } else {
-      console.warn(`[i18n] HTTP ${resp.status} for ${lang}, content-type: ${resp.headers.get('content-type')}`)
-    }
-  } catch (e) {
-    console.warn(`[i18n] Failed to load ${lang}:`, e.message || e)
-  }
-
-  // Fallback to en-US
-  if (!data && lang !== 'en-US') {
-    try {
-      const resp = await fetch('/i18n/en-US.json')
-      if (resp.ok) {
-        data = await resp.json()
-        console.log(`[i18n] Loaded en-US fallback: ${Object.keys(data).length} keys`)
-      } else {
-        console.warn(`[i18n] en-US fallback HTTP ${resp.status}`)
-      }
-    } catch (e2) {
-      console.warn('[i18n] en-US fallback failed:', e2.message || e2)
-    }
-  }
-
-  // Only mutate messages when we have valid data — never leave it empty
+function loadMessages(lang) {
+  const data = BUNDLED[lang] || BUNDLED['en-US']
   if (data && typeof data === 'object' && Object.keys(data).length > 0) {
     Object.keys(messages).forEach(k => delete messages[k])
     Object.assign(messages, data)
-    console.log(`[i18n] messages now has ${Object.keys(messages).length} keys`)
-  } else if (!data) {
-    console.warn(`[i18n] No messages loaded for ${lang}, keeping existing (${Object.keys(messages).length} keys)`)
   }
 }
 
 // Re-initialize after HMR to avoid empty messages
 if (import.meta.hot) {
-  import.meta.hot.accept(() => {
-    initI18n()
+  import.meta.hot.accept(async () => {
+    await initI18n()
   })
 }
 
+// Standalone t() — usable from non-component modules (e.g. utils/time.js)
+// without going through useI18n(). Reads the same shared `messages` object.
+export function t(key, args = {}) {
+  let msg = messages[key]
+  if (msg === undefined) return key
+  if (typeof args === 'object') {
+    for (const [k, v] of Object.entries(args))
+      msg = msg.split(`{${k}}`).join(String(v))
+  }
+  return msg
+}
+
+async function setLocale(lang) {
+  locale.value = lang
+  localStorage.setItem('locale', lang)
+  loadMessages(lang)
+}
+
 export function useI18n() {
-  function t(key, args = {}) {
-    let msg = messages[key]
-    if (msg === undefined) return key
-    if (typeof args === 'object') {
-      for (const [k, v] of Object.entries(args))
-        msg = msg.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v))
-    }
-    return msg
-  }
-
-  async function setLocale(lang) {
-    locale.value = lang
-    localStorage.setItem('locale', lang)
-    await loadMessages(lang)
-  }
-
   return { t, setLocale, locale }
 }

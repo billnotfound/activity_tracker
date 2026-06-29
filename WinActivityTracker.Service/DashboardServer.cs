@@ -18,6 +18,7 @@ public class DashboardServer
     private WebApplication? _app;
     private DateTime _lastRequestTime;
     private CancellationTokenSource? _idleCts;
+    private Microsoft.Extensions.FileProviders.PhysicalFileProvider? _fileProvider;
     private readonly object _lock = new();
 
     public bool IsRunning { get; private set; }
@@ -87,7 +88,6 @@ public class DashboardServer
             app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = fp });
             app.UseStaticFiles(new StaticFileOptions { FileProvider = fp });
         }
-
         // API endpoints
         app.MapAdminEndpoints();
         app.MapFocusEndpoints();
@@ -114,6 +114,7 @@ public class DashboardServer
         lock (_lock)
         {
             _app = app;
+            _fileProvider = fp;
             IsRunning = true;
         }
 
@@ -125,11 +126,14 @@ public class DashboardServer
     public async Task StopAsync()
     {
         WebApplication? app;
+        Microsoft.Extensions.FileProviders.PhysicalFileProvider? fp;
         lock (_lock)
         {
             if (_app == null) return;
             app = _app;
+            fp = _fileProvider;
             _app = null;
+            _fileProvider = null;
             IsRunning = false;
         }
 
@@ -141,6 +145,13 @@ public class DashboardServer
         catch (ObjectDisposedException) { }
 
         try { await app.DisposeAsync(); }
+        catch { }
+
+        // PhysicalFileProvider holds a FileSystemWatcher on wwwroot; it is
+        // not owned by the WebApplication's DI container (passed via
+        // StaticFileOptions), so app.DisposeAsync won't release it. Each
+        // open/close cycle leaks ~5 native handles if not disposed here.
+        try { fp?.Dispose(); }
         catch { }
 
         _portWatcher.Start();

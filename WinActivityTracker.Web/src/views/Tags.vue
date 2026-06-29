@@ -11,11 +11,11 @@
     </div>
     <div v-if="savedMsg" class="alert-banner success mb-3">
       {{ savedMsg }}
-      <button class="close-btn" @click="savedMsg = ''">✕</button>
+      <button class="close-btn" @click="savedMsg = ''" :aria-label="t('common.close')">✕</button>
     </div>
     <div v-if="saveError" class="alert-banner error mb-3">
       {{ saveError }}
-      <button class="close-btn" @click="saveError = ''">✕</button>
+      <button class="close-btn" @click="saveError = ''" :aria-label="t('common.close')">✕</button>
     </div>
 
     <!-- Rules table -->
@@ -98,7 +98,7 @@
           <template #body="{ index }">
             <button
               class="delete-btn"
-              @click="rules.splice(index, 1)"
+              @click="removeRule(index)"
               :title="t('common.delete')"
             >
               <i class="pi pi-trash"></i>
@@ -138,12 +138,33 @@ const newCount = computed(() => rules.value.filter(r => !r._saved).length)
 
 let timer = null
 
-onMounted(() => {
+function startPolling() {
+  stopPolling()
   loadRules()
   timer = setInterval(loadRules, 2000)
+}
+
+function stopPolling() {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+
+function handleVisibility() {
+  if (document.hidden) stopPolling()
+  else startPolling()
+}
+
+onMounted(() => {
+  startPolling()
+  document.addEventListener('visibilitychange', handleVisibility)
 })
 
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => {
+  stopPolling()
+  document.removeEventListener('visibilitychange', handleVisibility)
+})
 
 function key(r) {
   return `${r.tag}|${r.process}|${r.titlePattern}`
@@ -191,6 +212,10 @@ function addRule() {
     mode: 'Coexist',
     _saved: false,
   })
+}
+
+function removeRule(index) {
+  rules.value.splice(index, 1)
 }
 
 async function saveRules() {

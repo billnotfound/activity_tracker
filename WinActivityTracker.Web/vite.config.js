@@ -23,6 +23,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'wwwroot',
-    emptyOutDir: true
+    emptyOutDir: true,
+    // Drop console.* and debugger in production builds.
+    // Dev server keeps them for debugging.
+    esbuild: {
+      drop: ['console', 'debugger'],
+    },
   }
 })

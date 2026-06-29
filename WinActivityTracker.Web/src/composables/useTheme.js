@@ -55,19 +55,20 @@ const activeTheme = computed(() =>
 )
 
 // ---------- core: write CSS vars to :root ----------
+let prevThemeId = null
+
 function applyTheme() {
   if (typeof document === 'undefined') return
 
   const theme = activeTheme.value
   const root = document.documentElement
 
-  // Switch body classes (lets SCSS target .dark-mode etc.)
+  // Swap theme-* class directly instead of scanning classList.
+  if (prevThemeId) root.classList.remove(`theme-${prevThemeId}`)
   root.classList.remove('dark-mode')
-  root.classList.forEach(cls => {
-    if (cls.startsWith('theme-')) root.classList.remove(cls)
-  })
   root.classList.add(`theme-${theme.id}`)
   if (theme.isDark) root.classList.add('dark-mode')
+  prevThemeId = theme.id
 
   // Apply colors as CSS variables
   for (const [key, value] of Object.entries(theme.colors)) {
@@ -93,11 +94,13 @@ function saveSettings() {
   }))
 }
 
-// Re-apply whenever any input changes
+// Re-apply whenever any input changes.
+// No deep: true — overrides.value is replaced (not mutated) on every
+// setOverride, so a shallow watch catches the change.
 watch([isDark, lightTheme, darkTheme, overrides], () => {
   applyTheme()
   saveSettings()
-}, { deep: true })
+})
 
 watch([autoColor, pageTransition], saveSettings)
 

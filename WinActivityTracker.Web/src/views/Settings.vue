@@ -300,7 +300,6 @@ https://ubuntu.com/legal/font-licence</pre>
 import { ref, reactive, inject, onMounted, computed } from 'vue'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
-import { toLocalString } from '../utils/time.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'

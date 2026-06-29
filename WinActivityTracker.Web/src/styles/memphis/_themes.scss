@@ -7,7 +7,7 @@
 // special decorations, dark-mode-only effects).
 // ============================================================
 
-@import './variables';
+@use './variables' as *;
 
 // Clean background — no patterns, lets the theme color shine
 .memphis-background {

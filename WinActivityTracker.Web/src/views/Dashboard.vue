@@ -27,7 +27,7 @@
     <!-- Error -->
     <div v-if="error" class="error-banner mb-3">
       {{ error }}
-      <button class="close-btn" @click="error = ''">✕</button>
+      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')">✕</button>
     </div>
 
     <!-- Charts row -->
@@ -82,7 +82,7 @@ import { fmtShortDur, parseUtcTs, toLocalDateString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
-import * as echarts from 'echarts'
+import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
@@ -230,6 +230,13 @@ watch(period, updateFrame)
 const focusChartRef = ref(null)
 let focusChart = null
 let timer = null
+// Race guard: each loadSummary() call increments loadId; stale calls
+// bail before writing summary.value / rendering charts.
+let loadId = 0
+// Aborted on unmount so in-flight fetches don't keep running after the
+// view is gone (their result writes would be dropped by loadId anyway,
+// but this saves the bandwidth/CPU).
+const abortController = new AbortController()
 
 function setPeriod(p) {
   period.value = p
@@ -239,15 +246,29 @@ function setPeriod(p) {
     wheelMonth.value = now.getMonth() + 1
     wheelDay.value = now.getDate()
   }
-  clearInterval(timer)
+  startPolling()
+}
+
+function onPickDate() {
+  startPolling()
+}
+
+function startPolling() {
+  stopPolling()
   loadSummary()
   timer = setInterval(loadSummary, 2000)
 }
 
-function onPickDate() {
-  clearInterval(timer)
-  loadSummary()
-  timer = setInterval(loadSummary, 2000)
+function stopPolling() {
+  if (timer) {
+    clearInterval(timer)
+    timer = null
+  }
+}
+
+function handleVisibility() {
+  if (document.hidden) stopPolling()
+  else startPolling()
 }
 
 function periodRange() {
@@ -329,7 +350,7 @@ const totalListenFmt = computed(() => {
 
 onMounted(async () => {
   try {
-    const r = await fetch(`${apiBase}/api/settings`)
+    const r = await fetch(`${apiBase}/api/settings`, { signal: abortController.signal })
     if (r.ok) {
       const s = await r.json()
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
@@ -338,14 +359,15 @@ onMounted(async () => {
     console.error('Failed to load settings:', e)
   }
   await loadSummary()
-  timer = setInterval(loadSummary, 2000)
+  startPolling()
 
-  // Add window resize listener for chart responsiveness
+  // Add window listeners
   window.addEventListener('resize', handleResize)
+  document.addEventListener('visibilitychange', handleVisibility)
 
   // Fetch earliest record to constrain date wheels
   try {
-    const r = await fetch(`${apiBase}/api/db/stats`)
+    const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
     if (r.ok) {
       const stats = await r.json()
       if (stats.oldestRecord) {
@@ -369,10 +391,13 @@ watch(isDark, () => {
 })
 
 onUnmounted(() => {
-  clearInterval(timer)
+  stopPolling()
+  loadId++  // cancel any in-flight load
+  abortController.abort()
 
-  // Remove resize listener
+  // Remove listeners
   window.removeEventListener('resize', handleResize)
+  document.removeEventListener('visibilitychange', handleVisibility)
 
   if (focusChart) {
     focusChart.dispose()
@@ -398,19 +423,22 @@ function handleResize() {
 }
 
 async function loadSummary() {
-  await Promise.all([fetchSummary(), fetchMedia()])
+  const myLoadId = ++loadId
+  await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
 }
 
-async function fetchSummary() {
+async function fetchSummary(myLoadId) {
   try {
     const [from, to] = periodRange()
     const url =
       period.value === 'today'
         ? `${apiBase}/api/summary/today?date=${pickDate.value}`
         : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
-    const r = await fetch(url)
+    const r = await fetch(url, { signal: abortController.signal })
     if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
+    if (myLoadId !== loadId) return  // stale, newer call in flight
+
     const rawData = Array.isArray(res) ? res : res.items || []
 
     // Merge by normalized process name to handle inconsistent .exe suffixes
@@ -429,22 +457,26 @@ async function fetchSummary() {
     error.value = ''
     loading.value = false
     await nextTick()
+    if (myLoadId !== loadId) return  // stale
     renderCharts(summary.value)
   } catch (e) {
+    if (myLoadId !== loadId) return
     console.error(e)
     error.value = t('dashboard.error.loadSummaryFailed', { message: e.message })
     loading.value = false
   }
 }
 
-async function fetchMedia() {
+async function fetchMedia(myLoadId) {
   try {
     const [fromDate, toDate] = periodRange()
     const limits = { today: 50, week: 200, month: 500, halfYear: 3000, year: 2000 }
     const limit = limits[period.value] || 50
-    const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`)
+    const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal: abortController.signal })
     if (!r.ok) throw new Error(`API ${r.status}`)
-    media.value = await r.json()
+    const data = await r.json()
+    if (myLoadId !== loadId) return  // stale
+    media.value = data
   } catch (e) {
     console.error(e)
   }
@@ -469,7 +501,7 @@ async function renderCharts(data) {
     const cached = iconCache.get(cacheKey)
     if (cached) return cached
     try {
-      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`)
+      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`, { signal: abortController.signal })
       if (response.ok) {
         const iconData = await response.json()
         const result = {
@@ -505,6 +537,8 @@ async function renderCharts(data) {
   const textColor = cs.getPropertyValue('--text-color').trim()
   const borderColor = cs.getPropertyValue('--border-color').trim()
   const surface200 = cs.getPropertyValue('--surface-200').trim()
+  const surfaceCard = cs.getPropertyValue('--surface-card').trim()
+  const primaryColor = cs.getPropertyValue('--primary-color').trim()
 
   // Focus duration chart
   if (!focusChart) {
@@ -565,10 +599,10 @@ async function renderCharts(data) {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      backgroundColor: 'var(--surface-card)',
-      borderColor: 'var(--primary-color)',
+      backgroundColor: surfaceCard,
+      borderColor: primaryColor,
       borderWidth: 2,
-      textStyle: { color: 'var(--text-color)', fontWeight: 600, fontFamily: 'Ubuntu Mono' },
+      textStyle: { color: textColor, fontWeight: 600, fontFamily: 'Ubuntu Mono' },
       formatter: params => {
         const p = params[0]
         const totalSec = Math.round(p.value * 60)

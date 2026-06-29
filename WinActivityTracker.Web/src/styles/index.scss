@@ -1,9 +1,9 @@
 // Memphis Style Main Entry Point
-@import './memphis/variables';
-@import './memphis/mixins';
-@import './memphis/animations';
-@import './memphis/components';
-@import './memphis/themes';
+@use './memphis/variables' as *;
+@use './memphis/mixins' as *;
+@use './memphis/animations';
+@use './memphis/components';
+@use './memphis/themes';
 
 // Ubuntu Font Family
 @import '../fonts/ubuntu/ubuntu.css';
@@ -297,5 +297,19 @@ code, pre, .code, .mono {
     background-color: rgba(239, 68, 68, 0.1);
     border-color: rgb(239, 68, 68);
     color: var(--text-color);
+  }
+}
+
+// Respect user's reduced-motion preference: kill all animations and
+// transitions site-wide. Affects nav frame slide, card hover lifts,
+// page transitions, flicker effects, skeleton shimmer, etc.
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

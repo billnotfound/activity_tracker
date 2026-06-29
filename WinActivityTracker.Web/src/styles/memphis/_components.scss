@@ -1,7 +1,7 @@
 // Memphis Style Component Styles
 
-@import './variables';
-@import './mixins';
+@use './variables' as *;
+@use './mixins' as *;
 
 // Memphis Card - minimal decoration, interaction-focused
 .memphis-card {

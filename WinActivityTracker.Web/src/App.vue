@@ -28,8 +28,14 @@
           </router-link>
         </div>
         <div class="navbar-actions">
-          <button class="theme-toggle" @click="toggleDark" :title="isDark ? t('app.lightMode') : t('app.darkMode')">
-            <i :class="isDark ? 'pi pi-sun' : 'pi pi-moon'"></i>
+          <button
+            class="theme-toggle"
+            @click="toggleDark"
+            :title="isDark ? t('app.lightMode') : t('app.darkMode')"
+            :aria-label="isDark ? t('app.lightMode') : t('app.darkMode')"
+            :aria-pressed="isDark"
+          >
+            <i :class="isDark ? 'pi pi-sun' : 'pi pi-moon'" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -102,46 +108,27 @@ onMounted(() => {
 })
 
 // ── Nav sliding frame ──
+// Instead of a RAF loop interpolating left/width, set the target directly
+// and let CSS transition handle the animation. navMoving is toggled for the
+// transition duration so the hover shadow can be suppressed mid-flight.
 
 const navMenuRef = ref(null)
 const navFrameStyle = ref({})
 const navMoving = ref(false)
-let navRafId = null
+let moveTimer = null
 let navTargetEl = null
 
 function startNavAnim(el) {
-  navTargetEl = el || navTargetEl
-  if (!navTargetEl) return
+  if (!el) return
+  navTargetEl = el
   navMoving.value = true
-  if (navRafId) return
-
-  const tick = () => {
-    if (!navTargetEl || !navMenuRef.value) {
-      navRafId = null
-      navMoving.value = false
-      return
-    }
-    const curLeft = parseFloat(navFrameStyle.value.left) || 0
-    const curWid = parseFloat(navFrameStyle.value.width) || 0
-    const tgtLeft = navTargetEl.offsetLeft
-    const tgtWid = navTargetEl.offsetWidth
-    const dx = tgtLeft - curLeft
-    const dw = tgtWid - curWid
-
-    if (Math.abs(dx) < 0.5 && Math.abs(dw) < 0.5) {
-      navFrameStyle.value = { left: tgtLeft + 'px', width: tgtWid + 'px' }
-      navRafId = null
-      navMoving.value = false
-      return
-    }
-
-    navFrameStyle.value = {
-      left: (curLeft + dx * 0.2) + 'px',
-      width: (curWid + dw * 0.2) + 'px'
-    }
-    navRafId = requestAnimationFrame(tick)
+  navFrameStyle.value = {
+    left: el.offsetLeft + 'px',
+    width: el.offsetWidth + 'px',
   }
-  navRafId = requestAnimationFrame(tick)
+  if (moveTimer) clearTimeout(moveTimer)
+  // Match the CSS transition duration (0.28s) + small buffer.
+  moveTimer = setTimeout(() => { navMoving.value = false }, 320)
 }
 
 function onNavMouseMove(e) {
@@ -173,7 +160,7 @@ function initNavFrame() {
     if (active) {
       navFrameStyle.value = {
         left: active.offsetLeft + 'px',
-        width: active.offsetWidth + 'px'
+        width: active.offsetWidth + 'px',
       }
     }
   })
@@ -302,7 +289,10 @@ watch(() => route.path, () => {
   pointer-events: none;
   box-shadow: 0 0 0 transparent;
   z-index: 0;
-  transition: box-shadow 0.15s ease-out;
+  transition:
+    left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.15s ease-out;
 
   &.moving {
     box-shadow: 0 0 0 transparent !important;
