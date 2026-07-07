@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
+using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Api;
@@ -46,13 +47,20 @@ public static class MediaEndpoints
             query = query.Where(m => m.StartTime <= end);
         }
 
+        var fetchCount = (limit ?? 50) * 3;
+
         var data = await query
             .OrderByDescending(m => m.StartTime)
-            .Take(limit ?? 50)
+            .Take(fetchCount)
             .ToListAsync();
         data.Reverse();
 
-        return Results.Ok(data.Select(m => new
+        var merged = MergeConsecutive(data);
+
+        if (merged.Count > (limit ?? 50))
+            merged = merged.GetRange(merged.Count - (limit ?? 50), limit ?? 50);
+
+        return Results.Ok(merged.Select(m => new
         {
             m.Id,
             m.StartTime,
@@ -62,6 +70,50 @@ public static class MediaEndpoints
             m.Artist,
             m.PlaybackStatus
         }));
+    }
+
+    private static List<MediaSessionRecord> MergeConsecutive(List<MediaSessionRecord> records)
+    {
+        if (records.Count == 0) return records;
+
+        var statusPriority = new Dictionary<string, int>
+        {
+            ["Playing"] = 5, ["Paused"] = 4, ["Stopped"] = 3,
+            ["Opened"] = 2, ["Changing"] = 1, ["Closed"] = 0
+        };
+
+        var result = new List<MediaSessionRecord>();
+        MediaSessionRecord? group = null;
+
+        foreach (var r in records)
+        {
+            if (group != null
+                && group.AppName == r.AppName
+                && group.Title == r.Title
+                && group.Artist == r.Artist)
+            {
+                group.EndTime = r.EndTime;
+                if (statusPriority.GetValueOrDefault(r.PlaybackStatus, 0)
+                    > statusPriority.GetValueOrDefault(group.PlaybackStatus, 0))
+                    group.PlaybackStatus = r.PlaybackStatus;
+            }
+            else
+            {
+                group = new MediaSessionRecord
+                {
+                    Id = r.Id,
+                    StartTime = r.StartTime,
+                    EndTime = r.EndTime,
+                    AppName = r.AppName,
+                    Title = r.Title,
+                    Artist = r.Artist,
+                    PlaybackStatus = r.PlaybackStatus
+                };
+                result.Add(group);
+            }
+        }
+
+        return result;
     }
 
     private static async Task<IResult> GetProcessSnapshot(AppDbContext db)

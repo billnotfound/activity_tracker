@@ -57,6 +57,8 @@
   "dashboard.card.switchCount": "焦点切换次数",
   "dashboard.card.overview": "统计概览",
   "dashboard.card.recentMedia": "最近媒体播放",
+  "dashboard.card.overviewPie": "概览",
+  "dashboard.pie.other": "其他",
   "dashboard.totalListen": "总计听歌 {duration}",
   "dashboard.sleepOff": "休眠/关机 {duration}",
   "dashboard.table.process": "程序",

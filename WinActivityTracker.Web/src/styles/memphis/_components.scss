@@ -3,15 +3,16 @@
 @use './variables' as *;
 @use './mixins' as *;
 
-// Memphis Card - minimal decoration, interaction-focused
+// Memphis Card — bold border frame + diagonal-lift hover, matching Dashboard period-selector style.
+// Border uses text-color (dark in light themes, light in dark themes) for natural dark-mode adaptation.
 .memphis-card {
   background: var(--surface-card, $memphis-fallback-surface);
-  border: 2px solid var(--surface-200, #E0E0E0);
+  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent);
   padding: $memphis-spacing-lg;
   position: relative;
   overflow: visible;
   transition: all $memphis-transition-normal;
-  
+
   // Corner decoration - only visible on hover
   &::before {
     content: '';
@@ -25,33 +26,35 @@
     opacity: 0;
     transition: opacity $memphis-transition-normal;
   }
-  
+
   &:hover {
-    border-color: var(--primary-color, $memphis-fallback-primary);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary);
-    
+    border-color: var(--text-color);
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+
     &::before {
       opacity: 1;
     }
   }
-  
+
   &.variant-accent {
-    border-color: var(--accent-color, $memphis-fallback-accent);
-    
+    border-color: color-mix(in srgb, var(--accent-color) 80%, transparent);
+
     &:hover {
-      box-shadow: 0 4px 0 var(--accent-color, $memphis-fallback-accent);
+      border-color: var(--accent-color);
+      box-shadow: 4px 4px 0 color-mix(in srgb, var(--accent-color) 80%, transparent);
     }
   }
-  
+
   &.variant-secondary {
-    border-color: var(--secondary-color, $memphis-fallback-secondary);
-    
+    border-color: color-mix(in srgb, var(--secondary-color) 80%, transparent);
+
     &:hover {
-      box-shadow: 0 4px 0 var(--secondary-color, $memphis-fallback-secondary);
+      border-color: var(--secondary-color);
+      box-shadow: 4px 4px 0 color-mix(in srgb, var(--secondary-color) 80%, transparent);
     }
   }
-  
+
   &.no-deco::before {
     display: none;
   }
@@ -172,9 +175,14 @@
   }
 }
 
-// Dark mode - subtle glow on interaction only
+// Dark mode — subtle glow on interaction. Shadow offset matches the card's
+// 4px 4px pattern; neon glow layered behind for extra depth on dark backgrounds.
 .dark-mode {
-  .memphis-card:hover,
+  .memphis-card:hover {
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent),
+                0 0 12px rgba(255, 107, 157, 0.2);
+  }
+
   .memphis-button:hover {
     box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary),
                 0 0 12px rgba(255, 107, 157, 0.2);

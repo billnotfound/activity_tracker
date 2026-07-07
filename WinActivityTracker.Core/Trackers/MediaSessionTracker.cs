@@ -25,6 +25,14 @@ public class MediaSessionTracker : BackgroundService
     private DateTime _lastWakeTime = DateTime.MinValue;
     private DateTime _lastPollTime = DateTime.UtcNow;
 
+    // Write-time merge: when a session flickers (disappears then reappears),
+    // re-open the recently-closed record instead of creating a new one.
+    private DateTime _lastCloseTime = DateTime.MinValue;
+    private long _lastClosedRecordId;
+    private string _lastClosedAppName = string.Empty;
+    private string _lastClosedTitle = string.Empty;
+    private string _lastClosedArtist = string.Empty;
+
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
         IdleDetector idleDetector, WriteQueue writeQueue, ILogger<MediaSessionTracker> logger)
     {
@@ -169,6 +177,17 @@ public class MediaSessionTracker : BackgroundService
             .ToList();
         foreach (var s in sessions) s.EndTime = endTime;
 
+        // Remember what we closed so StartNewSession can re-open it on flicker.
+        var last = sessions.LastOrDefault();
+        if (last != null)
+        {
+            _lastCloseTime = endTime;
+            _lastClosedRecordId = last.Id;
+            _lastClosedAppName = _currentAppName;
+            _lastClosedTitle = _currentTitle;
+            _lastClosedArtist = _currentArtist;
+        }
+
         _hasActiveSession = false;
         _currentAppName = string.Empty;
         _currentTitle = string.Empty;
@@ -178,6 +197,35 @@ public class MediaSessionTracker : BackgroundService
 
     private void StartNewSession(AppDbContext db, string appName, string title, string artist, string status, DateTime startTime)
     {
+        var pollSec = _settings.Settings.MediaPollSeconds;
+        var gap = startTime - _lastCloseTime;
+
+        // Re-open a recently-closed session if the same song flickered back
+        // within the merge window. Don't merge same-batch close+start (gap ~0),
+        // which is a real track change, not a flicker.
+        if (!_hasActiveSession
+            && gap.TotalSeconds >= pollSec * 0.5
+            && gap.TotalSeconds <= pollSec * 3
+            && _lastClosedAppName == appName
+            && _lastClosedTitle == title
+            && _lastClosedArtist == artist)
+        {
+            var record = db.MediaSessionRecords.Find(_lastClosedRecordId);
+            if (record != null)
+            {
+                record.EndTime = null;
+                record.PlaybackStatus = status;
+                _hasActiveSession = true;
+                _currentAppName = appName;
+                _currentTitle = title;
+                _currentArtist = artist;
+                _currentStatus = status;
+                _logger.LogDebug("Media: re-opened flickered session #{Id} ({Artist} - {Title})",
+                    record.Id, artist, title);
+                return;
+            }
+        }
+
         db.MediaSessionRecords.Add(new MediaSessionRecord
         {
             StartTime = startTime,

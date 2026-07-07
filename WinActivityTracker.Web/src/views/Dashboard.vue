@@ -73,6 +73,13 @@
         </div>
       </MemphisCard>
     </div>
+
+    <!-- Pie overview: focus donut + media ring -->
+    <MemphisCard class="mb-3">
+      <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
+      <MemphisSkeleton v-if="loading" :lines="4" />
+      <div v-else ref="pieChartRef" class="pie-chart-container"></div>
+    </MemphisCard>
   </div>
 </template>
 
@@ -229,6 +236,8 @@ watch(period, updateFrame)
 
 const focusChartRef = ref(null)
 let focusChart = null
+const pieChartRef = ref(null)
+let pieChart = null
 let timer = null
 // Race guard: each loadSummary() call increments loadId; stale calls
 // bail before writing summary.value / rendering charts.
@@ -388,6 +397,9 @@ watch(isDark, () => {
   if (focusChart && summary.value && summary.value.length > 0) {
     renderCharts(summary.value)
   }
+  if (pieChart && summary.value && summary.value.length > 0) {
+    renderPieChart(summary.value)
+  }
 })
 
 onUnmounted(() => {
@@ -403,6 +415,10 @@ onUnmounted(() => {
     focusChart.dispose()
     focusChart = null
   }
+  if (pieChart) {
+    pieChart.dispose()
+    pieChart = null
+  }
 })
 
 // Debounced resize handler
@@ -413,10 +429,15 @@ function handleResize() {
     if (focusChart) {
       focusChart.resize()
       console.log('Chart resized due to window resize')
-      // Re-render chart with current data to adapt to new dimensions
       if (summary.value && summary.value.length > 0) {
         renderCharts(summary.value)
         console.log('Chart re-rendered after resize')
+      }
+    }
+    if (pieChart) {
+      pieChart.resize()
+      if (summary.value && summary.value.length > 0) {
+        renderPieChart(summary.value)
       }
     }
   }, 200) // 200ms debounce
@@ -425,6 +446,7 @@ function handleResize() {
 async function loadSummary() {
   const myLoadId = ++loadId
   await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
+  if (summary.value) renderPieChart(summary.value)
 }
 
 async function fetchSummary(myLoadId) {
@@ -611,6 +633,191 @@ async function renderCharts(data) {
     },
   })
 }
+async function renderPieChart(data) {
+  if (!pieChartRef.value) return
+
+  const cs = getComputedStyle(document.documentElement)
+  const textColor = cs.getPropertyValue('--text-color').trim()
+  const successColor = cs.getPropertyValue('--success-color').trim()
+  const surfaceCard = cs.getPropertyValue('--surface-card').trim()
+  const primaryColor = cs.getPropertyValue('--primary-color').trim()
+  const surface300 = cs.getPropertyValue('--surface-300').trim()
+
+  const top5 = data.slice(0, 5)
+  const otherSec = data.slice(5).reduce((s, i) => s + i.totalSeconds, 0)
+
+  const [fromDate, toDate] = periodRange()
+  const atTime = period.value === 'today'
+    ? new Date().toISOString()
+    : new Date(toDate + 'T23:59:59').toISOString()
+
+  const iconPromises = top5.map(async (item) => {
+    const cacheKey = `${item.processName}|${atTime}`
+    const cached = iconCache.get(cacheKey)
+    if (cached) return cached
+    try {
+      const r = await fetch(`${apiBase}/api/icons/${encodeURIComponent(item.processName)}?at=${encodeURIComponent(atTime)}`, { signal: abortController.signal })
+      if (r.ok) {
+        const d = await r.json()
+        const result = {
+          icon: d.iconData ? `data:image/png;base64,${d.iconData}` : null,
+          colorPrimary: d.colorPrimary || '#6B7FD7',
+        }
+        iconCache.set(cacheKey, result)
+        return result
+      }
+    } catch (e) { /* ignore */ }
+    return { icon: null, colorPrimary: '#6B7FD7' }
+  })
+  const icons = await Promise.all(iconPromises)
+
+  const focusData = top5.map((item, i) => ({
+    value: item.totalSeconds,
+    name: item.processName,
+    itemStyle: {
+      color: icons[i].colorPrimary,
+      borderColor: surfaceCard,
+      borderWidth: 2,
+    },
+    _icon: icons[i].icon,
+    _type: 'focus',
+  }))
+
+  if (otherSec > 0.5) {
+    focusData.push({
+      value: otherSec,
+      name: t('dashboard.pie.other'),
+      itemStyle: {
+        color: surface300,
+        borderColor: surfaceCard,
+        borderWidth: 2,
+      },
+      _icon: null,
+      _type: 'focus',
+    })
+  }
+
+  const ringData = buildMediaRing(media.value, fromDate, toDate, successColor)
+
+  if (!pieChart) {
+    pieChart = echarts.init(pieChartRef.value)
+    pieChart._firstRender = true
+  }
+
+  const animDur = pieChart._firstRender ? 800 : 300
+  pieChart._firstRender = false
+
+  pieChart.setOption({
+    animation: true,
+    animationDuration: animDur,
+    animationEasing: 'cubicOut',
+    color: focusData.map(d => d.itemStyle.color),
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: surfaceCard,
+      borderColor: primaryColor,
+      borderWidth: 2,
+      textStyle: { color: textColor, fontFamily: 'Ubuntu Mono' },
+      formatter: (params) => {
+        if (!params.data || !params.data._type) return ''
+        if (params.data._type === 'focus') {
+          const d = params.data
+          const iconHtml = d._icon
+            ? `<img src="${d._icon}" style="width:16px;height:16px;vertical-align:middle;margin-right:4px;image-rendering:crisp-edges" />`
+            : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${d.itemStyle.color};margin-right:4px;vertical-align:middle"></span>`
+          return `<div style="font-weight:600;margin-bottom:2px">${iconHtml}${d.name}</div><div style="font-size:0.95em">${fmtShortDur(d.value)}</div>`
+        }
+        if (params.data._type === 'media') {
+          const m = params.data._media
+          return `<div style="font-weight:600;margin-bottom:2px;color:${successColor}">${m.title}</div>
+                  <div style="font-size:0.95em">${fmtShortDur(params.data.value)}</div>
+                  <div style="margin-top:2px;color:var(--surface-400)">${m.artist || m.appName || ''}</div>`
+        }
+        return ''
+      },
+    },
+    series: [
+      {
+        name: 'focus',
+        type: 'pie',
+        radius: ['28%', '52%'],
+        center: ['50%', '50%'],
+        data: focusData,
+        label: { show: false },
+        emphasis: {
+          label: { show: true, fontWeight: 'bold', color: textColor },
+          scaleSize: 8,
+        },
+      },
+      {
+        name: 'media',
+        type: 'pie',
+        radius: ['58%', '72%'],
+        center: ['50%', '50%'],
+        data: ringData,
+        label: { show: false },
+        silent: ringData.length === 0,
+        emphasis: {
+          scaleSize: 4,
+        },
+      },
+    ],
+  }, true)
+}
+
+function buildMediaRing(mediaList, fromDate, toDate, successColor) {
+  const periodStart = new Date(fromDate + 'T00:00:00').getTime()
+  const periodEnd = period.value === 'today'
+    ? Math.min(Date.now(), new Date(toDate + 'T23:59:59').getTime())
+    : new Date(toDate + 'T23:59:59').getTime()
+
+  const filtered = mediaList
+    .filter(m => m.playbackStatus !== 'SystemSleep')
+    .map(m => {
+      const start = parseUtcTs(m.startTime).getTime()
+      const end = m.endTime ? parseUtcTs(m.endTime).getTime() : Date.now()
+      return { ...m, _start: Math.max(start, periodStart), _end: Math.min(end, periodEnd) }
+    })
+    .filter(m => m._end > periodStart && m._start < periodEnd && m._end - m._start >= 1000)
+    .sort((a, b) => a._start - b._start)
+
+  if (!filtered.length) return []
+
+  const segments = []
+  let cursor = periodStart
+
+  for (const m of filtered) {
+    if (m._start > cursor) {
+      segments.push({
+        value: (m._start - cursor) / 1000,
+        name: '',
+        itemStyle: { color: 'transparent', borderWidth: 0 },
+        tooltip: { show: false },
+        _type: 'gap',
+      })
+    }
+    segments.push({
+      value: Math.max(1, (m._end - m._start) / 1000),
+      name: m.title,
+      itemStyle: { color: successColor, borderWidth: 0 },
+      _type: 'media',
+      _media: { title: m.title, artist: m.artist, appName: m.appName },
+    })
+    cursor = Math.max(cursor, m._end)
+  }
+
+  if (periodEnd > cursor) {
+    segments.push({
+      value: (periodEnd - cursor) / 1000,
+      name: '',
+      itemStyle: { color: 'transparent', borderWidth: 0 },
+      tooltip: { show: false },
+      _type: 'gap',
+    })
+  }
+
+  return segments
+}
 </script>
 
 <style lang="scss" scoped>
@@ -776,6 +983,11 @@ async function renderCharts(data) {
 .chart-container {
   width: 100%;
   height: 300px;
+}
+
+.pie-chart-container {
+  width: 100%;
+  height: 360px;
 }
 
 .card-header-row {

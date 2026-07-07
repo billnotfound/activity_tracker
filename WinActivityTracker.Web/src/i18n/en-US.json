@@ -57,6 +57,8 @@
   "dashboard.card.switchCount": "Focus switch count",
   "dashboard.card.overview": "Overview",
   "dashboard.card.recentMedia": "Recent media",
+  "dashboard.card.overviewPie": "Overview",
+  "dashboard.pie.other": "Other",
   "dashboard.totalListen": "Total listen time {duration}",
   "dashboard.sleepOff": "Sleep/shutdown {duration}",
   "dashboard.table.process": "Process",
