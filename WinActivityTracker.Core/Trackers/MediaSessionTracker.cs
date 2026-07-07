@@ -32,6 +32,7 @@ public class MediaSessionTracker : BackgroundService
     private string _lastClosedAppName = string.Empty;
     private string _lastClosedTitle = string.Empty;
     private string _lastClosedArtist = string.Empty;
+    private string _lastClosedStatus = string.Empty;
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
         IdleDetector idleDetector, WriteQueue writeQueue, ILogger<MediaSessionTracker> logger)
@@ -171,21 +172,26 @@ public class MediaSessionTracker : BackgroundService
     {
         if (!_hasActiveSession) return;
 
-        // Find the active session (EndTime == null). There is at most one.
-        var sessions = db.MediaSessionRecords
-            .Where(m => m.EndTime == null)
-            .ToList();
-        foreach (var s in sessions) s.EndTime = endTime;
+        // Close only the record that matches the currently tracked session,
+        // not all records with EndTime == null (which might be old orphans).
+        var session = db.MediaSessionRecords
+            .Where(m => m.EndTime == null
+                && m.AppName == _currentAppName
+                && m.Title == _currentTitle
+                && m.Artist == _currentArtist
+                && m.PlaybackStatus == _currentStatus)
+            .OrderByDescending(m => m.StartTime)
+            .FirstOrDefault();
 
-        // Remember what we closed so StartNewSession can re-open it on flicker.
-        var last = sessions.LastOrDefault();
-        if (last != null)
+        if (session != null)
         {
+            session.EndTime = endTime;
             _lastCloseTime = endTime;
-            _lastClosedRecordId = last.Id;
+            _lastClosedRecordId = session.Id;
             _lastClosedAppName = _currentAppName;
             _lastClosedTitle = _currentTitle;
             _lastClosedArtist = _currentArtist;
+            _lastClosedStatus = _currentStatus;
         }
 
         _hasActiveSession = false;
@@ -208,7 +214,8 @@ public class MediaSessionTracker : BackgroundService
             && gap.TotalSeconds <= pollSec * 3
             && _lastClosedAppName == appName
             && _lastClosedTitle == title
-            && _lastClosedArtist == artist)
+            && _lastClosedArtist == artist
+            && _lastClosedStatus == status)
         {
             var record = db.MediaSessionRecords.Find(_lastClosedRecordId);
             if (record != null)
@@ -247,16 +254,16 @@ public class MediaSessionTracker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var orphan = await db.MediaSessionRecords
+        var orphans = await db.MediaSessionRecords
             .Where(m => m.EndTime == null)
-            .OrderByDescending(m => m.StartTime)
-            .FirstOrDefaultAsync();
+            .ToListAsync();
 
-        if (orphan != null)
+        if (orphans.Count > 0)
         {
-            orphan.EndTime = orphan.StartTime;
+            foreach (var o in orphans)
+                o.EndTime = o.StartTime;
             await db.SaveChangesAsync();
-            _logger.LogDebug("MediaTracker: closed orphan session from previous run (Id={Id})", orphan.Id);
+            _logger.LogDebug("MediaTracker: closed {Count} orphan sessions from previous run", orphans.Count);
         }
     }
 

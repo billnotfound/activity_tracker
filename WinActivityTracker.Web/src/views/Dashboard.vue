@@ -78,7 +78,20 @@
     <MemphisCard class="mb-3">
       <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
       <MemphisSkeleton v-if="loading" :lines="4" />
-      <div v-else ref="pieChartRef" class="pie-chart-container"></div>
+      <div v-else class="pie-chart-wrapper">
+        <div ref="pieChartRef" class="pie-chart-container"></div>
+        <div class="water-ball" :style="{ '--fill': usagePercent }">
+          <div class="water-body">
+            <svg class="wave-band" viewBox="0 0 480 24" preserveAspectRatio="none">
+              <path d="M0,12 C14.6,6 25.4,6 40,12 C54.6,18 65.4,18 80,12 C94.6,6 105.4,6 120,12 C134.6,18 145.4,18 160,12 C174.6,6 185.4,6 200,12 C214.6,18 225.4,18 240,12 C254.6,6 265.4,6 280,12 C294.6,18 305.4,18 320,12 C334.6,6 345.4,6 360,12 C374.6,18 385.4,18 400,12 C414.6,6 425.4,6 440,12 C454.6,18 465.4,18 480,12 L480,20 C465.4,26 454.6,26 440,20 C425.4,14 414.6,14 400,20 C385.4,26 374.6,26 360,20 C345.4,14 334.6,14 320,20 C305.4,26 294.6,26 280,20 C265.4,14 254.6,14 240,20 C225.4,26 214.6,26 200,20 C185.4,14 174.6,14 160,20 C145.4,26 134.6,26 120,20 C105.4,14 94.6,14 80,20 C65.4,26 54.6,26 40,20 C25.4,14 14.6,14 0,20 Z" fill="#3b9bc0" opacity="0.7"/>
+            </svg>
+            <svg class="wave-band wave-band-2" viewBox="0 0 480 20" preserveAspectRatio="none">
+              <path d="M0,12 C21.9,8 38.1,8 60,12 C81.9,16 98.1,16 120,12 C141.9,8 158.1,8 180,12 C201.9,16 218.1,16 240,12 C261.9,8 278.1,8 300,12 C321.9,16 338.1,16 360,12 C381.9,8 398.1,8 420,12 C441.9,16 458.1,16 480,12 L480,18 C458.1,22 441.9,22 420,18 C398.1,14 381.9,14 360,18 C338.1,22 321.9,22 300,18 C278.1,14 261.9,14 240,18 C218.1,22 201.9,22 180,18 C158.1,14 141.9,14 120,18 C98.1,22 81.9,22 60,18 C38.1,14 21.9,14 0,18 Z" fill="#3593b8" opacity="0.5"/>
+            </svg>
+          </div>
+          <span class="water-text">{{ usageFmt }}</span>
+        </div>
+      </div>
     </MemphisCard>
   </div>
 </template>
@@ -357,6 +370,24 @@ const totalListenFmt = computed(() => {
   return fmtShortDur(total)
 })
 
+const usageTotalSec = computed(() => {
+  if (!summary.value || !summary.value.length) return 0
+  return summary.value.reduce((s, i) => s + i.totalSeconds, 0)
+})
+
+const usagePercent = computed(() => {
+  return Math.min(100, Math.round(usageTotalSec.value / 86400 * 100))
+})
+
+const usageFmt = computed(() => {
+  const s = usageTotalSec.value
+  if (s < 60) return '<1min'
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (h > 0) return `${h}h ${m}min`
+  return `${m}min`
+})
+
 onMounted(async () => {
   try {
     const r = await fetch(`${apiBase}/api/settings`, { signal: abortController.signal })
@@ -492,7 +523,7 @@ async function fetchSummary(myLoadId) {
 async function fetchMedia(myLoadId) {
   try {
     const [fromDate, toDate] = periodRange()
-    const limits = { today: 50, week: 200, month: 500, halfYear: 3000, year: 2000 }
+    const limits = { today: 2000, week: 500, month: 2000, halfYear: 5000, year: 5000 }
     const limit = limits[period.value] || 50
     const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal: abortController.signal })
     if (!r.ok) throw new Error(`API ${r.status}`)
@@ -676,7 +707,7 @@ async function renderPieChart(data) {
     name: item.processName,
     itemStyle: {
       color: icons[i].colorPrimary,
-      borderColor: surfaceCard,
+      borderColor: textColor,
       borderWidth: 2,
     },
     _icon: icons[i].icon,
@@ -689,7 +720,7 @@ async function renderPieChart(data) {
       name: t('dashboard.pie.other'),
       itemStyle: {
         color: surface300,
-        borderColor: surfaceCard,
+        borderColor: textColor,
         borderWidth: 2,
       },
       _icon: null,
@@ -745,7 +776,6 @@ async function renderPieChart(data) {
         data: focusData,
         label: { show: false },
         emphasis: {
-          label: { show: true, fontWeight: 'bold', color: textColor },
           scaleSize: 8,
         },
       },
@@ -985,9 +1015,76 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   height: 300px;
 }
 
-.pie-chart-container {
+.pie-chart-wrapper {
+  position: relative;
   width: 100%;
   height: 360px;
+}
+
+.pie-chart-container {
+  width: 100%;
+  height: 100%;
+}
+
+.water-ball {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  border: 2px solid var(--text-color);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+  background: var(--surface-card);
+}
+
+.water-body {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: calc(var(--fill) * 1%);
+  transition: height 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  background: #4caedb;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+}
+
+.wave-band {
+  position: absolute;
+  top: -12px;
+  left: 0;
+  width: 200%;
+  height: 24px;
+  animation: wave-drift 3s linear infinite;
+}
+
+.wave-band-2 {
+  top: -10px;
+  height: 20px;
+  animation: wave-drift 4.5s linear infinite reverse;
+}
+
+.water-text {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: 'Ubuntu Mono';
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-color);
+  z-index: 3;
+  text-shadow: 0 0 6px var(--surface-card);
+  white-space: nowrap;
+}
+
+@keyframes wave-drift {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
 }
 
 .card-header-row {

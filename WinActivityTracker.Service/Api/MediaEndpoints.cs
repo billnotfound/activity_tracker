@@ -76,12 +76,6 @@ public static class MediaEndpoints
     {
         if (records.Count == 0) return records;
 
-        var statusPriority = new Dictionary<string, int>
-        {
-            ["Playing"] = 5, ["Paused"] = 4, ["Stopped"] = 3,
-            ["Opened"] = 2, ["Changing"] = 1, ["Closed"] = 0
-        };
-
         var result = new List<MediaSessionRecord>();
         MediaSessionRecord? group = null;
 
@@ -90,12 +84,10 @@ public static class MediaEndpoints
             if (group != null
                 && group.AppName == r.AppName
                 && group.Title == r.Title
-                && group.Artist == r.Artist)
+                && group.Artist == r.Artist
+                && group.PlaybackStatus == r.PlaybackStatus)
             {
                 group.EndTime = r.EndTime;
-                if (statusPriority.GetValueOrDefault(r.PlaybackStatus, 0)
-                    > statusPriority.GetValueOrDefault(group.PlaybackStatus, 0))
-                    group.PlaybackStatus = r.PlaybackStatus;
             }
             else
             {
