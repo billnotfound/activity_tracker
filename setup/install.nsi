@@ -1,5 +1,5 @@
 ; ============================================================
-; setup/install.nsi — taskmonitor114 NSIS Installer/Updater
+; setup/install.nsi 闁?taskmonitor114 NSIS Installer/Updater
 ; ============================================================
 ; Build: cd project-root && makensis -INPUTCHARSET UTF8 /DVERSION=1.0 /DPLATFORM=win-x64 /DPUBLISH_DIR=publish\monitor-win-x64 setup\install.nsi
 ; ============================================================
@@ -105,7 +105,7 @@ Var DeleteData
 !include "install-lang.nsh"
 
 ; ============================================================
-; .onInit — Detect old install, language selection
+; .onInit 闁?Detect old install, language selection
 ; ============================================================
 Function .onInit
   StrCpy $IsUpgrade "0"
@@ -118,35 +118,72 @@ Function .onInit
     !insertmacro MUI_LANGDLL_DISPLAY
   ${EndIf}
 
-  ; ── Detect existing install (5 signals, first match wins) ──
+  ; 鈹€鈹€ Detect existing install (system-wide signals, elevated-safe) 鈹€鈹€
+  ; NOTE: HKCU and $LOCALAPPDATA resolve to the admin account when elevated,
+  ; so system-wide signals (Program Files, running process, user scan) come first.
 
-  ; 1. Registry: DataDir → most reliable, set by our own installer
-  ReadRegStr $0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
-  ${If} $0 != ""
-    ${If} ${FileExists} "$0\taskmonitor114.exe"
-      StrCpy $INSTDIR $0
-      StrCpy $IsUpgrade "1"
-    ${EndIf}
+  ; 1. Default install location (platform-aware Program Files)
+  !if "${PLATFORM}" == "win-x86"
+    StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
+  !else if "${PLATFORM}" == "win-x86-selfcontained"
+    StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
+  !else
+    StrCpy $0 "$PROGRAMFILES64\${PRODUCT_NAME}"
+  !endif
+  ${If} ${FileExists} "$0\taskmonitor114.exe"
+    StrCpy $INSTDIR $0
+    StrCpy $IsUpgrade "1"
   ${EndIf}
 
-  ; 2. Running process: get executable path via wmic
+  ; 2. Running process: get executable path via PowerShell (system-wide)
   ${If} $IsUpgrade == "0"
-    nsExec::ExecToStack 'wmic process where name="taskmonitor114.exe" get ExecutablePath /value'
+    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-Process -Name taskmonitor114 -ErrorAction SilentlyContinue).Path"'
     Pop $0
     Pop $1
-    ${StrStr} $2 "$1" "ExecutablePath="
-    ${If} $2 != ""
-      StrCpy $0 $2 "" 16
-      ${StrTrimNewLines} $0 $0
-      ${GetParent} $0 $1
-      ${If} ${FileExists} "$1\taskmonitor114.exe"
-        StrCpy $INSTDIR $1
+    ${StrTrimNewLines} $1 $1
+    ${If} $1 != ""
+      ${GetParent} $1 $0
+      ${If} ${FileExists} "$0\taskmonitor114.exe"
+        StrCpy $INSTDIR $0
         StrCpy $IsUpgrade "1"
       ${EndIf}
     ${EndIf}
   ${EndIf}
 
-  ; 3. Registry: auto-start Run key (may point to old path)
+  ; 3. Scan user profiles for per-user installs (elevated-safe)
+  ${If} $IsUpgrade == "0"
+    FindFirst $R4 $R5 "C:\Users\*"
+    ${If} $R5 != ""
+      ${Do}
+        ${If} $R5 != "."
+        ${AndIf} $R5 != ".."
+        ${AndIf} $R5 != "Public"
+        ${AndIf} $R5 != "Default"
+          ${If} ${FileExists} "C:\Users\$R5\AppData\Local\${PRODUCT_NAME}\taskmonitor114.exe"
+            StrCpy $INSTDIR "C:\Users\$R5\AppData\Local\${PRODUCT_NAME}"
+            StrCpy $IsUpgrade "1"
+            Goto userscan_done
+          ${EndIf}
+        ${EndIf}
+        FindNext $R4 $R5
+      ${LoopUntil} ${Errors}
+      userscan_done:
+      FindClose $R4
+    ${EndIf}
+  ${EndIf}
+
+  ; 4. Registry: DataDir (HKCU 鈥?may miss when elevated, last resort)
+  ${If} $IsUpgrade == "0"
+    ReadRegStr $0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
+    ${If} $0 != ""
+      ${If} ${FileExists} "$0\taskmonitor114.exe"
+        StrCpy $INSTDIR $0
+        StrCpy $IsUpgrade "1"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  ; 5. Registry: auto-start Run key (same HKCU caveat)
   ${If} $IsUpgrade == "0"
     ReadRegStr $0 HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
     ${If} $0 != ""
@@ -162,34 +199,10 @@ Function .onInit
       ${EndIf}
     ${EndIf}
   ${EndIf}
-
-  ; 4. Default install location (platform-aware Program Files)
-  ${If} $IsUpgrade == "0"
-    !if "${PLATFORM}" == "win-x86"
-      StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
-    !else if "${PLATFORM}" == "win-x86-selfcontained"
-      StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
-    !else
-      StrCpy $0 "$PROGRAMFILES64\${PRODUCT_NAME}"
-    !endif
-    ${If} ${FileExists} "$0\taskmonitor114.exe"
-      StrCpy $INSTDIR $0
-      StrCpy $IsUpgrade "1"
-    ${EndIf}
-  ${EndIf}
-
-  ; 5. Default data location (%LOCALAPPDATA%)
-  ${If} $IsUpgrade == "0"
-    StrCpy $0 "$LOCALAPPDATA\${PRODUCT_NAME}"
-    ${If} ${FileExists} "$0\taskmonitor114.exe"
-      StrCpy $INSTDIR $0
-      StrCpy $IsUpgrade "1"
-    ${EndIf}
-  ${EndIf}
 FunctionEnd
 
 ; ============================================================
-; SkipDirectoryIfUpgrade — skip dir page when upgrading
+; SkipDirectoryIfUpgrade 闁?skip dir page when upgrading
 ; ============================================================
 Function SkipDirectoryIfUpgrade
   ${If} $IsUpgrade == "1"
@@ -212,7 +225,7 @@ Section "$(SEC_MAIN_NAME)" SEC_MAIN
     DetailPrint "$(MSG_FRESH_INSTALL)"
   ${EndIf}
 
-  ; ---- Phase 2: Upgrade — clean orphan files ----
+  ; ---- Phase 2: Upgrade 闁?clean orphan files ----
   ${If} $IsUpgrade == "1"
     Call RemoveOrphanFiles
   ${EndIf}
@@ -222,11 +235,9 @@ Section "$(SEC_MAIN_NAME)" SEC_MAIN
   SetOverwrite on
   File /r /x *.pdb /x "taskmonitor114-setup-*.exe" /x "updater.exe" /x "remove-list.txt" "${PUBLISH_DIR}\*"
 
-  ; ---- Phase 4: Registry — app paths ----
-  WriteRegStr HKCU "${PRODUCT_REG_KEY}" "ConfigDir" "$INSTDIR"
-  WriteRegStr HKCU "${PRODUCT_REG_KEY}" "DataDir" "$INSTDIR"
-
-  ; ---- Phase 5: Registry — uninstall info ----
+  ; ---- Phase 4: Registry 闁?app paths ----
+  ; ---- Phase 4: data in LOCALAPPDATA by default (no registry override needed) ----
+  ; ---- Phase 5: Registry 闁?uninstall info ----
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\taskmonitor114.exe"'
@@ -287,7 +298,7 @@ Section "Uninstall"
 SectionEnd
 
 ; ============================================================
-; CheckAndKillOldProcess — detect + prompt + kill
+; CheckAndKillOldProcess 闁?detect + prompt + kill
 ; ============================================================
 Function CheckAndKillOldProcess
   nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq taskmonitor114.exe" /NH'
@@ -308,14 +319,14 @@ Function CheckAndKillOldProcess
 FunctionEnd
 
 ; ============================================================
-; KillOldProcess — graceful → force → service (no sleeps)
+; KillOldProcess 闁?graceful 闁?force 闁?service (no sleeps)
 ; ============================================================
 Function KillOldProcess
   killRetry:
   DetailPrint "Stopping taskmonitor114..."
   ExecWait 'taskkill /IM taskmonitor114.exe'
 
-  ; Check still running → force kill
+  ; Check still running 闁?force kill
   nsExec::ExecToStack 'tasklist /FI "IMAGENAME eq taskmonitor114.exe" /NH'
   Pop $0
   Pop $1
@@ -344,7 +355,7 @@ Function KillOldProcess
 FunctionEnd
 
 ; ============================================================
-; RemoveOrphanFiles — delete files no longer in new version
+; RemoveOrphanFiles 闁?delete files no longer in new version
 ;   Uses precomputed remove-list.txt (embedded at build time).
 ;   Protected files are never in the list (filtered at build time).
 ; ============================================================
@@ -357,7 +368,7 @@ Function RemoveOrphanFiles
   File /nonfatal "${PUBLISH_DIR}\remove-list.txt"
 
   ${IfNot} ${FileExists} "$PLUGINSDIR\remove-list.txt"
-    DetailPrint "  (no remove-list.txt — skipping orphan cleanup)"
+    DetailPrint "  (no remove-list.txt 闁?skipping orphan cleanup)"
     Return
   ${EndIf}
 
@@ -395,7 +406,7 @@ Function RemoveOrphanFiles
 FunctionEnd
 
 ; ============================================================
-; UpdateAutoStart — update if path changed
+; UpdateAutoStart 闁?update if path changed
 ; ============================================================
 Function UpdateAutoStart
   ReadRegStr $0 HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
@@ -408,8 +419,8 @@ Function UpdateAutoStart
 FunctionEnd
 
 ; ============================================================
-; ParseExePath — extract exe path from registry value
-;   "<path>" --autostart → path
+; ParseExePath 闁?extract exe path from registry value
+;   "<path>" --autostart 闁?path
 ; ============================================================
 Function ParseExePath
   Exch $0
@@ -443,7 +454,7 @@ FunctionEnd
 
 ; ============================================================
 ; ============================================================
-; .onInstSuccess — auto-run app in silent mode
+; .onInstSuccess 闁?auto-run app in silent mode
 ; ============================================================
 Function .onInstSuccess
   ${If} $IsSilent == "1"
@@ -464,12 +475,12 @@ Function un.CheckAndKillOldProcess
 FunctionEnd
 
 ; ============================================================
-; un.DeleteAllData — find data via registry, delete all
+; un.DeleteAllData 闁?find data via registry, delete all
 ; ============================================================
 Function un.DeleteAllData
   DetailPrint "$(UNINST_DATA_DEL)"
 
-  ; Resolve data directory (registry → fallback to default)
+  ; Resolve data directory (registry 闁?fallback to default)
   ReadRegStr $R0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
   ${If} $R0 == ""
     StrCpy $R0 "$LOCALAPPDATA\${PRODUCT_NAME}"
@@ -515,15 +526,20 @@ Function un.DeleteAllData
 FunctionEnd
 
 Function un.onInit
-  ; Step 1: Ask about data deletion first
-  ${If} $IsSilent == "0"
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" IDYES +2
-    StrCpy $DeleteData "0"
-    Goto +2
-    StrCpy $DeleteData "1"
-  ${Else}
-    StrCpy $DeleteData "0"
-  ${EndIf}
+  ; Silent mode: skip all prompts, don't delete data
+  IfSilent +3 0
+  Goto interactive
+  Nop
+  Nop
+  StrCpy $DeleteData "0"
+  Return
+
+  interactive:
+  ; Step 1: Ask about data deletion
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" IDYES +2
+  StrCpy $DeleteData "0"
+  Goto +2
+  StrCpy $DeleteData "1"
 
   ; Step 2: Confirm uninstall (message depends on data choice)
   ${If} $DeleteData == "1"

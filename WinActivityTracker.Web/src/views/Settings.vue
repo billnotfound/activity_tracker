@@ -293,7 +293,7 @@ https://ubuntu.com/legal/font-licence</pre>
             <div class="license-info">
               <div class="info-row">
                 <span class="label">{{ t('licenses.version') }}:</span>
-                <span class="value">zlib/libpng License + bzip2 License + CPL 1.0</span>
+                <span class="value">zlib/libpng License</span>
               </div>
               <div class="info-row">
                 <span class="label">{{ t('licenses.copyright') }}:</span>
