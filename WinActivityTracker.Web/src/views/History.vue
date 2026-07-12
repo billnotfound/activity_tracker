@@ -70,9 +70,36 @@ const apiBase = inject('apiBase')
 const { t } = useI18n()
 const { isDark } = useTheme()
 
-// Initialize with past 3 hours
-const startDate = ref(new Date(Date.now() - 3 * 60 * 60 * 1000))
+// Aborted on unmount so in-flight fetches don't keep running after the
+// view is gone. Per-instance (re-created each time the view is mounted).
+const abortController = new AbortController()
+
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000
+
+// Determine initial date range: if data covers less than 3h, show all of it
+let _oldestTs = null
+let _initialEarliest = null
+try {
+  const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
+  if (r.ok) {
+    const stats = await r.json()
+    if (stats.oldestRecord) {
+      const oldest = new Date(stats.oldestRecord.endsWith('Z') ? stats.oldestRecord : stats.oldestRecord + 'Z')
+      _oldestTs = oldest.getTime()
+      _initialEarliest = oldest
+    }
+  }
+} catch {
+  // Fall back to 3h default on failure
+}
+
+const startDate = ref(
+  _oldestTs && (Date.now() - _oldestTs) < THREE_HOURS_MS
+    ? new Date(_oldestTs)
+    : new Date(Date.now() - THREE_HOURS_MS)
+)
 const endDate = ref(new Date())
+const earliestDate = ref(_initialEarliest)
 
 const data = ref([])
 const timeline = ref([])
@@ -82,7 +109,6 @@ const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
 const loading = ref(true)
 const error = ref('')
-const earliestDate = ref(null)
 const isTimeValid = ref(true)
 const timeEasterEgg = ref('')
 
@@ -96,10 +122,6 @@ let loadId = 0
 // Cache process colors keyed by `${processName}|${atTime}` so re-renders
 // (e.g. theme toggle, resize) don't re-fetch /api/icons for the same range.
 const colorCache = new Map()
-
-// Aborted on unmount so in-flight fetches don't keep running after the
-// view is gone. Per-instance (re-created each time the view is mounted).
-const abortController = new AbortController()
 
 // Handle time change from picker
 function handleTimeChange({ start, end, valid, easterEgg }) {
@@ -121,19 +143,6 @@ onMounted(async () => {
     }
   } catch (e) {
     console.error('Failed to load settings:', e)
-  }
-
-  // Fetch oldest record to constrain time picker
-  try {
-    const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
-    if (r.ok) {
-      const stats = await r.json()
-      if (stats.oldestRecord) {
-        earliestDate.value = new Date(stats.oldestRecord.endsWith('Z') ? stats.oldestRecord : stats.oldestRecord + 'Z')
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load DB stats:', e)
   }
 
   await loadData()
