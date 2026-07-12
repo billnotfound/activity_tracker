@@ -1,4 +1,4 @@
-// taskmonitor114 — background monitoring with system tray and on-demand Web API.
+// taskmonitor114 鈥?background monitoring with system tray and on-demand Web API.
 //
 // Architecture: Host (trackers) runs always. DashboardServer (Kestrel + Vue SPA)
 // starts on-demand when the user opens the dashboard and stops after idle timeout.
@@ -47,7 +47,7 @@ Console.SetOut(mirror);
 var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
     ?? Path.Combine(appPaths.DataDir, "activity.db");
 
-// ===== Host — trackers run as HostedServices, always active =====
+// ===== Host 鈥?trackers run as HostedServices, always active =====
 var builder = Host.CreateApplicationBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -97,12 +97,6 @@ await ProgramStartup.InitializeDatabase(host.Services);
 // ===== Process cache init =====
 var processCache = host.Services.GetRequiredService<ProcessNameCache>();
 processCache.RefreshAll();
-// WMI requires admin privileges; skip on non-elevated to avoid loading WMI COM (~10-15MB native).
-var isAdmin = new System.Security.Principal.WindowsPrincipal(
-    System.Security.Principal.WindowsIdentity.GetCurrent())
-    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-if (isAdmin)
-    processCache.StartWmiWatch();
 
 // ===== Start trackers =====
 await host.StartAsync();

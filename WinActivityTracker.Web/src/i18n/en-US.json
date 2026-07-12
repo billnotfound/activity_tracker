@@ -245,6 +245,11 @@
   "licenses.usage": "Usage",
   "licenses.fontUsage": "UI text font and monospace code font",
   "licenses.viewLicense": "View full license",
+  "licenses.nsisUsage": "Windows installer creation",
+  "licenses.nsisZlib": "zlib/libpng License",
+  "licenses.nsisBzip2": "bzip2 License",
+  "licenses.nsisLzma": "Common Public License 1.0",
+  "licenses.nsisLzmaException": "LZMA",
 
   "program.startupSlowMessage": "The program is starting slowly. Please wait or restart the application.",
   "program.startupSlowTitle": "Startup warning",

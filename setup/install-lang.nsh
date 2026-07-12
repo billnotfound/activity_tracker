@@ -22,7 +22,10 @@ LangString MSG_PROTECTED_SKIP ${LANG_ENGLISH} "Skipping protected file: "
 LangString MSG_LICENSE_TITLE  ${LANG_ENGLISH} "License Agreement"
 LangString MSG_LICENSE_SUBTITLE ${LANG_ENGLISH} "Please review the license terms before installing."
 
-LangString UNINST_CONFIRM     ${LANG_ENGLISH} "Are you sure you want to completely remove taskmonitor114?$\n$\nYour activity data and settings will NOT be deleted."
+LangString UNINST_DATA_ASK    ${LANG_ENGLISH} "Delete ALL activity data?$\n$\nThis includes: tracking history, settings, tags, and title rules.$\n$\nThis action CANNOT BE UNDONE!"
+LangString UNINST_CONFIRM_DEL ${LANG_ENGLISH} "Are you sure you want to completely remove taskmonitor114 AND delete all activity data?$\n$\nThis CANNOT BE UNDONE!"
+LangString UNINST_CONFIRM     ${LANG_ENGLISH} "Are you sure you want to completely remove taskmonitor114?$\n$\nYour activity data and settings will be kept."
+LangString UNINST_DATA_DEL    ${LANG_ENGLISH} "Deleting user data..."
 
 ; ---- SimpChinese ----
 LangString LANG_SELECT_TITLE  ${LANG_SIMPCHINESE} "安装程序语言"
@@ -44,4 +47,7 @@ LangString MSG_PROTECTED_SKIP ${LANG_SIMPCHINESE} "跳过受保护文件: "
 LangString MSG_LICENSE_TITLE  ${LANG_SIMPCHINESE} "许可协议"
 LangString MSG_LICENSE_SUBTITLE ${LANG_SIMPCHINESE} "安装前请阅读许可条款。"
 
-LangString UNINST_CONFIRM     ${LANG_SIMPCHINESE} "确定要完全移除 taskmonitor114 吗？$\n$\n您的活动数据和设置不会被删除。"
+LangString UNINST_DATA_ASK    ${LANG_SIMPCHINESE} "是否删除所有活动数据？$\n$\n包括：追踪历史、设置、标签和标题规则。$\n$\n此操作不可恢复！"
+LangString UNINST_CONFIRM_DEL ${LANG_SIMPCHINESE} "确定要完全移除 taskmonitor114 并删除所有活动数据吗？$\n$\n此操作不可恢复！"
+LangString UNINST_CONFIRM     ${LANG_SIMPCHINESE} "确定要完全移除 taskmonitor114 吗？$\n$\n活动数据和设置将被保留。"
+LangString UNINST_DATA_DEL    ${LANG_SIMPCHINESE} "正在删除用户数据..."

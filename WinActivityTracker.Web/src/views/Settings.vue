@@ -286,6 +286,115 @@ For the complete licence text, see:
 https://ubuntu.com/legal/font-licence</pre>
             </details>
           </div>
+
+          <!-- Nullsoft Install System -->
+          <div class="license-section">
+            <h4 class="license-title">Nullsoft Scriptable Install System (NSIS)</h4>
+            <div class="license-info">
+              <div class="info-row">
+                <span class="label">{{ t('licenses.version') }}:</span>
+                <span class="value">zlib/libpng License + bzip2 License + CPL 1.0</span>
+              </div>
+              <div class="info-row">
+                <span class="label">{{ t('licenses.copyright') }}:</span>
+                <span class="value">© 1999-2026 Contributors</span>
+              </div>
+              <div class="info-row">
+                <span class="label">{{ t('licenses.website') }}:</span>
+                <a href="https://nsis.sourceforge.io/" target="_blank" class="link">nsis.sourceforge.io</a>
+              </div>
+              <div class="info-row">
+                <span class="label">{{ t('licenses.usage') }}:</span>
+                <span class="value">{{ t('licenses.nsisUsage') }}</span>
+              </div>
+            </div>
+
+            <!-- zlib/libpng License -->
+            <details class="license-details">
+              <summary>{{ t('licenses.nsisZlib') }}</summary>
+              <pre class="license-text">Copyright (C) 1999-2026 Contributors
+
+All NSIS source code, plug-ins, documentation, examples, header files
+and graphics, with the exception of the compression modules and where
+otherwise noted, are licensed under the zlib/libpng license.
+
+The zlib compression module for NSIS is also licensed under this license.
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not
+   be misrepresented as being the original software.
+3. This notice may not be removed or altered from any source
+   distribution.</pre>
+            </details>
+
+            <!-- bzip2 License -->
+            <details class="license-details">
+              <summary>{{ t('licenses.nsisBzip2') }}</summary>
+              <pre class="license-text">The bzip2 compression module for NSIS is licensed under the bzip2 license:
+
+This program, "bzip2" and associated library "libbzip2", are copyright
+(C) 1996-2000 Julian R Seward. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. The origin of this software must not be misrepresented; you must
+   not claim that you wrote the original software. If you use this
+   software in a product, an acknowledgment in the product documentation
+   would be appreciated but is not required.
+3. Altered source versions must be plainly marked as such, and must
+   not be misrepresented as being the original software.
+4. The name of the author may not be used to endorse or promote
+   products derived from this software without specific prior written
+   permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
+INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.</pre>
+            </details>
+
+            <!-- Common Public License 1.0 (LZMA) -->
+            <details class="license-details">
+              <summary>{{ t('licenses.nsisLzma') }}</summary>
+              <pre class="license-text">The LZMA compression module for NSIS is licensed under the
+Common Public License version 1.0.
+
+THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS COMMON
+PUBLIC LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION OF
+THE PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
+
+For the complete license text, see:
+https://opensource.org/licenses/CPL-1.0</pre>
+            </details>
+
+            <!-- LZMA Special Exception -->
+            <details class="license-details">
+              <summary>{{ t('licenses.nsisLzmaException') }}</summary>
+              <pre class="license-text">Igor Pavlov and Amir Szekely, the authors of the LZMA compression
+module for NSIS, expressly permit you to statically or dynamically link
+your code (or bind by name) to the files from the LZMA compression
+module for NSIS without subjecting your linked code to the terms of
+the Common Public License version 1.0. Any modifications or additions
+to files from the LZMA compression module for NSIS, however, are
+subject to the terms of the Common Public License version 1.0.</pre>
+            </details>
+          </div>
         </MemphisCard>
       </TabPanel>
       </TabPanels>

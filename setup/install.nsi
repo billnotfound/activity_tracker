@@ -34,11 +34,29 @@ ${StrRep}
 ${StrStr}
 ${StrTrimNewLines}
 
+; ---- Macro: delete files matching a wildcard pattern ----
+!macro DeletePattern Dir Pattern
+  FindFirst $R2 $R3 "${Dir}\${Pattern}"
+  ${If} $R3 != ""
+    ${Do}
+      Delete "${Dir}\$R3"
+      FindNext $R2 $R3
+    ${LoopUntil} ${Errors}
+    FindClose $R2
+  ${EndIf}
+!macroend
+
 ; ---- Installer attributes ----
 Name "${PRODUCT_NAME} ${VERSION}"
 OutFile "${PUBLISH_DIR}\${PRODUCT_NAME}-setup-${PLATFORM}.exe"
-InstallDir "$PROGRAMFILES\${PRODUCT_NAME}"
-RequestExecutionLevel user
+!if "${PLATFORM}" == "win-x86"
+  InstallDir "$PROGRAMFILES32\${PRODUCT_NAME}"
+!else if "${PLATFORM}" == "win-x86-selfcontained"
+  InstallDir "$PROGRAMFILES32\${PRODUCT_NAME}"
+!else
+  InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
+!endif
+RequestExecutionLevel admin
 ShowInstDetails show
 ShowUnInstDetails show
 XPStyle on
@@ -58,12 +76,11 @@ VIAddVersionKey "LegalCopyright" "${PRODUCT_PUBLISHER}"
 ; ---- Interface settings ----
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\taskmonitor114.exe"
-!define MUI_FINISHPAGE_RUN_PARAMETERS "--autostart"
-!define MUI_FINISHPAGE_RUN_NOTCHECKED
 
 ; ---- Variables ----
 Var IsUpgrade
 Var IsSilent
+Var DeleteData
 
 ; ============================================================
 ; Pages (interactive mode)
@@ -101,7 +118,9 @@ Function .onInit
     !insertmacro MUI_LANGDLL_DISPLAY
   ${EndIf}
 
-  ; Find existing install via registry
+  ; ── Detect existing install (5 signals, first match wins) ──
+
+  ; 1. Registry: DataDir → most reliable, set by our own installer
   ReadRegStr $0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
   ${If} $0 != ""
     ${If} ${FileExists} "$0\taskmonitor114.exe"
@@ -110,7 +129,24 @@ Function .onInit
     ${EndIf}
   ${EndIf}
 
-  ; Fallback: auto-start registry value
+  ; 2. Running process: get executable path via wmic
+  ${If} $IsUpgrade == "0"
+    nsExec::ExecToStack 'wmic process where name="taskmonitor114.exe" get ExecutablePath /value'
+    Pop $0
+    Pop $1
+    ${StrStr} $2 "$1" "ExecutablePath="
+    ${If} $2 != ""
+      StrCpy $0 $2 "" 16
+      ${StrTrimNewLines} $0 $0
+      ${GetParent} $0 $1
+      ${If} ${FileExists} "$1\taskmonitor114.exe"
+        StrCpy $INSTDIR $1
+        StrCpy $IsUpgrade "1"
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  ; 3. Registry: auto-start Run key (may point to old path)
   ${If} $IsUpgrade == "0"
     ReadRegStr $0 HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
     ${If} $0 != ""
@@ -124,6 +160,30 @@ Function .onInit
           StrCpy $IsUpgrade "1"
         ${EndIf}
       ${EndIf}
+    ${EndIf}
+  ${EndIf}
+
+  ; 4. Default install location (platform-aware Program Files)
+  ${If} $IsUpgrade == "0"
+    !if "${PLATFORM}" == "win-x86"
+      StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
+    !else if "${PLATFORM}" == "win-x86-selfcontained"
+      StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
+    !else
+      StrCpy $0 "$PROGRAMFILES64\${PRODUCT_NAME}"
+    !endif
+    ${If} ${FileExists} "$0\taskmonitor114.exe"
+      StrCpy $INSTDIR $0
+      StrCpy $IsUpgrade "1"
+    ${EndIf}
+  ${EndIf}
+
+  ; 5. Default data location (%LOCALAPPDATA%)
+  ${If} $IsUpgrade == "0"
+    StrCpy $0 "$LOCALAPPDATA\${PRODUCT_NAME}"
+    ${If} ${FileExists} "$0\taskmonitor114.exe"
+      StrCpy $INSTDIR $0
+      StrCpy $IsUpgrade "1"
     ${EndIf}
   ${EndIf}
 FunctionEnd
@@ -187,9 +247,9 @@ Section "$(SEC_MAIN_NAME)" SEC_MAIN
 SectionEnd
 
 ; ============================================================
-; Section "Auto-start with Windows" (optional, GUI only)
+; Section "Auto-start with Windows" (selected by default)
 ; ============================================================
-Section /o "$(SEC_STARTUP_NAME)" SEC_STARTUP
+Section "$(SEC_STARTUP_NAME)" SEC_STARTUP
   WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
 SectionEnd
 
@@ -204,7 +264,7 @@ SectionEnd
 Section "Uninstall"
   Call un.CheckAndKillOldProcess
 
-  ; Remove application files (NOT user data: settings.json, tags.json, *.db, etc.)
+  ; Remove application files (NOT user data unless user opted in)
   Delete "$INSTDIR\taskmonitor114.exe"
   Delete "$INSTDIR\*.dll"
   Delete "$INSTDIR\appsettings.json"
@@ -220,8 +280,10 @@ Section "Uninstall"
   DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
   DeleteRegValue HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
 
-  ; NOTE: ConfigDir/DataDir registry keys left intact to preserve
-  ; user data at %LOCALAPPDATA%\WinActivityTracker.
+  ; Conditionally delete user data
+  ${If} $DeleteData == "1"
+    Call un.DeleteAllData
+  ${EndIf}
 SectionEnd
 
 ; ============================================================
@@ -380,6 +442,7 @@ Function ParseExePath
 FunctionEnd
 
 ; ============================================================
+; ============================================================
 ; .onInstSuccess — auto-run app in silent mode
 ; ============================================================
 Function .onInstSuccess
@@ -400,7 +463,74 @@ Function un.CheckAndKillOldProcess
   ExecWait 'net stop taskmonitor114'
 FunctionEnd
 
+; ============================================================
+; un.DeleteAllData — find data via registry, delete all
+; ============================================================
+Function un.DeleteAllData
+  DetailPrint "$(UNINST_DATA_DEL)"
+
+  ; Resolve data directory (registry → fallback to default)
+  ReadRegStr $R0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
+  ${If} $R0 == ""
+    StrCpy $R0 "$LOCALAPPDATA\${PRODUCT_NAME}"
+  ${EndIf}
+
+  ; Resolve config directory
+  ReadRegStr $R1 HKCU "${PRODUCT_REG_KEY}" "ConfigDir"
+  ${If} $R1 == ""
+    StrCpy $R1 "$LOCALAPPDATA\${PRODUCT_NAME}"
+  ${EndIf}
+
+  ; Helper: delete all files matching a pattern in a directory
+  ; Uses $R2/$R3 as scratch registers
+
+  ; Delete database files from data dir
+  !insertmacro DeletePattern "$R0" "*.db"
+  !insertmacro DeletePattern "$R0" "*.sqlite"
+  !insertmacro DeletePattern "$R0" "*.sqlite3"
+  !insertmacro DeletePattern "$R0" "*.bak"
+
+  ; Delete config files from config dir
+  Delete "$R1\settings.json"
+  Delete "$R1\tags.json"
+  Delete "$R1\title_rules.json"
+
+  ; Also clean $INSTDIR in case data lived alongside the app
+  ${If} $R0 != "$INSTDIR"
+    !insertmacro DeletePattern "$INSTDIR" "*.db"
+    !insertmacro DeletePattern "$INSTDIR" "*.sqlite"
+    !insertmacro DeletePattern "$INSTDIR" "*.sqlite3"
+    !insertmacro DeletePattern "$INSTDIR" "*.bak"
+  ${EndIf}
+  ${If} $R1 != "$INSTDIR"
+    Delete "$INSTDIR\settings.json"
+    Delete "$INSTDIR\tags.json"
+    Delete "$INSTDIR\title_rules.json"
+  ${EndIf}
+
+  ; Remove registry keys that pointed to data/config dirs
+  DeleteRegValue HKCU "${PRODUCT_REG_KEY}" "DataDir"
+  DeleteRegValue HKCU "${PRODUCT_REG_KEY}" "ConfigDir"
+  DeleteRegKey /ifempty HKCU "${PRODUCT_REG_KEY}"
+FunctionEnd
+
 Function un.onInit
-  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" IDYES +2
-  Abort
+  ; Step 1: Ask about data deletion first
+  ${If} $IsSilent == "0"
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" IDYES +2
+    StrCpy $DeleteData "0"
+    Goto +2
+    StrCpy $DeleteData "1"
+  ${Else}
+    StrCpy $DeleteData "0"
+  ${EndIf}
+
+  ; Step 2: Confirm uninstall (message depends on data choice)
+  ${If} $DeleteData == "1"
+    MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM_DEL)" IDYES +2
+    Abort
+  ${Else}
+    MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" IDYES +2
+    Abort
+  ${EndIf}
 FunctionEnd

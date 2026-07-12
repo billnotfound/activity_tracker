@@ -245,6 +245,11 @@
   "licenses.usage": "用途",
   "licenses.fontUsage": "UI 文本字体和等宽代码字体",
   "licenses.viewLicense": "查看完整许可证",
+  "licenses.nsisUsage": "Windows 安装程序创建",
+  "licenses.nsisZlib": "zlib/libpng",
+  "licenses.nsisBzip2": "bzip2",
+  "licenses.nsisLzma": "Common Public License 1.0",
+  "licenses.nsisLzmaException": "LZMA",
 
   "program.startupSlowMessage": "程序启动缓慢，请稍候或重启应用。",
   "program.startupSlowTitle": "启动警告",
