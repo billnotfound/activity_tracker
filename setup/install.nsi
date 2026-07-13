@@ -291,10 +291,10 @@ Section "Uninstall"
   DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
   DeleteRegValue HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
 
-  ; Conditionally delete user data
-  ${If} $DeleteData == "1"
-    Call un.DeleteAllData
-  ${EndIf}
+  StrCmp $DeleteData "1" del_data no_del
+del_data:
+  Call un.DeleteAllData
+no_del:
 SectionEnd
 
 ; ============================================================
@@ -526,27 +526,23 @@ Function un.DeleteAllData
 FunctionEnd
 
 Function un.onInit
-  ; Silent mode: skip all prompts, don't delete data
-  IfSilent +3 0
-  Goto interactive
-  Nop
-  Nop
-  StrCpy $DeleteData "0"
-  Return
-
-  interactive:
-  ; Step 1: Ask about data deletion
+  ; "Keep data?" — YES keeps, NO deletes
   MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" IDYES +2
-  StrCpy $DeleteData "0"
-  Goto +2
   StrCpy $DeleteData "1"
+  Goto confirm
+  StrCpy $DeleteData "0"
 
-  ; Step 2: Confirm uninstall (message depends on data choice)
-  ${If} $DeleteData == "1"
-    MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM_DEL)" IDYES +2
-    Abort
-  ${Else}
-    MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" IDYES +2
-    Abort
-  ${EndIf}
+confirm:
+  StrCmp $DeleteData "1" del_dialog keep_dialog
+
+del_dialog:
+  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM_DEL)" IDYES +2
+  Abort
+  Goto done
+
+keep_dialog:
+  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" IDYES +2
+  Abort
+
+done:
 FunctionEnd
