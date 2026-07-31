@@ -20,6 +20,14 @@ public class TagService
     /// </summary>
     public const string HiddenTag = "__hidden";
 
+    /// <summary>
+    /// Special internal tag: rules tagged with this mark matching records as
+    /// idle time. Idle records stay visible but are flagged as idle and are
+    /// excluded from activity totals (summary reports them as totalIdleSeconds).
+    /// Allowed through the "_"-prefix filter; never returned by ResolveTags.
+    /// </summary>
+    public const string IdleTag = "__idle";
+
     private readonly string _filePath;
     private readonly object _reloadLock = new();
     private DateTime _lastWriteTime;
@@ -63,7 +71,7 @@ public class TagService
     {
         ReloadIfChanged();
         var allMatches = FindAllMatches(processName, windowTitle)
-            .Where(r => r.Tag != HiddenTag)
+            .Where(r => r.Tag != HiddenTag && r.Tag != IdleTag)
             .ToList();
         return ResolveByWeight(allMatches);
     }
@@ -103,6 +111,47 @@ public class TagService
         }
         return false;
     }
+
+    /// <summary>
+    /// Rules tagged with <see cref="IdleTag"/>: matches are marked as idle time.
+    /// </summary>
+    public List<TagRule> GetIdleRules()
+    {
+        ReloadIfChanged();
+        return _rules.Where(r => r.Tag == IdleTag).ToList();
+    }
+
+    /// <summary>
+    /// Returns true if any idle rule matches the given process/window.
+    /// Static so callers that already fetched rules can reuse them.
+    /// </summary>
+    public static bool MatchesIdle(
+        IReadOnlyList<TagRule> idleRules, string processName, string? windowTitle)
+    {
+        foreach (var rule in idleRules)
+        {
+            if (!string.IsNullOrEmpty(rule.TitlePattern))
+            {
+                if (string.IsNullOrEmpty(windowTitle)) continue;
+                var processOk = string.IsNullOrEmpty(rule.Process)
+                    || string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase);
+                if (processOk && WildcardMatch(rule.TitlePattern, windowTitle))
+                    return true;
+            }
+            else if (!string.IsNullOrEmpty(rule.Process)
+                && string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Convenience: reloads rules and checks whether the record is idle.
+    /// </summary>
+    public bool IsIdle(string processName, string? windowTitle)
+        => MatchesIdle(GetIdleRules(), processName, windowTitle);
 
     /// <summary>
     /// Convenience: reloads rules and checks whether the record is hidden.
@@ -159,7 +208,7 @@ public class TagService
         var raw = JsonSerializer.Deserialize<List<TagRule>>(File.ReadAllText(_filePath), _jsonOptions);
         return (raw ?? [])
             .Where(r => !string.IsNullOrEmpty(r.Tag)
-                && (!r.Tag.StartsWith('_') || r.Tag == HiddenTag)
+                && (!r.Tag.StartsWith('_') || r.Tag == HiddenTag || r.Tag == IdleTag)
                 && (!string.IsNullOrEmpty(r.Process) || !string.IsNullOrEmpty(r.TitlePattern)))
             .ToList();
     }

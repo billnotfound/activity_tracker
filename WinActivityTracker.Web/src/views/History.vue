@@ -101,6 +101,11 @@ const dataTooShort = ref(false)
 const timelineChartRef = ref(null)
 let timelineChart = null
 
+// Hover-highlight state: while hovering a process, all other processes dim
+let allWindowsData = []
+let hoveredProcess = null
+let dimColor = 'rgba(128, 128, 128, 0.45)'
+
 // Counter to cancel stale loadData calls — each call increments the ID;
 // only the call whose ID still matches when it reaches renderTimeline() proceeds.
 let loadId = 0
@@ -210,6 +215,9 @@ async function loadData() {
     timelineChart.dispose()
     timelineChart = null
   }
+  // dispose() leaves the old canvases in the DOM; stacked stale canvases
+  // above the live one swallow mouse events, breaking hover detection.
+  timelineChartRef.value?.querySelectorAll('canvas').forEach(c => c.remove())
 
   try {
     const fromStr = toLocalDatetimeString(startDate.value)
@@ -329,6 +337,60 @@ async function loadData() {
     error.value = t('history.error.loadDataFailed', { message: e.message })
     loading.value = false
   }
+}
+
+let clearTimer = null
+let lastHoveredProcess = null
+
+function onTimelineMouseOver(params) {
+  if (params.seriesName !== 'windows') return
+  const proc = params.data && params.data.processName
+  if (!proc) return
+  if (clearTimer) {
+    clearTimeout(clearTimer)
+    clearTimer = null
+  }
+  if (hoveredProcess === proc) return
+  hoveredProcess = proc
+  applyHoverHighlight()
+}
+
+function onTimelineMouseOut(params) {
+  // Leaving a bar: seriesName is set. Leaving all elements (blank chart area):
+  // ECharts emits a global mouseout without seriesName — clear hover then too.
+  if (params.seriesName && params.seriesName !== 'windows') return
+  if (clearTimer) return
+  // 50ms buffer: a quick move to another bar cancels this and switches
+  // directly, so the dim/restore flicker is skipped.
+  clearTimer = setTimeout(() => {
+    clearTimer = null
+    hoveredProcess = null
+    applyHoverHighlight()
+  }, 50)
+}
+
+function onTimelineMouseLeave() {
+  if (clearTimer) {
+    clearTimeout(clearTimer)
+    clearTimer = null
+  }
+  hoveredProcess = null
+  applyHoverHighlight()
+}
+
+function applyHoverHighlight() {
+  if (!timelineChart || timelineChart.isDisposed() || allWindowsData.length === 0) return
+  if (hoveredProcess === lastHoveredProcess) return
+  lastHoveredProcess = hoveredProcess
+  const hovered = hoveredProcess
+  const data = allWindowsData.map(item => {
+    if (hovered && item.processName !== hovered) {
+      // Dim non-hovered processes; hovered process keeps its original color
+      return { ...item, itemStyle: { ...item._origStyle, color: dimColor, borderColor: dimColor, opacity: 0.45 } }
+    }
+    return { ...item, itemStyle: item._origStyle }
+  })
+  timelineChart.setOption({ series: [{ name: 'windows', data }] }, false)
 }
 
 async function renderTimeline(myLoadId) {
@@ -603,10 +665,12 @@ async function renderTimeline(myLoadId) {
     const end = item._ts + item.durationSeconds * 1000
     const color = colorMap[item.processName]
 
+    const focusStyle = { color, borderColor: color, borderWidth: 0 }
     focusedWindows.push({
       name: item.processName,
       value: [rowIdx, item._ts, end, item.durationSeconds],
-      itemStyle: { color, borderColor: color, borderWidth: 0 },
+      itemStyle: focusStyle,
+      _origStyle: focusStyle,
       processName: item.processName,
       windowTitle: item.windowTitle,
       timestamp: item.timestamp,
@@ -686,15 +750,17 @@ async function renderTimeline(myLoadId) {
         }
 
         // Store raw data for shared tooltip (no per-item closure)
+        const bgStyle = {
+          color: 'transparent',
+          borderColor: color,
+          borderWidth: 1,
+          opacity: 0.3,
+        }
         backgroundWindows.push({
           name: session.processName,
           value: [rowIdx, segStart, segEnd, 0],
-          itemStyle: {
-            color: 'transparent',
-            borderColor: color,
-            borderWidth: 1,
-            opacity: 0.3,
-          },
+          itemStyle: bgStyle,
+          _origStyle: bgStyle,
           _bgSession: session,
           itemColor: color,
         })
@@ -708,6 +774,8 @@ async function renderTimeline(myLoadId) {
 
   // Combine background windows (rendered first, behind) and focused windows (on top)
   const allWindows = [...backgroundWindows, ...focusedWindows]
+  allWindowsData = allWindows
+  lastHoveredProcess = null
 
   // Build sleep/shutdown area overlays from backend events (exclude Idle)
   const sleepAreas = systemEvents.value
@@ -767,6 +835,11 @@ async function renderTimeline(myLoadId) {
 
   if (!timelineChart) {
     timelineChart = echarts.init(timelineChartRef.value)
+    timelineChart.on('mouseover', onTimelineMouseOver)
+    timelineChart.on('mouseout', onTimelineMouseOut)
+    // DOM mouseleave is the reliable way to clear hover state — ECharts'
+    // series mouseout may not fire when the cursor leaves the canvas.
+    timelineChartRef.value.addEventListener('mouseleave', onTimelineMouseLeave)
   }
 
   // Bail if a newer load started while we were working
@@ -780,6 +853,7 @@ async function renderTimeline(myLoadId) {
   const secondaryColor = computedStyle.getPropertyValue('--secondary-color').trim()
   const borderColor = computedStyle.getPropertyValue('--border-color').trim()
   const surface200 = computedStyle.getPropertyValue('--surface-200').trim()
+  dimColor = surface200 || 'rgba(128, 128, 128, 0.45)'
 
   function renderIdleRect(params, api) {
     const startX = api.coord([api.value(0), 0])[0]

@@ -65,5 +65,11 @@
   { "_comment": "=== 隐藏 (特殊 tag: __hidden) ===" },
   { "_comment": "命中规则的进程/标题在所有界面全局隐藏，且不计入总时长。process 和 titlePattern 可任选其一或同时使用，写法与普通规则一致。" },
   { "_comment": "Windows 锁屏界面默认隐藏:" },
-  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" }
+  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" },
+  { "_comment": "" },
+  { "_comment": "=== 空闲 (特殊 tag: __idle) ===" },
+  { "_comment": "命中规则的进程/标题被标记为空闲：不占用活动时长（摘要另报 totalIdleSeconds），时间线中显示为灰色空闲区域，媒体记录被隐藏。process 和 titlePattern 可任选其一或同时使用。" },
+  { "_comment": "权重 >= 10 为强规则（无例外）；权重 < 10 为弱规则，只影响媒体记录，且被前台活动覆盖（如正在前台播放音乐时媒体记录不隐藏）。弱规则不影响焦点记录/时间线/总时长。" },
+  { "_comment": "示例(强): { \"tag\": \"__idle\", \"process\": \"screensaver.exe\", \"weight\": 100, \"mode\": \"overwrite\" }" },
+  { "_comment": "示例(弱): { \"tag\": \"__idle\", \"process\": \"foobar2000.exe\", \"weight\": 5, \"mode\": \"overwrite\" }" }
 ]

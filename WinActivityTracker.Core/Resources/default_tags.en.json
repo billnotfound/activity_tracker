@@ -67,5 +67,11 @@
   { "_comment": "=== Hidden (special tag: __hidden) ===" },
   { "_comment": "Matching processes/titles are hidden everywhere (all views) and excluded from totals. process and titlePattern work like normal rules; either or both may be set." },
   { "_comment": "Windows lock screen is hidden by default:" },
-  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" }
+  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" },
+  { "_comment": "" },
+  { "_comment": "=== Idle (special tag: __idle) ===" },
+  { "_comment": "Matching processes/titles are marked as idle: excluded from activity totals (the summary reports them separately as totalIdleSeconds), rendered as gray idle areas in the timeline, and their media records are hidden. process and titlePattern work like normal rules; either or both may be set." },
+  { "_comment": "Weight >= 10 is a strong rule (no exception). Weight < 10 is a weak rule: it affects only media records and is overridden by foreground activity (media stays visible while the process has focus, e.g. actively playing music). Weak rules never affect focus records/timelines/totals." },
+  { "_comment": "Example (strong): { \"tag\": \"__idle\", \"process\": \"screensaver.exe\", \"weight\": 100, \"mode\": \"overwrite\" }" },
+  { "_comment": "Example (weak): { \"tag\": \"__idle\", \"process\": \"foobar2000.exe\", \"weight\": 5, \"mode\": \"overwrite\" }" }
 ]

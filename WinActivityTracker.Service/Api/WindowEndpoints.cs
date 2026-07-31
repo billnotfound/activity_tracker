@@ -20,10 +20,14 @@ public static class WindowEndpoints
     {
         var excluded = settings.Settings.ExcludedProcesses;
         var hidden = tagService.GetHiddenRules();
+        // Only strong idle rules (weight >= 10) affect live windows; weak rules
+        // are overridden by foreground activity.
+        var idle = tagService.GetIdleRules().Where(r => r.Weight >= 10).ToList();
         var windows = WindowTracker.EnumerateVisibleWindows(processCache);
         return Results.Ok(windows
             .Where(w => !excluded.Contains(w.ProcessName, StringComparer.OrdinalIgnoreCase)
-                && !TagService.MatchesHidden(hidden, w.ProcessName, w.Title))
+                && !TagService.MatchesHidden(hidden, w.ProcessName, w.Title)
+                && !TagService.MatchesIdle(idle, w.ProcessName, w.Title))
             .Select(w => new
             {
                 w.ProcessName,
@@ -48,6 +52,10 @@ public static class WindowEndpoints
         var baseQuery = HiddenFilter.ExcludeHidden(
             db.FocusChanges.AsNoTracking().Where(f => f.Timestamp >= start && f.Timestamp <= end),
             tagService.GetHiddenRules());
+
+        // Idle-tagged rows are dropped so the frontend's gap detection renders
+        // those spans as idle (gray) areas instead of activity.
+        baseQuery = IdleFilter.ExcludeIdle(baseQuery, tagService.GetIdleRules());
 
         var total = await baseQuery.CountAsync();
 
@@ -125,10 +133,12 @@ public static class WindowEndpoints
         var take = Math.Clamp(limit ?? 5000, 1, 50000);
 
         // Get window sessions that overlap with the time range
-        var sessions = await HiddenFilter.ExcludeHidden(
-                db.WindowSessions.AsNoTracking()
-                    .Where(w => w.OpenTime <= end && (w.CloseTime == null || w.CloseTime >= start)),
-                tagService.GetHiddenRules())
+        var sessions = await IdleFilter.ExcludeIdle(
+                HiddenFilter.ExcludeHidden(
+                    db.WindowSessions.AsNoTracking()
+                        .Where(w => w.OpenTime <= end && (w.CloseTime == null || w.CloseTime >= start)),
+                    tagService.GetHiddenRules()),
+                tagService.GetIdleRules())
             .OrderBy(w => w.OpenTime)
             .Take(take)
             .Select(w => new

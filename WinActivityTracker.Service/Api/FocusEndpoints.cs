@@ -59,9 +59,13 @@ public static class FocusEndpoints
         var filtered = ExcludeOffPeriods(baseQuery, offPeriods);
         filtered = HiddenFilter.ExcludeHidden(filtered, tagService.GetHiddenRules());
 
-        // Run summary and adjusted-switch-count queries concurrently
-        // (both hit FocusChanges with the same filter; no reason to wait).
-        var summaryTask = filtered
+        // Idle-tagged records are excluded from activity totals; the summary
+        // reports them separately as totalIdleSeconds.
+        var activeQuery = IdleFilter.ExcludeIdle(filtered, tagService.GetIdleRules());
+
+        // Run summary, adjusted-switch-count and total queries concurrently
+        // (all hit FocusChanges with the same filter; no reason to wait).
+        var summaryTask = activeQuery
             .GroupBy(f => f.ProcessName)
             .Select(g => new
             {
@@ -72,14 +76,19 @@ public static class FocusEndpoints
             .OrderByDescending(x => x.TotalSeconds)
             .ToListAsync();
 
-        var adjTask = ComputeAdjustedSwitchCounts(filtered);
+        var adjTask = ComputeAdjustedSwitchCounts(activeQuery);
 
-        await Task.WhenAll(summaryTask, adjTask);
+        // Total (hidden-excluded) seconds minus the active summary total
+        // yields the idle seconds without a second aggregation over active rows.
+        var allSecTask = filtered.SumAsync(f => f.DurationSeconds);
+
+        await Task.WhenAll(summaryTask, adjTask, allSecTask);
 
         var data = summaryTask.Result;
         var adj = adjTask.Result;
 
         var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
+        var totalIdleSec = Math.Max(0, allSecTask.Result - data.Sum(d => d.TotalSeconds));
 
         return Results.Ok(new
         {
@@ -91,7 +100,8 @@ public static class FocusEndpoints
                 AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount),
                 Tags = tagService.ResolveTags(d.ProcessName, null)
             }),
-            totalSleepSeconds = totalSleepSec
+            totalSleepSeconds = totalSleepSec,
+            totalIdleSeconds = totalIdleSec
         });
     }
 

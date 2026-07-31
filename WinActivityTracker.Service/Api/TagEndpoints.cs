@@ -69,9 +69,13 @@ public static class TagEndpoints
                 return;
             }
 
-            // "__hidden" is a special internal tag and must survive the save.
-            var skipped = rules.Where(r => r.Tag.StartsWith('_') && r.Tag != TagService.HiddenTag).ToList();
-            rules = rules.Where(r => !r.Tag.StartsWith('_') || r.Tag == TagService.HiddenTag).ToList();
+            // "__hidden" and "__idle" are special internal tags and must survive the save.
+            var skipped = rules
+                .Where(r => r.Tag.StartsWith('_') && r.Tag != TagService.HiddenTag && r.Tag != TagService.IdleTag)
+                .ToList();
+            rules = rules
+                .Where(r => !r.Tag.StartsWith('_') || r.Tag == TagService.HiddenTag || r.Tag == TagService.IdleTag)
+                .ToList();
 
             if (rules.Count == 0)
             {

@@ -146,11 +146,15 @@ public partial class StatusWindow : Form
             var processCache = services.GetRequiredService<ProcessNameCache>();
             var tagService = services.GetRequiredService<TagService>();
             var hiddenRules = tagService.GetHiddenRules();
+            // Only strong idle rules (weight >= 10) affect focus records; weak
+            // rules are overridden by foreground activity.
+            var idleRules = tagService.GetIdleRules().Where(r => r.Weight >= 10).ToList();
 
             // 1. Current focus — direct P/Invoke, no API needed
             var windows = WindowTracker.EnumerateVisibleWindows(processCache);
             var focused = windows.FirstOrDefault(w =>
-                w.IsFocused && !TagService.MatchesHidden(hiddenRules, w.ProcessName, w.Title));
+                w.IsFocused && !TagService.MatchesHidden(hiddenRules, w.ProcessName, w.Title)
+                    && !TagService.MatchesIdle(idleRules, w.ProcessName, w.Title));
             _focusLabel.Text = focused != default
                 ? $"{focused.ProcessName} — {Truncate(focused.Title, 60)}"
                 : I18nService._("statusWindow.noFocusWindow");
@@ -184,11 +188,12 @@ public partial class StatusWindow : Form
                 .Select(f => new { f.ProcessName, f.WindowTitle, f.DurationSeconds, f.Timestamp })
                 .ToListAsync();
 
-            // Exclude off-period and hidden records
+            // Exclude off-period, hidden and idle records
             var filtered = changes
                 .Where(f => !offPeriods.Any(p =>
                     f.Timestamp >= p.Timestamp && f.Timestamp < p.Timestamp.AddSeconds(p.DurationSeconds)))
                 .Where(f => !TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle))
+                .Where(f => !TagService.MatchesIdle(idleRules, f.ProcessName, f.WindowTitle))
                 .ToList();
 
             // Summary: group by process, top 5

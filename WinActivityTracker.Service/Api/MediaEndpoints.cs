@@ -59,6 +59,10 @@ public static class MediaEndpoints
 
         var merged = MergeConsecutive(data);
 
+        // Idle/hidden-tagged processes hide their media records too. Matched
+        // in-memory: records are already merged, and the tag rule count is tiny.
+        merged = await FilterIdleMedia(db, merged, tagService.GetIdleRules(), tagService.GetHiddenRules());
+
         if (merged.Count > (limit ?? 50))
             merged = merged.GetRange(merged.Count - (limit ?? 50), limit ?? 50);
 
@@ -72,6 +76,94 @@ public static class MediaEndpoints
             m.Artist,
             m.PlaybackStatus
         }));
+    }
+
+    /// <summary>
+    /// Hides media records under the idle/hidden tags:
+    /// - a record whose own process/title matches a __hidden rule is always
+    ///   hidden (SQL layer above already does this for the raw rows)
+    /// - a record matching a strong idle rule (weight >= 10) is hidden
+    /// - a record matching a weak idle rule (weight &lt; 10) is hidden unless the
+    ///   process has foreground focus during the record's span (weak rules are
+    ///   overridden by foreground activity, e.g. actively playing music)
+    /// - any focus record inside the record's span that is hidden or strong-idle
+    ///   hides the record too (lock screen, screensaver, ... hide all media of
+    ///   that period regardless of which process produced it)
+    /// </summary>
+    private static async Task<List<MediaSessionRecord>> FilterIdleMedia(
+        AppDbContext db,
+        List<MediaSessionRecord> merged,
+        List<TagService.TagRule> idleRules,
+        List<TagService.TagRule> hiddenRules)
+    {
+        if (merged.Count == 0) return merged;
+
+        var strongIdle = idleRules.Where(r => r.Weight >= 10).ToList();
+        var weakIdle = idleRules.Where(r => r.Weight < 10).ToList();
+        if (strongIdle.Count == 0 && weakIdle.Count == 0) return merged;
+
+        var hideIds = new HashSet<long>();
+        var weakCandidates = new List<MediaSessionRecord>();
+
+        foreach (var m in merged)
+        {
+            if (TagService.MatchesIdle(strongIdle, m.AppName, m.Title))
+                hideIds.Add(m.Id);
+            else if (TagService.MatchesIdle(weakIdle, m.AppName, m.Title))
+                weakCandidates.Add(m);
+        }
+
+        var needFocus = weakCandidates.Count > 0
+            || (merged.Any(m => !hideIds.Contains(m.Id)) && (strongIdle.Count > 0 || hiddenRules.Count > 0));
+
+        if (needFocus)
+        {
+            var minStart = merged.Min(m => m.StartTime);
+            var maxEnd = merged.Max(m => m.EndTime ?? DateTime.UtcNow);
+
+            // Day of slack before minStart so a focus record that started
+            // before the earliest media record can still overlap it.
+            var focusRows = await db.FocusChanges.AsNoTracking()
+                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
+                .Where(f => f.Timestamp <= maxEnd && f.Timestamp >= minStart.AddDays(-1))
+                .Select(f => new { f.ProcessName, f.Timestamp, f.DurationSeconds, f.WindowTitle })
+                .ToListAsync();
+
+            // Focus span that is hidden or strong-idle hides the media record.
+            if (strongIdle.Count > 0 || hiddenRules.Count > 0)
+            {
+                foreach (var m in merged)
+                {
+                    if (hideIds.Contains(m.Id)) continue;
+                    var start = m.StartTime;
+                    var end = m.EndTime ?? DateTime.UtcNow;
+                    foreach (var f in focusRows)
+                    {
+                        if (f.Timestamp > end || f.Timestamp.AddSeconds(f.DurationSeconds) < start) continue;
+                        if (TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle)
+                            || TagService.MatchesIdle(strongIdle, f.ProcessName, f.WindowTitle))
+                        {
+                            hideIds.Add(m.Id);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Weak idle rules are overridden by foreground focus on the process.
+            foreach (var m in weakCandidates)
+            {
+                if (hideIds.Contains(m.Id)) continue;
+                var start = m.StartTime;
+                var end = m.EndTime ?? DateTime.UtcNow;
+                var hasFocus = focusRows.Any(f =>
+                    string.Equals(f.ProcessName, m.AppName, StringComparison.OrdinalIgnoreCase)
+                    && f.Timestamp <= end && f.Timestamp.AddSeconds(f.DurationSeconds) >= start);
+                if (!hasFocus) hideIds.Add(m.Id);
+            }
+        }
+
+        return merged.Where(m => !hideIds.Contains(m.Id)).ToList();
     }
 
     private static List<MediaSessionRecord> MergeConsecutive(List<MediaSessionRecord> records)
@@ -112,9 +204,11 @@ public static class MediaEndpoints
 
     private static async Task<IResult> GetProcessSnapshot(AppDbContext db, TagService tagService)
     {
-        var data = await HiddenFilter.ExcludeHidden(
-                db.ProcessSessions.Where(p => p.EndTime == null),
-                tagService.GetHiddenRules())
+        var data = await IdleFilter.ExcludeIdle(
+                HiddenFilter.ExcludeHidden(
+                    db.ProcessSessions.Where(p => p.EndTime == null),
+                    tagService.GetHiddenRules()),
+                tagService.GetIdleRules())
             .Select(p => new { p.ProcessName, p.ProcessId })
             .Distinct()
             .ToListAsync();

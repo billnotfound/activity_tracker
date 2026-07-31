@@ -14,8 +14,9 @@ namespace WinActivityTracker.Service.Api;
 public static class HiddenFilter
 {
     // Tag rules use '*' wildcards; translate to SQLite LIKE, escaping the
-    // LIKE metacharacters (% _ \) so user patterns stay literal.
-    private static string ToLikePattern(string pattern) =>
+    // LIKE metacharacters (% _ \) so user patterns stay literal. Internal so
+    // IdleFilter can share the exact same translation.
+    internal static string ToLikePattern(string pattern) =>
         Regex.Replace(pattern, @"[\\%_]", "\\$&").Replace("*", "%");
 
     public static IQueryable<FocusChange> ExcludeHidden(
