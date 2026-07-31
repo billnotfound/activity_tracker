@@ -6,6 +6,7 @@
         v-model="durationNum"
         :items="durationNumOptions"
         frameless
+        :disabled="disabled"
         class="duration-value-wheel"
         @carry="(d) => carryDuration(d)"
       />
@@ -16,11 +17,11 @@
     <div class="picker-row">
       <!-- Start time wheels (left of arrow) -->
       <div class="wheels-row">
-        <TimeWheel v-model="startYear"   :items="startYearOptions"   wide :label="t('common.year')"    @carry="(d) => carry('start','year',d)" />
-        <TimeWheel v-model="startMonth"  :items="startMonthOptions"       :label="t('common.month')"   @carry="(d) => carry('start','month',d)" />
-        <TimeWheel v-model="startDay"    :items="startDayOptions"         :label="t('common.day')"     @carry="(d) => carry('start','day',d)" />
-        <TimeWheel v-model="startHour"   :items="startHourOptions"        :label="t('common.hour')"    @carry="(d) => carry('start','hour',d)" />
-        <TimeWheel v-model="startMinute" :items="startMinuteOptions"      :label="t('common.minute')"  @carry="(d) => carry('start','minute',d)" />
+        <TimeWheel v-model="startYear"   :items="startYearOptions"   wide :disabled="disabled" :label="t('common.year')"    @carry="(d) => carry('start','year',d)" />
+        <TimeWheel v-model="startMonth"  :items="startMonthOptions"       :disabled="disabled" :label="t('common.month')"   @carry="(d) => carry('start','month',d)" />
+        <TimeWheel v-model="startDay"    :items="startDayOptions"         :disabled="disabled" :label="t('common.day')"     @carry="(d) => carry('start','day',d)" />
+        <TimeWheel v-model="startHour"   :items="startHourOptions"        :disabled="disabled" :label="t('common.hour')"    @carry="(d) => carry('start','hour',d)" />
+        <TimeWheel v-model="startMinute" :items="startMinuteOptions"      :disabled="disabled" :label="t('common.minute')"  @carry="(d) => carry('start','minute',d)" />
       </div>
 
       <!-- Arrow: width follows duration text width, animated.
@@ -39,11 +40,11 @@
 
       <!-- End time wheels (right of arrow) -->
       <div class="wheels-row">
-        <TimeWheel v-model="endYear"   :items="endYearOptions"   wide :label="t('common.year')"    @carry="(d) => carry('end','year',d)" />
-        <TimeWheel v-model="endMonth"  :items="endMonthOptions"       :label="t('common.month')"   @carry="(d) => carry('end','month',d)" />
-        <TimeWheel v-model="endDay"    :items="endDayOptions"         :label="t('common.day')"     @carry="(d) => carry('end','day',d)" />
-        <TimeWheel v-model="endHour"   :items="endHourOptions"        :label="t('common.hour')"    @carry="(d) => carry('end','hour',d)" />
-        <TimeWheel v-model="endMinute" :items="endMinuteOptions"      :label="t('common.minute')"  @carry="(d) => carry('end','minute',d)" />
+        <TimeWheel v-model="endYear"   :items="endYearOptions"   wide :disabled="disabled" :label="t('common.year')"    @carry="(d) => carry('end','year',d)" />
+        <TimeWheel v-model="endMonth"  :items="endMonthOptions"       :disabled="disabled" :label="t('common.month')"   @carry="(d) => carry('end','month',d)" />
+        <TimeWheel v-model="endDay"    :items="endDayOptions"         :disabled="disabled" :label="t('common.day')"     @carry="(d) => carry('end','day',d)" />
+        <TimeWheel v-model="endHour"   :items="endHourOptions"        :disabled="disabled" :label="t('common.hour')"    @carry="(d) => carry('end','hour',d)" />
+        <TimeWheel v-model="endMinute" :items="endMinuteOptions"      :disabled="disabled" :label="t('common.minute')"  @carry="(d) => carry('end','minute',d)" />
       </div>
     </div>
   </div>
@@ -59,7 +60,8 @@ const { t } = useI18n()
 const props = defineProps({
   startDate: { type: Date, default: () => new Date(Date.now() - 3 * 60 * 60 * 1000) },
   endDate: { type: Date, default: () => new Date() },
-  earliestDate: { type: Date, default: null }
+  earliestDate: { type: Date, default: null },
+  disabled: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:startDate', 'update:endDate', 'change'])

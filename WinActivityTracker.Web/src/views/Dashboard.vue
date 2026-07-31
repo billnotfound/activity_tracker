@@ -802,7 +802,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
     : new Date(toDate + 'T23:59:59').getTime()
 
   const filtered = mediaList
-    .filter(m => m.playbackStatus !== 'SystemSleep')
+    .filter(m => m.playbackStatus === 'Playing')
     .map(m => {
       const start = parseUtcTs(m.startTime).getTime()
       const end = m.endTime ? parseUtcTs(m.endTime).getTime() : Date.now()

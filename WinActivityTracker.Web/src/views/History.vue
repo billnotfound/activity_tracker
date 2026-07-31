@@ -9,6 +9,7 @@
       :start-date="startDate"
       :end-date="endDate"
       :earliest-date="earliestDate"
+      :disabled="dataTooShort"
       @change="handleTimeChange"
       class="mb-3"
     />
@@ -25,6 +26,10 @@
       <!-- Easter egg: invalid time range -->
       <div v-if="!isTimeValid" class="easter-egg-chart">
         <div class="easter-egg-chart-text">{{ timeEasterEgg }}</div>
+      </div>
+      <!-- Data too short (< 2 min) -->
+      <div v-else-if="dataTooShort" class="easter-egg-chart">
+        <div class="easter-egg-chart-text">{{ t('history.tooShort') }}</div>
       </div>
       <template v-else>
         <MemphisSkeleton v-if="loading" :lines="6" />
@@ -75,31 +80,11 @@ const { isDark } = useTheme()
 const abortController = new AbortController()
 
 const THREE_HOURS_MS = 3 * 60 * 60 * 1000
+const TWO_MIN_MS = 2 * 60 * 1000
 
-// Determine initial date range: if data covers less than 3h, show all of it
-let _oldestTs = null
-let _initialEarliest = null
-try {
-  const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
-  if (r.ok) {
-    const stats = await r.json()
-    if (stats.oldestRecord) {
-      const oldest = new Date(stats.oldestRecord.endsWith('Z') ? stats.oldestRecord : stats.oldestRecord + 'Z')
-      _oldestTs = oldest.getTime()
-      _initialEarliest = oldest
-    }
-  }
-} catch {
-  // Fall back to 3h default on failure
-}
-
-const startDate = ref(
-  _oldestTs && (Date.now() - _oldestTs) < THREE_HOURS_MS
-    ? new Date(_oldestTs)
-    : new Date(Date.now() - THREE_HOURS_MS)
-)
+const startDate = ref(new Date(Date.now() - THREE_HOURS_MS))
 const endDate = ref(new Date())
-const earliestDate = ref(_initialEarliest)
+const earliestDate = ref(null)
 
 const data = ref([])
 const timeline = ref([])
@@ -111,6 +96,7 @@ const loading = ref(true)
 const error = ref('')
 const isTimeValid = ref(true)
 const timeEasterEgg = ref('')
+const dataTooShort = ref(false)
 
 const timelineChartRef = ref(null)
 let timelineChart = null
@@ -125,6 +111,7 @@ const colorCache = new Map()
 
 // Handle time change from picker
 function handleTimeChange({ start, end, valid, easterEgg }) {
+  if (dataTooShort.value) return
   startDate.value = start
   endDate.value = end
   isTimeValid.value = valid
@@ -143,6 +130,27 @@ onMounted(async () => {
     }
   } catch (e) {
     console.error('Failed to load settings:', e)
+  }
+
+  // Fetch oldest record to constrain time picker (async, non-blocking)
+  try {
+    const r = await fetch(`${apiBase}/api/db/stats`, { signal: abortController.signal })
+    if (r.ok) {
+      const stats = await r.json()
+      if (stats.oldestRecord) {
+        const oldest = new Date(stats.oldestRecord.endsWith('Z') ? stats.oldestRecord : stats.oldestRecord + 'Z')
+        earliestDate.value = oldest
+        if ((Date.now() - oldest.getTime()) < THREE_HOURS_MS) {
+          startDate.value = oldest
+        }
+        // Check if total data span is less than 2 minutes
+        dataTooShort.value = (Date.now() - oldest.getTime()) < TWO_MIN_MS
+      } else {
+        dataTooShort.value = true
+      }
+    }
+  } catch {
+    // Fall back to 3h default on failure
   }
 
   await loadData()
@@ -190,6 +198,11 @@ async function loadData() {
   const myLoadId = ++loadId
   loading.value = true
   error.value = ''
+
+  if (dataTooShort.value) {
+    loading.value = false
+    return
+  }
 
   // Dispose chart before skeleton replaces the DOM container,
   // so renderTimeline() will init a fresh instance on the new div.

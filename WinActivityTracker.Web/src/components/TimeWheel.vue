@@ -1,6 +1,6 @@
 <template>
   <div class="time-wheel">
-    <div class="wheel-frame" :class="{ wide, scrolling, frameless }" :data-label="label" ref="frameRef">
+    <div class="wheel-frame" :class="{ wide, scrolling, frameless, disabled: props.disabled }" :data-label="label" ref="frameRef">
       <div
         class="wheel-track"
         ref="trackRef"
@@ -32,7 +32,8 @@ const props = defineProps({
   suffix: { type: String, default: '' },
   wide: { type: Boolean, default: false },
   frameless: { type: Boolean, default: false },
-  label: { type: String, default: '' }
+  label: { type: String, default: '' },
+  disabled: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:modelValue', 'carry'])
@@ -69,6 +70,7 @@ function scheduleRender(val) {
 watch(() => props.modelValue, (val) => scheduleRender(val))
 
 function selectItem(item) {
+  if (props.disabled) return
   renderValue.value = item
   pendingValue = null
   emit('update:modelValue', item)
@@ -107,6 +109,7 @@ function tryChange(delta) {
 }
 
 function onWheel(event) {
+  if (props.disabled) return
   scrolling.value = true
   if (scrollTimer) clearTimeout(scrollTimer)
   scrollTimer = setTimeout(() => { scrolling.value = false }, 150)
@@ -120,6 +123,7 @@ function onWheel(event) {
 // ── Vertical drag ──
 
 function startDrag(event) {
+  if (props.disabled) return
   scrolling.value = true
   if (scrollTimer) clearTimeout(scrollTimer)
   dragStartY.value = event.clientY
@@ -150,6 +154,7 @@ function stopDrag() {
 }
 
 function startTouch(event) {
+  if (props.disabled) return
   if (event.touches.length === 1) {
     dragStartY.value = event.touches[0].clientY
     dragAccum.value = 0
@@ -326,5 +331,16 @@ onUnmounted(() => {
   font-size: inherit;
   font-weight: inherit;
   color: inherit;
+}
+
+.wheel-frame.disabled {
+  opacity: 0.35;
+  pointer-events: none;
+  cursor: not-allowed;
+
+  &:hover {
+    transform: none;
+    box-shadow: 3px 3px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+  }
 }
 </style>

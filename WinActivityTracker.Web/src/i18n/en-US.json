@@ -101,6 +101,7 @@
   "history.table.totalDuration": "Total duration",
   "history.table.switches": "Switches",
   "history.noData": "No data — pick a date range with activity",
+  "history.tooShort": "Go spend some time with your PC — data will be here soon",
   "history.error.loadDataFailed": "Failed to load: {message}",
   "history.status.closed": "Closed",
   "history.status.running": "Running",
@@ -238,7 +239,7 @@
   "tags.error.backendUnreachable": "Cannot connect to backend: {message}",
 
   "licenses.pageTitle": "Third-party licenses",
-  "licenses.description": "This project uses the following open source fonts and libraries. Thanks for their contributions.",
+  "licenses.description": "This project uses the following open source fonts and libraries. ",
   "licenses.version": "License",
   "licenses.copyright": "Copyright",
   "licenses.website": "Website",

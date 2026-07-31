@@ -101,6 +101,7 @@
   "history.table.totalDuration": "总时长",
   "history.table.switches": "切换次数",
   "history.noData": "暂无数据 — 请选择一个有数据的日期范围",
+  "history.tooShort": "去多陪陪你的电脑吧，数据过会儿就来了",
   "history.error.loadDataFailed": "加载失败: {message}",
   "history.status.closed": "已关闭",
   "history.status.running": "运行中",
@@ -238,7 +239,7 @@
   "tags.error.backendUnreachable": "无法连接后端: {message}",
 
   "licenses.pageTitle": "第三方许可",
-  "licenses.description": "本项目使用了以下开源字体和库，感谢它们的贡献。",
+  "licenses.description": "本项目使用了以下开源字体和库.",
   "licenses.version": "许可证",
   "licenses.copyright": "版权",
   "licenses.website": "网站",
