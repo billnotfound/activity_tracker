@@ -21,23 +21,41 @@ public class AppPaths
     public string ConfigDir { get; }
     public string DataDir { get; }
 
+    /// <summary>
+    /// Explicit paths, bypassing registry/env lookups. Used by tests to
+    /// isolate config+data into a temp directory.
+    /// </summary>
+    public AppPaths(string configDir, string dataDir)
+    {
+        _defaultBase = configDir;
+        ConfigDir = EnsureDirectory(configDir, configDir);
+        DataDir = EnsureDirectory(dataDir, dataDir);
+    }
+
     public AppPaths()
     {
         _defaultBase = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "WinActivityTracker");
 
+        // Startup override (tests / portable use): WTA_CONFIG_DIR points all
+        // config+data at one directory, bypassing registry and LOCALAPPDATA.
+        var envDir = Environment.GetEnvironmentVariable("WTA_CONFIG_DIR");
+
         var regConfig = ReadRegistry(ConfigDirValue);
         var regData = ReadRegistry(DataDirValue);
 
-        ConfigDir = EnsureDirectory(regConfig ?? _defaultBase, _defaultBase);
-        DataDir = EnsureDirectory(regData ?? _defaultBase, _defaultBase);
+        ConfigDir = EnsureDirectory(envDir ?? regConfig ?? _defaultBase, _defaultBase);
+        DataDir = EnsureDirectory(envDir ?? regData ?? _defaultBase, _defaultBase);
 
         // If a registry path was invalid and we fell back, clear the bad entry.
-        if (regConfig != null && !string.Equals(ConfigDir.TrimEnd('\\'), regConfig.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
-            ClearRegistryValue(ConfigDirValue);
-        if (regData != null && !string.Equals(DataDir.TrimEnd('\\'), regData.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
-            ClearRegistryValue(DataDirValue);
+        if (envDir == null)
+        {
+            if (regConfig != null && !string.Equals(ConfigDir.TrimEnd('\\'), regConfig.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                ClearRegistryValue(ConfigDirValue);
+            if (regData != null && !string.Equals(DataDir.TrimEnd('\\'), regData.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+                ClearRegistryValue(DataDirValue);
+        }
     }
 
     public void MigrateIfNeeded()

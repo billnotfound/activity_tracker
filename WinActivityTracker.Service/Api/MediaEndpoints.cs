@@ -32,7 +32,7 @@ public static class MediaEndpoints
     }
 
     private static async Task<IResult> GetMediaHistory(
-        int? limit, string? from, string? to, AppDbContext db)
+        int? limit, string? from, string? to, AppDbContext db, TagService tagService)
     {
         var query = db.MediaSessionRecords.AsQueryable();
 
@@ -46,6 +46,8 @@ public static class MediaEndpoints
             var end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
             query = query.Where(m => m.StartTime <= end);
         }
+
+        query = HiddenFilter.ExcludeHidden(query, tagService.GetHiddenRules());
 
         var fetchCount = (limit ?? 50) * 3;
 
@@ -108,10 +110,11 @@ public static class MediaEndpoints
         return result;
     }
 
-    private static async Task<IResult> GetProcessSnapshot(AppDbContext db)
+    private static async Task<IResult> GetProcessSnapshot(AppDbContext db, TagService tagService)
     {
-        var data = await db.ProcessSessions
-            .Where(p => p.EndTime == null)
+        var data = await HiddenFilter.ExcludeHidden(
+                db.ProcessSessions.Where(p => p.EndTime == null),
+                tagService.GetHiddenRules())
             .Select(p => new { p.ProcessName, p.ProcessId })
             .Distinct()
             .ToListAsync();
@@ -159,18 +162,21 @@ public static class MediaEndpoints
         var totalRows = 0;
         var modifiedRows = 0;
 
-        var total = await db.FocusChanges.CountAsync(f => f.WindowTitle != "");
-        if (total == 0)
-            return Results.Ok(new { totalRows = 0, modifiedRows = 0 });
-
-        for (var offset = 0; offset < total; offset += batchSize)
+        // Keyset pagination (WHERE Id > lastId) instead of OFFSET: each batch
+        // scans only forward from the previous cursor, avoiding O(n²) rescans.
+        long? lastId = null;
+        while (true)
         {
-            var batch = await db.FocusChanges
+            var query = db.FocusChanges
                 .Where(f => f.WindowTitle != "")
                 .OrderBy(f => f.Id)
-                .Skip(offset)
-                .Take(batchSize)
-                .ToListAsync();
+                .Take(batchSize);
+            if (lastId.HasValue)
+                query = query.Where(f => f.Id > lastId.Value);
+
+            var batch = await query.ToListAsync();
+            if (batch.Count == 0)
+                break;
 
             foreach (var row in batch)
             {
@@ -183,11 +189,12 @@ public static class MediaEndpoints
                 }
             }
 
-            if (batch.Count > 0)
-            {
-                db.ChangeTracker.DetectChanges();
-                await db.SaveChangesAsync();
-            }
+            db.ChangeTracker.DetectChanges();
+            await db.SaveChangesAsync();
+            // Clear the tracker so accumulated entities don't grow memory
+            // across a long run (each batch stays independent).
+            db.ChangeTracker.Clear();
+            lastId = batch[^1].Id;
         }
 
         return Results.Ok(new { totalRows, modifiedRows });

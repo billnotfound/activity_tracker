@@ -62,5 +62,10 @@
   { "tag": "Tinkering", "process": "SystemSettings.exe", "weight": 10, "mode": "overwrite" },
   { "tag": "Tinkering", "process": "control.exe", "weight": 10, "mode": "overwrite" },
   { "tag": "Tinkering", "process": "regedit.exe", "weight": 10, "mode": "overwrite" },
-  { "tag": "Tinkering", "process": "taskmgr.exe", "weight": 10, "mode": "overwrite" }
+  { "tag": "Tinkering", "process": "taskmgr.exe", "weight": 10, "mode": "overwrite" },
+  { "_comment": "" },
+  { "_comment": "=== Hidden (special tag: __hidden) ===" },
+  { "_comment": "Matching processes/titles are hidden everywhere (all views) and excluded from totals. process and titlePattern work like normal rules; either or both may be set." },
+  { "_comment": "Windows lock screen is hidden by default:" },
+  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" }
 ]

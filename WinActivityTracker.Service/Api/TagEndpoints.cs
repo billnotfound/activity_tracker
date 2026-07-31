@@ -69,8 +69,9 @@ public static class TagEndpoints
                 return;
             }
 
-            var skipped = rules.Where(r => r.Tag.StartsWith('_')).ToList();
-            rules = rules.Where(r => !r.Tag.StartsWith('_')).ToList();
+            // "__hidden" is a special internal tag and must survive the save.
+            var skipped = rules.Where(r => r.Tag.StartsWith('_') && r.Tag != TagService.HiddenTag).ToList();
+            rules = rules.Where(r => !r.Tag.StartsWith('_') || r.Tag == TagService.HiddenTag).ToList();
 
             if (rules.Count == 0)
             {

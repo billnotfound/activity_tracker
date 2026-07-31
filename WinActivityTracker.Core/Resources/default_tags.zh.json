@@ -60,5 +60,10 @@
   { "tag": "折腾", "process": "SystemSettings.exe", "weight": 10, "mode": "overwrite" },
   { "tag": "折腾", "process": "control.exe", "weight": 10, "mode": "overwrite" },
   { "tag": "折腾", "process": "regedit.exe", "weight": 10, "mode": "overwrite" },
-  { "tag": "折腾", "process": "taskmgr.exe", "weight": 10, "mode": "overwrite" }
+  { "tag": "折腾", "process": "taskmgr.exe", "weight": 10, "mode": "overwrite" },
+  { "_comment": "" },
+  { "_comment": "=== 隐藏 (特殊 tag: __hidden) ===" },
+  { "_comment": "命中规则的进程/标题在所有界面全局隐藏，且不计入总时长。process 和 titlePattern 可任选其一或同时使用，写法与普通规则一致。" },
+  { "_comment": "Windows 锁屏界面默认隐藏:" },
+  { "tag": "__hidden", "process": "LockApp.exe", "weight": 100, "mode": "overwrite" }
 ]

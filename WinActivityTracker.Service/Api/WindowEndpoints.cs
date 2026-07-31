@@ -16,12 +16,14 @@ public static class WindowEndpoints
         app.MapGet("/api/system/events", GetSystemEvents);
     }
 
-    private static IResult GetCurrentWindows(SettingsService settings, ProcessNameCache processCache)
+    private static IResult GetCurrentWindows(SettingsService settings, ProcessNameCache processCache, TagService tagService)
     {
         var excluded = settings.Settings.ExcludedProcesses;
+        var hidden = tagService.GetHiddenRules();
         var windows = WindowTracker.EnumerateVisibleWindows(processCache);
         return Results.Ok(windows
-            .Where(w => !excluded.Contains(w.ProcessName, StringComparer.OrdinalIgnoreCase))
+            .Where(w => !excluded.Contains(w.ProcessName, StringComparer.OrdinalIgnoreCase)
+                && !TagService.MatchesHidden(hidden, w.ProcessName, w.Title))
             .Select(w => new
             {
                 w.ProcessName,
@@ -43,30 +45,75 @@ public static class WindowEndpoints
         var take = Math.Clamp(limit ?? 2000, 1, 50000); // Increased max to 50k for longer ranges
         var skip = Math.Max(0, offset ?? 0);
 
-        var total = await db.FocusChanges
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
-            .CountAsync();
+        var baseQuery = HiddenFilter.ExcludeHidden(
+            db.FocusChanges.AsNoTracking().Where(f => f.Timestamp >= start && f.Timestamp <= end),
+            tagService.GetHiddenRules());
 
-        var data = await db.FocusChanges
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
-            .OrderBy(f => f.Timestamp)
-            .Skip(skip)
-            .Take(take)
-            .Select(f => new
-            {
-                f.Timestamp,
-                f.ProcessName,
-                f.WindowTitle,
-                f.DurationSeconds,
-                Tags = tagService.ResolveTags(f.ProcessName, f.WindowTitle)
-            })
-            .ToListAsync();
+        var total = await baseQuery.CountAsync();
 
-        return Results.Ok(new { data, total, offset = skip, limit = take });
+        // Sampling for wide ranges: the frontend renders at most MAX_POINTS
+        // (8000) points, so shipping up to 50k rows is mostly wasted bytes.
+        // Fetch all matching rows (hidden rules already applied), then keep
+        // every Nth in memory so the chart still spans the whole range evenly.
+        // Only for the full-range fetch (skip == 0); explicit pagination keeps
+        // its exact semantics.
+        const int maxPoints = 8000;
+        var sampled = false;
+        List<TimelineRow> rows;
+        if (total > maxPoints && skip == 0)
+        {
+            var all = await baseQuery
+                .OrderBy(f => f.Timestamp)
+                .Select(f => new TimelineRow
+                {
+                    Timestamp = f.Timestamp,
+                    ProcessName = f.ProcessName,
+                    WindowTitle = f.WindowTitle,
+                    DurationSeconds = f.DurationSeconds
+                })
+                .ToListAsync();
+            var step = (total + maxPoints - 1) / maxPoints;
+            sampled = true;
+            rows = [];
+            for (var i = 0; i < all.Count; i += step)
+                rows.Add(all[i]);
+            // Anchor the last row so the chart reaches the range end even if
+            // the stride misses it.
+            if (all.Count > 0 && rows[^1] != all[^1])
+                rows.Add(all[^1]);
+            skip = 0;
+            take = rows.Count;
+        }
+        else
+        {
+            rows = await baseQuery
+                .OrderBy(f => f.Timestamp)
+                .Skip(skip)
+                .Take(take)
+                .Select(f => new TimelineRow
+                {
+                    Timestamp = f.Timestamp,
+                    ProcessName = f.ProcessName,
+                    WindowTitle = f.WindowTitle,
+                    DurationSeconds = f.DurationSeconds
+                })
+                .ToListAsync();
+        }
+
+        var data = rows.Select(r => new
+        {
+            r.Timestamp,
+            r.ProcessName,
+            r.WindowTitle,
+            r.DurationSeconds,
+            Tags = tagService.ResolveTags(r.ProcessName, r.WindowTitle)
+        }).ToList();
+
+        return Results.Ok(new { data, total, offset = skip, limit = take, sampled });
     }
 
     private static async Task<IResult> GetWindowSessions(
-        DateTime? from, DateTime? to, int? limit, AppDbContext db)
+        DateTime? from, DateTime? to, int? limit, AppDbContext db, TagService tagService)
     {
         var start = from.HasValue
             ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
@@ -78,9 +125,10 @@ public static class WindowEndpoints
         var take = Math.Clamp(limit ?? 5000, 1, 50000);
 
         // Get window sessions that overlap with the time range
-        var sessions = await db.WindowSessions
-            .AsNoTracking()
-            .Where(w => w.OpenTime <= end && (w.CloseTime == null || w.CloseTime >= start))
+        var sessions = await HiddenFilter.ExcludeHidden(
+                db.WindowSessions.AsNoTracking()
+                    .Where(w => w.OpenTime <= end && (w.CloseTime == null || w.CloseTime >= start)),
+                tagService.GetHiddenRules())
             .OrderBy(w => w.OpenTime)
             .Take(take)
             .Select(w => new
@@ -127,4 +175,12 @@ public static class WindowEndpoints
 
         return Results.Ok(events);
     }
+}
+
+internal sealed class TimelineRow
+{
+    public DateTime Timestamp { get; set; }
+    public string ProcessName { get; set; } = string.Empty;
+    public string WindowTitle { get; set; } = string.Empty;
+    public double DurationSeconds { get; set; }
 }

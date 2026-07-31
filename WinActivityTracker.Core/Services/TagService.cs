@@ -13,6 +13,13 @@ internal static class LocaleHelper
 
 public class TagService
 {
+    /// <summary>
+    /// Special internal tag: rules tagged with this hide matching records
+    /// globally (all endpoints + status window) and exclude them from totals.
+    /// Allowed through the "_"-prefix filter; never returned by ResolveTags.
+    /// </summary>
+    public const string HiddenTag = "__hidden";
+
     private readonly string _filePath;
     private readonly object _reloadLock = new();
     private DateTime _lastWriteTime;
@@ -55,9 +62,53 @@ public class TagService
     public List<string> ResolveTags(string processName, string? windowTitle)
     {
         ReloadIfChanged();
-        var allMatches = FindAllMatches(processName, windowTitle);
+        var allMatches = FindAllMatches(processName, windowTitle)
+            .Where(r => r.Tag != HiddenTag)
+            .ToList();
         return ResolveByWeight(allMatches);
     }
+
+    /// <summary>
+    /// Rules tagged with <see cref="HiddenTag"/>: matches hide the record
+    /// globally and exclude it from totals.
+    /// </summary>
+    public List<TagRule> GetHiddenRules()
+    {
+        ReloadIfChanged();
+        return _rules.Where(r => r.Tag == HiddenTag).ToList();
+    }
+
+    /// <summary>
+    /// Returns true if any hidden rule matches the given process/window.
+    /// Static so callers that already fetched rules can reuse them.
+    /// </summary>
+    public static bool MatchesHidden(
+        IReadOnlyList<TagRule> hiddenRules, string processName, string? windowTitle)
+    {
+        foreach (var rule in hiddenRules)
+        {
+            if (!string.IsNullOrEmpty(rule.TitlePattern))
+            {
+                if (string.IsNullOrEmpty(windowTitle)) continue;
+                var processOk = string.IsNullOrEmpty(rule.Process)
+                    || string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase);
+                if (processOk && WildcardMatch(rule.TitlePattern, windowTitle))
+                    return true;
+            }
+            else if (!string.IsNullOrEmpty(rule.Process)
+                && string.Equals(rule.Process, processName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Convenience: reloads rules and checks whether the record is hidden.
+    /// </summary>
+    public bool IsHidden(string processName, string? windowTitle)
+        => MatchesHidden(GetHiddenRules(), processName, windowTitle);
 
     /// <summary>
     /// Convenience: returns the first resolved tag, or null.
@@ -108,7 +159,7 @@ public class TagService
         var raw = JsonSerializer.Deserialize<List<TagRule>>(File.ReadAllText(_filePath), _jsonOptions);
         return (raw ?? [])
             .Where(r => !string.IsNullOrEmpty(r.Tag)
-                && !r.Tag.StartsWith('_')
+                && (!r.Tag.StartsWith('_') || r.Tag == HiddenTag)
                 && (!string.IsNullOrEmpty(r.Process) || !string.IsNullOrEmpty(r.TitlePattern)))
             .ToList();
     }

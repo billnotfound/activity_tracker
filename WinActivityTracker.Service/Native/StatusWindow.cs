@@ -144,10 +144,13 @@ public partial class StatusWindow : Form
         try
         {
             var processCache = services.GetRequiredService<ProcessNameCache>();
+            var tagService = services.GetRequiredService<TagService>();
+            var hiddenRules = tagService.GetHiddenRules();
 
             // 1. Current focus — direct P/Invoke, no API needed
             var windows = WindowTracker.EnumerateVisibleWindows(processCache);
-            var focused = windows.FirstOrDefault(w => w.IsFocused);
+            var focused = windows.FirstOrDefault(w =>
+                w.IsFocused && !TagService.MatchesHidden(hiddenRules, w.ProcessName, w.Title));
             _focusLabel.Text = focused != default
                 ? $"{focused.ProcessName} — {Truncate(focused.Title, 60)}"
                 : I18nService._("statusWindow.noFocusWindow");
@@ -178,13 +181,14 @@ public partial class StatusWindow : Form
                 .AsNoTracking()
                 .Where(f => f.Timestamp >= todayStart && f.Timestamp <= todayEnd)
                 .OrderBy(f => f.Timestamp)
-                .Select(f => new { f.ProcessName, f.DurationSeconds, f.Timestamp })
+                .Select(f => new { f.ProcessName, f.WindowTitle, f.DurationSeconds, f.Timestamp })
                 .ToListAsync();
 
-            // Exclude off-period records
+            // Exclude off-period and hidden records
             var filtered = changes
                 .Where(f => !offPeriods.Any(p =>
                     f.Timestamp >= p.Timestamp && f.Timestamp < p.Timestamp.AddSeconds(p.DurationSeconds)))
+                .Where(f => !TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle))
                 .ToList();
 
             // Summary: group by process, top 5

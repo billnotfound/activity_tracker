@@ -216,29 +216,9 @@ async function loadData() {
     const toStr = toLocalDatetimeString(endDate.value)
     console.log('Loading data from', fromStr, 'to', toStr)
 
-    // Load summary
+    // Build all URLs upfront so the four independent endpoints fire in parallel
     const summaryUrl = `${apiBase}/api/summary/range?from=${fromStr}&to=${toStr}`
-    console.log('Fetching summary:', summaryUrl)
-    const r1 = await fetch(summaryUrl, { signal: abortController.signal })
-    if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
-    const res = await r1.json()
-    const rawData = Array.isArray(res) ? res : res.items || []
 
-    // Merge by normalized process name to handle inconsistent .exe suffixes
-    const mergedData = mergeByProcessName(rawData, (item, acc) => {
-      acc.totalSeconds += item.totalSeconds
-      acc.switchCount += item.switchCount
-      if (item.adjustedSwitchCount !== undefined) {
-        acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
-      }
-    })
-
-    // Sort after merge — merging can change totalSeconds and disrupt backend order
-    mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
-    data.value = mergedData
-    totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
-
-    // Load timeline for visualization
     // Adjust limit based on date range to get good coverage
     const rangeInMs = endDate.value - startDate.value
     const rangeInHours = rangeInMs / (1000 * 60 * 60)
@@ -259,25 +239,55 @@ async function loadData() {
     }
 
     const timelineUrl = `${apiBase}/api/windows/timeline?from=${fromStr}&to=${toStr}&limit=${timelineLimit}`
-    console.log('Fetching timeline:', timelineUrl, `(range: ${rangeInHours.toFixed(1)} hours / ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
-    const r2 = await fetch(timelineUrl, { signal: abortController.signal })
+    const eventsUrl = `${apiBase}/api/system/events?from=${fromStr}&to=${toStr}`
+    const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromStr}&to=${toStr}&limit=10000`
+
+    console.log('Loading data from', fromStr, 'to', toStr, `(range: ${rangeInHours.toFixed(1)} hours / ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
+    const [r1, r2, r3, r4] = await Promise.all([
+      fetch(summaryUrl, { signal: abortController.signal }),
+      fetch(timelineUrl, { signal: abortController.signal }),
+      fetch(eventsUrl, { signal: abortController.signal }),
+      fetch(sessionsUrl, { signal: abortController.signal }),
+    ])
+
+    // Summary
+    if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
+    const res = await r1.json()
+    const rawData = Array.isArray(res) ? res : res.items || []
+
+    // Merge by normalized process name to handle inconsistent .exe suffixes
+    const mergedData = mergeByProcessName(rawData, (item, acc) => {
+      acc.totalSeconds += item.totalSeconds
+      acc.switchCount += item.switchCount
+      if (item.adjustedSwitchCount !== undefined) {
+        acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
+      }
+    })
+
+    // Sort after merge — merging can change totalSeconds and disrupt backend order
+    mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
+    data.value = mergedData
+    totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
+
+    // Timeline for visualization
     if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
     const timelineRes = await r2.json()
     const timelineData = timelineRes.data || timelineRes
     const timelineTotal = timelineRes.total || timelineData.length
-    console.log('Timeline API returned', timelineData.length, 'records (total available:', timelineTotal, ')')
+    const sampled = timelineRes.sampled === true
+    console.log('Timeline API returned', timelineData.length, 'records (total available:', timelineTotal, ')', sampled ? '(server-sampled)' : '')
 
-    if (timelineTotal > timelineData.length) {
+    if (!sampled && timelineTotal > timelineData.length) {
       console.warn(`⚠️ Timeline data truncated: showing ${timelineData.length} of ${timelineTotal} records`)
-      // Consider showing a warning to the user
     }
 
     // Systematic time-based sampling: keep every Nth point sorted by time,
     // so the chart spans the full range evenly instead of clustering on long-duration items.
+    // Wide ranges are already sampled server-side (sampled=true) — skip re-sampling.
     let sampledData = timelineData
     const MAX_POINTS = 8000
 
-    if (timelineData.length > MAX_POINTS) {
+    if (!sampled && timelineData.length > MAX_POINTS) {
       // Sort chronologically first
       const sorted = [...timelineData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
       const step = Math.ceil(sorted.length / MAX_POINTS)
@@ -288,10 +298,7 @@ async function loadData() {
     timeline.value = sampledData
     console.log('✅ timeline.value set to:', timeline.value.length, 'records')
 
-    // Load system events (sleep/shutdown/idle periods)
-    const eventsUrl = `${apiBase}/api/system/events?from=${fromStr}&to=${toStr}`
-    console.log('Fetching system events:', eventsUrl)
-    const r3 = await fetch(eventsUrl, { signal: abortController.signal })
+    // System events (sleep/shutdown/idle periods)
     if (r3.ok) {
       systemEvents.value = await r3.json()
       console.log('System events:', systemEvents.value.length, 'events')
@@ -299,10 +306,7 @@ async function loadData() {
       systemEvents.value = []
     }
 
-    // Load window sessions (for background running apps)
-    const sessionsUrl = `${apiBase}/api/windows/sessions?from=${fromStr}&to=${toStr}&limit=10000`
-    console.log('Fetching window sessions:', sessionsUrl)
-    const r4 = await fetch(sessionsUrl, { signal: abortController.signal })
+    // Window sessions (for background running apps)
     if (r4.ok) {
       windowSessions.value = await r4.json()
       console.log('Window sessions:', windowSessions.value.length)

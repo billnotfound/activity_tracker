@@ -57,6 +57,7 @@ public static class FocusEndpoints
             .Where(f => f.Timestamp >= start && f.Timestamp <= end);
 
         var filtered = ExcludeOffPeriods(baseQuery, offPeriods);
+        filtered = HiddenFilter.ExcludeHidden(filtered, tagService.GetHiddenRules());
 
         // Run summary and adjusted-switch-count queries concurrently
         // (both hit FocusChanges with the same filter; no reason to wait).
