@@ -116,14 +116,23 @@ let timelineChart = null
 // full-color. The ECharts canvas never re-renders, so there is no flicker.
 const hoveredProcess = ref(null)
 const hoverDimmerRef = ref(null)
-// Pixel rects of all bars of the latest render ({proc, x, y, w, h}). Computed
-// once per render/resize with convertToPixel; hover just reads this array —
+// Bars of the latest render grouped by chart row: each row has its center Y,
+// the focused-bar band height, and the bars' x-intervals ({proc, x, w}).
+// Computed once per render/resize with convertToPixel; hover just reads this —
 // calling convertToPixel per hover was the old perf killer (thousands of
 // matrix transforms per mouse move).
-let allBarsPx = []
+let allBarsPx = [] // rows: [{ centerY, barH, bars: [{ proc, x, w, focused }] }]
 let focusedWindowsData = []
 let backgroundWindowsData = []
 let lastRowCount = 1
+// Focused bar height as actually rendered (api.size * 0.6), recorded by
+// renderBar. Dimmer rects must match it exactly — deriving row height from
+// convertToPixel breaks with few rows (single-row category bands are taller
+// than the axis-label-free estimate).
+let lastFocusedBarH = 0
+// The bar height the current allBarsPx was built with (lastFocusedBarH may
+// get recorded only after a progressive render starts — 'finished' rebuilds).
+let lastUsedBarH = 0
 // Chart background color (--surface-card), used to paint the dim layer.
 let surfaceCard = ''
 
@@ -188,6 +197,16 @@ onMounted(async () => {
 // Watch for theme changes and re-render timeline
 watch(isDark, () => {
   if (timeline.value && timeline.value.length > 0) {
+    renderTimeline()
+  }
+})
+
+// The picker can flip to an invalid range (easter egg replaces the chart div)
+// while a load is in flight; the load's renderTimeline then bails on the
+// missing div and the chart stays dead. Re-render as soon as the range is
+// valid again.
+watch(isTimeValid, (valid) => {
+  if (valid && timeline.value && timeline.value.length > 0) {
     renderTimeline()
   }
 })
@@ -402,43 +421,89 @@ function onTimelineMouseLeave() {
 }
 
 // Precompute pixel rects for every bar (focused + background lines) once per
-// render/resize, so hover never calls convertToPixel again. The rects match
-// the shapes drawn by renderBar exactly (same api.coord math).
+// render/resize, so hover never calls convertToPixel again. Bars are grouped
+// by row center Y — focused bars and background lines of the same chart row
+// map to the same center (both use the same rowIdx), so exact equality is
+// reliable. The rects match the shapes drawn by renderBar exactly.
 function buildAllBarsPx() {
   allBarsPx = []
   const chart = timelineChart
   if (!chart || chart.isDisposed()) return
   const ts = focusedWindowsData[0] && focusedWindowsData[0]._ts
   if (ts === undefined || ts === null) return
-  // Row height = distance between adjacent category row centers; fall back
-  // to a fraction of the container when the chart has a single row.
-  const p0 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [ts, 0])
-  const p1 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [ts, Math.min(1, lastRowCount - 1)])
-  let rowH = p1[1] - p0[1]
-  if (!(rowH > 0) || !Number.isFinite(rowH)) {
-    rowH = (timelineChartRef.value?.offsetHeight || 440) / 20
-  }
-  const barH = rowH * 0.6
+  // Use the bar height recorded by renderBar (api.size * 0.6) — an exact
+  // match with what is drawn, for any number of rows. Large datasets render
+  // progressively, so right after setOption renderBar may not have run yet;
+  // then derive the row spacing from convertToPixel (the same geometry
+  // api.size uses) and, only for the single-row case where spacing is
+  // unmeasurable (row 0 and row 1 are the same pixel), fall back to a
+  // container fraction. The 'finished' listener rebuilds once renderBar has
+  // recorded the true height.
   const px = { xAxisIndex: 0, yAxisIndex: 0 }
-  const arr = []
+  let barH = lastFocusedBarH
+  if (!(barH > 0) || !Number.isFinite(barH)) {
+    if (lastRowCount > 1) {
+      const p0 = chart.convertToPixel(px, [ts, 0])
+      const p1 = chart.convertToPixel(px, [ts, 1])
+      const rowH = p0 && p1 ? p1[1] - p0[1] : NaN
+      if (rowH > 0 && Number.isFinite(rowH)) barH = rowH * 0.6
+    }
+  }
+  if (!(barH > 0) || !Number.isFinite(barH)) {
+    barH = ((timelineChartRef.value?.offsetHeight || 440) / 20) * 0.6
+  }
+  lastUsedBarH = barH
+  const rows = new Map()
+  const push = (proc, x, w, centerY, focused) => {
+    let row = rows.get(centerY)
+    if (!row) {
+      row = { centerY, barH, bars: [] }
+      rows.set(centerY, row)
+    }
+    row.bars.push({ proc, x, w, focused })
+  }
   for (const item of focusedWindowsData) {
     const a = chart.convertToPixel(px, [item._ts, item._rowIdx])
     const b = chart.convertToPixel(px, [item._end, item._rowIdx])
     if (!a || !b) continue
-    arr.push({ proc: item.processName, x: a[0], y: a[1] - barH / 2, w: Math.max(b[0] - a[0], 2), h: barH })
+    push(item.processName, a[0], Math.max(b[0] - a[0], 2), a[1], true)
   }
   for (const item of backgroundWindowsData) {
     const a = chart.convertToPixel(px, [item.value[1], item.value[0]])
     const b = chart.convertToPixel(px, [item.value[2], item.value[0]])
     if (!a || !b) continue
-    arr.push({ proc: item._bgSession.processName, x: a[0], y: a[1], w: Math.max(b[0] - a[0], 2), h: 1 })
+    push(item._bgSession.processName, a[0], Math.max(b[0] - a[0], 2), a[1], false)
   }
-  allBarsPx = arr
+  allBarsPx = [...rows.values()]
+}
+
+// Merge overlapping/touching [x0, x1] intervals into disjoint ones.
+function mergeIntervals(ints) {
+  if (ints.length === 0) return []
+  ints.sort((a, b) => a[0] - b[0])
+  const out = []
+  let cur = ints[0]
+  for (let i = 1; i < ints.length; i++) {
+    const iv = ints[i]
+    if (iv[0] <= cur[1]) {
+      if (iv[1] > cur[1]) cur[1] = iv[1]
+    } else {
+      out.push(cur)
+      cur = iv
+    }
+  }
+  out.push(cur)
+  return out
 }
 
 // Paint the dim layer: background-color rectangles over every bar except the
 // hovered process's. Clearing it (no hover) restores the full-color chart.
-// Runs on hover transitions only, never per mousemove.
+// Runs on hover transitions only, never per mousemove. Intervals are unioned
+// before painting so every pixel is painted exactly once — per-bar rects
+// stacked alpha on overlaps (0.7 twice → 0.91) and left dark seams where a
+// background line crossed a focused bar. Focused bars (barH-tall bands) and
+// background lines (1px at the center) are painted separately so a band never
+// dims empty space above/below a thin line.
 function paintDimmer() {
   const canvas = hoverDimmerRef.value
   if (!canvas) return
@@ -456,9 +521,32 @@ function paintDimmer() {
   const proc = hoveredProcess.value
   if (!proc || allBarsPx.length === 0) return
   ctx.fillStyle = withAlpha(surfaceCard, 0.7)
-  for (const bar of allBarsPx) {
-    if (bar.proc === proc) continue
-    ctx.fillRect(bar.x, bar.y, bar.w, bar.h)
+  for (const row of allBarsPx) {
+    const focusedInts = []
+    const bgInts = []
+    for (const bar of row.bars) {
+      if (bar.proc === proc) continue
+      const iv = [bar.x, bar.x + bar.w]
+      if (bar.focused) focusedInts.push(iv)
+      else bgInts.push(iv)
+    }
+    const focused = mergeIntervals(focusedInts)
+    // Focused bars: barH-tall band centered on the row.
+    const y = row.centerY - row.barH / 2
+    for (const [x0, x1] of focused) ctx.fillRect(x0, y, x1 - x0, row.barH)
+    // Background lines: 1px at the center, clipped out of the focused band so
+    // the crossing region is painted only once.
+    for (const [b0, b1] of mergeIntervals(bgInts)) {
+      let start = b0
+      for (const [f0, f1] of focused) {
+        if (f1 <= start) continue
+        if (f0 >= b1) break
+        if (f0 > start) ctx.fillRect(start, row.centerY, f0 - start, 1)
+        start = Math.max(start, f1)
+        if (start >= b1) break
+      }
+      if (start < b1) ctx.fillRect(start, row.centerY, b1 - start, 1)
+    }
   }
 }
 
@@ -482,8 +570,18 @@ async function renderTimeline(myLoadId) {
   console.log('timeline.value.length:', timeline.value.length)
 
   if (!timelineChartRef.value) {
-    console.warn('Timeline chart ref not ready')
-    return
+    // The chart div can be missing when the picker briefly showed an invalid
+    // range (the easter egg replaces the div) while this load was in flight.
+    // Wait for it to reappear instead of giving up — a permanent bail leaves
+    // the chart area dead (no canvases, no adaptive height) until the next
+    // range change.
+    for (let i = 0; i < 40 && !timelineChartRef.value; i++) {
+      await new Promise(r => setTimeout(r, 50))
+    }
+    if (!timelineChartRef.value) {
+      console.warn('Timeline chart ref not ready')
+      return
+    }
   }
 
   if (!timeline.value.length) {
@@ -563,6 +661,14 @@ async function renderTimeline(myLoadId) {
   const allProcessNames = [...allProcs]
 
   console.log(`${allProcessNames.length} processes across ${Object.keys(dayStats).length} days, ${rowProcs.length} rows`)
+
+  // Chart height adapts to the row count: a fixed 440px container would
+  // stretch a few process rows into giant bars. The hover overlay follows
+  // via inset: 0, so it adapts automatically. Clamp to the original 440px max.
+  const ROW_H = 40
+  const GRID_PAD = 80 // grid top + bottom
+  timelineChartRef.value.style.height =
+    `${Math.max(120, Math.min(440, rowProcs.length * ROW_H + GRID_PAD))}px`
 
   // Step 3.5: Fetch colors for all processes (time-aware — use range start date).
   // Cached by process+atTime so re-renders (theme toggle, resize) don't re-fetch.
@@ -926,6 +1032,16 @@ async function renderTimeline(myLoadId) {
     timelineChart = echarts.init(timelineChartRef.value)
     timelineChart.on('mouseover', onTimelineMouseOver)
     timelineChart.on('mouseout', onTimelineMouseOut)
+    // Large datasets render progressively (async): renderBar records the true
+    // bar height only once rendering starts, so buildAllBarsPx right after
+    // setOption can guess wrong. Rebuild the overlay once the render finishes
+    // so the dimmer bands always match the painted bars.
+    timelineChart.on('finished', () => {
+      if (lastFocusedBarH > 0 && lastFocusedBarH !== lastUsedBarH) {
+        buildAllBarsPx()
+        if (hoveredProcess.value) paintDimmer()
+      }
+    })
     // DOM mouseleave is the reliable way to clear hover state — ECharts'
     // series mouseout may not fire when the cursor leaves the canvas.
     timelineChartRef.value.addEventListener('mouseleave', onTimelineMouseLeave)
@@ -992,7 +1108,10 @@ async function renderTimeline(myLoadId) {
 
   const option = {
     animation: false,
-    progressive: 200,
+    // progressive is disabled on purpose: with ECharts 6.1, custom-series
+    // chunks advance via the animation timeline, so animation: false leaves
+    // large series permanently unpainted. Bars are cheap to draw.
+    progressive: 0,
     progressiveThreshold: 500,
     grid: [
       {
@@ -1152,6 +1271,10 @@ async function renderTimeline(myLoadId) {
   // Bail if stale
   if (myLoadId !== undefined && myLoadId !== loadId) return
 
+  // Reset the renderBar-recorded bar height before the render: if this data
+  // has no focused bars, renderBar won't run and the stale value from the
+  // previous render would mis-size the dimmer bands (row counts differ).
+  lastFocusedBarH = 0
   timelineChart.setOption(option, true)
   // Chart is now laid out — precompute bar pixel rects for the hover layer
   buildAllBarsPx()
@@ -1181,6 +1304,9 @@ function renderBar(params, api) {
   } else {
     // Render as a regular bar (focused window)
     const height = api.size([0, 1])[1] * 0.6
+    // Remember it so the hover dimmer paints rects of exactly this height
+    // (row counts vary, so api.size is the only correct source).
+    lastFocusedBarH = height
     rectShape = {
       x: start[0],
       y: start[1] - height / 2,
@@ -1223,7 +1349,7 @@ function renderBar(params, api) {
 }
 
 .timeline-card {
-  min-height: 400px;
+  min-height: 200px;
   border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent) !important;
   box-shadow: 0 0 0 transparent;
   transition: transform 0.12s ease-out, box-shadow 0.15s ease-out;
