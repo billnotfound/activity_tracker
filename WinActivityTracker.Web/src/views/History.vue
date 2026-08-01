@@ -34,7 +34,17 @@
       <template v-else>
         <MemphisSkeleton v-if="loading" :lines="6" />
         <div v-else>
-          <div ref="timelineChartRef" class="timeline-chart"></div>
+          <div class="timeline-chart-wrap">
+            <div ref="timelineChartRef" class="timeline-chart"></div>
+            <!-- Hover overlay: a canvas layer painted with the background color
+                 over every bar EXCEPT the hovered process's ones, which stay
+                 full-color. No chart re-render — the ECharts canvas never
+                 changes, so there is no flicker.
+                 NOTE: must stay a SIBLING of the chart container —
+                 echarts.init() wipes the container's existing children. -->
+            <canvas ref="hoverDimmerRef" class="hover-dimmer"
+                    :class="{ visible: !!hoveredProcess }"></canvas>
+          </div>
           <div class="timeline-legend">
             <span class="legend-item">
               <span class="legend-box focus"></span>
@@ -101,10 +111,21 @@ const dataTooShort = ref(false)
 const timelineChartRef = ref(null)
 let timelineChart = null
 
-// Hover-highlight state: while hovering a process, all other processes dim
-let allWindowsData = []
-let hoveredProcess = null
-let dimColor = 'rgba(128, 128, 128, 0.45)'
+// Hover-dim state: while hovering a process, a canvas layer is painted with
+// the background color over every bar EXCEPT that process's bars, which stay
+// full-color. The ECharts canvas never re-renders, so there is no flicker.
+const hoveredProcess = ref(null)
+const hoverDimmerRef = ref(null)
+// Pixel rects of all bars of the latest render ({proc, x, y, w, h}). Computed
+// once per render/resize with convertToPixel; hover just reads this array —
+// calling convertToPixel per hover was the old perf killer (thousands of
+// matrix transforms per mouse move).
+let allBarsPx = []
+let focusedWindowsData = []
+let backgroundWindowsData = []
+let lastRowCount = 1
+// Chart background color (--surface-card), used to paint the dim layer.
+let surfaceCard = ''
 
 // Counter to cancel stale loadData calls — each call increments the ID;
 // only the call whose ID still matches when it reaches renderTimeline() proceeds.
@@ -194,6 +215,9 @@ function handleResize() {
   resizeTimer = setTimeout(() => {
     if (timelineChart && !timelineChart.isDisposed()) {
       timelineChart.resize()
+      // Pixel positions shifted with the new size — refresh the overlay
+      buildAllBarsPx()
+      paintDimmer()
     }
   }, 200)
 }
@@ -340,7 +364,6 @@ async function loadData() {
 }
 
 let clearTimer = null
-let lastHoveredProcess = null
 
 function onTimelineMouseOver(params) {
   if (params.seriesName !== 'windows') return
@@ -350,9 +373,9 @@ function onTimelineMouseOver(params) {
     clearTimeout(clearTimer)
     clearTimer = null
   }
-  if (hoveredProcess === proc) return
-  hoveredProcess = proc
-  applyHoverHighlight()
+  if (hoveredProcess.value === proc) return
+  hoveredProcess.value = proc
+  paintDimmer()
 }
 
 function onTimelineMouseOut(params) {
@@ -364,8 +387,8 @@ function onTimelineMouseOut(params) {
   // directly, so the dim/restore flicker is skipped.
   clearTimer = setTimeout(() => {
     clearTimer = null
-    hoveredProcess = null
-    applyHoverHighlight()
+    hoveredProcess.value = null
+    paintDimmer()
   }, 50)
 }
 
@@ -374,23 +397,83 @@ function onTimelineMouseLeave() {
     clearTimeout(clearTimer)
     clearTimer = null
   }
-  hoveredProcess = null
-  applyHoverHighlight()
+  hoveredProcess.value = null
+  paintDimmer()
 }
 
-function applyHoverHighlight() {
-  if (!timelineChart || timelineChart.isDisposed() || allWindowsData.length === 0) return
-  if (hoveredProcess === lastHoveredProcess) return
-  lastHoveredProcess = hoveredProcess
-  const hovered = hoveredProcess
-  const data = allWindowsData.map(item => {
-    if (hovered && item.processName !== hovered) {
-      // Dim non-hovered processes; hovered process keeps its original color
-      return { ...item, itemStyle: { ...item._origStyle, color: dimColor, borderColor: dimColor, opacity: 0.45 } }
-    }
-    return { ...item, itemStyle: item._origStyle }
-  })
-  timelineChart.setOption({ series: [{ name: 'windows', data }] }, false)
+// Precompute pixel rects for every bar (focused + background lines) once per
+// render/resize, so hover never calls convertToPixel again. The rects match
+// the shapes drawn by renderBar exactly (same api.coord math).
+function buildAllBarsPx() {
+  allBarsPx = []
+  const chart = timelineChart
+  if (!chart || chart.isDisposed()) return
+  const ts = focusedWindowsData[0] && focusedWindowsData[0]._ts
+  if (ts === undefined || ts === null) return
+  // Row height = distance between adjacent category row centers; fall back
+  // to a fraction of the container when the chart has a single row.
+  const p0 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [ts, 0])
+  const p1 = chart.convertToPixel({ xAxisIndex: 0, yAxisIndex: 0 }, [ts, Math.min(1, lastRowCount - 1)])
+  let rowH = p1[1] - p0[1]
+  if (!(rowH > 0) || !Number.isFinite(rowH)) {
+    rowH = (timelineChartRef.value?.offsetHeight || 440) / 20
+  }
+  const barH = rowH * 0.6
+  const px = { xAxisIndex: 0, yAxisIndex: 0 }
+  const arr = []
+  for (const item of focusedWindowsData) {
+    const a = chart.convertToPixel(px, [item._ts, item._rowIdx])
+    const b = chart.convertToPixel(px, [item._end, item._rowIdx])
+    if (!a || !b) continue
+    arr.push({ proc: item.processName, x: a[0], y: a[1] - barH / 2, w: Math.max(b[0] - a[0], 2), h: barH })
+  }
+  for (const item of backgroundWindowsData) {
+    const a = chart.convertToPixel(px, [item.value[1], item.value[0]])
+    const b = chart.convertToPixel(px, [item.value[2], item.value[0]])
+    if (!a || !b) continue
+    arr.push({ proc: item._bgSession.processName, x: a[0], y: a[1], w: Math.max(b[0] - a[0], 2), h: 1 })
+  }
+  allBarsPx = arr
+}
+
+// Paint the dim layer: background-color rectangles over every bar except the
+// hovered process's. Clearing it (no hover) restores the full-color chart.
+// Runs on hover transitions only, never per mousemove.
+function paintDimmer() {
+  const canvas = hoverDimmerRef.value
+  if (!canvas) return
+  const el = timelineChartRef.value
+  const dpr = window.devicePixelRatio || 1
+  const cw = el ? el.offsetWidth : canvas.offsetWidth
+  const ch = el ? el.offsetHeight : canvas.offsetHeight
+  if (canvas.width !== cw * dpr || canvas.height !== ch * dpr) {
+    canvas.width = cw * dpr
+    canvas.height = ch * dpr
+  }
+  const ctx = canvas.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, cw, ch)
+  const proc = hoveredProcess.value
+  if (!proc || allBarsPx.length === 0) return
+  ctx.fillStyle = withAlpha(surfaceCard, 0.7)
+  for (const bar of allBarsPx) {
+    if (bar.proc === proc) continue
+    ctx.fillRect(bar.x, bar.y, bar.w, bar.h)
+  }
+}
+
+// Append alpha to a CSS color string (#rgb/#rrggbb/rgb(...)/rgba(...)).
+function withAlpha(color, alpha) {
+  if (!color) return `rgba(128, 128, 128, ${alpha})`
+  const m = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (m) {
+    const hex = m[1].length === 3 ? m[1].split('').map(c => c + c).join('') : m[1]
+    const n = parseInt(hex, 16)
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
+  }
+  const rgb = color.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`
+  return `rgba(128, 128, 128, ${alpha})`
 }
 
 async function renderTimeline(myLoadId) {
@@ -670,13 +753,15 @@ async function renderTimeline(myLoadId) {
       name: item.processName,
       value: [rowIdx, item._ts, end, item.durationSeconds],
       itemStyle: focusStyle,
-      _origStyle: focusStyle,
       processName: item.processName,
       windowTitle: item.windowTitle,
       timestamp: item.timestamp,
       durationSeconds: item.durationSeconds,
       duringsSleep: false,
       itemColor: color,
+      _ts: item._ts,
+      _end: end,
+      _rowIdx: rowIdx,
     })
 
     activityPeriods.push({ start: item._ts, end })
@@ -760,7 +845,6 @@ async function renderTimeline(myLoadId) {
           name: session.processName,
           value: [rowIdx, segStart, segEnd, 0],
           itemStyle: bgStyle,
-          _origStyle: bgStyle,
           _bgSession: session,
           itemColor: color,
         })
@@ -774,8 +858,13 @@ async function renderTimeline(myLoadId) {
 
   // Combine background windows (rendered first, behind) and focused windows (on top)
   const allWindows = [...backgroundWindows, ...focusedWindows]
-  allWindowsData = allWindows
-  lastHoveredProcess = null
+  // Keep bars for hover-position computation (the chart isn't init'ed until
+  // below, so convertToPixel can't run yet — buildAllBarsPx() runs after
+  // setOption); reset hover state.
+  focusedWindowsData = focusedWindows
+  backgroundWindowsData = backgroundWindows
+  lastRowCount = rowProcs.length
+  hoveredProcess.value = null
 
   // Build sleep/shutdown area overlays from backend events (exclude Idle)
   const sleepAreas = systemEvents.value
@@ -848,12 +937,12 @@ async function renderTimeline(myLoadId) {
   // Get computed CSS colors (ECharts renders on Canvas — CSS variables don't work)
   const computedStyle = getComputedStyle(document.documentElement)
   const tooltipBg = computedStyle.getPropertyValue('--surface-card').trim()
+  surfaceCard = tooltipBg
   const tooltipBorder = computedStyle.getPropertyValue('--primary-color').trim()
   const tooltipText = computedStyle.getPropertyValue('--text-color').trim()
   const secondaryColor = computedStyle.getPropertyValue('--secondary-color').trim()
   const borderColor = computedStyle.getPropertyValue('--border-color').trim()
   const surface200 = computedStyle.getPropertyValue('--surface-200').trim()
-  dimColor = surface200 || 'rgba(128, 128, 128, 0.45)'
 
   function renderIdleRect(params, api) {
     const startX = api.coord([api.value(0), 0])[0]
@@ -1064,6 +1153,9 @@ async function renderTimeline(myLoadId) {
   if (myLoadId !== undefined && myLoadId !== loadId) return
 
   timelineChart.setOption(option, true)
+  // Chart is now laid out — precompute bar pixel rects for the hover layer
+  buildAllBarsPx()
+  paintDimmer()
 
   console.log('Timeline rendered successfully')
 }
@@ -1180,11 +1272,37 @@ function renderBar(params, api) {
   color: var(--text-color);
 }
 
+// Positioned wrapper: the overlay layers are siblings of the chart container
+// (echarts.init() clears the container's children), absolute within this box,
+// sharing the chart's origin so convertToPixel coords map directly.
+.timeline-chart-wrap {
+  position: relative;
+  margin-bottom: 16px;
+}
+
 .timeline-chart {
   width: 100%;
   height: 440px;
-  margin-bottom: 16px;
   background: var(--surface-card);
+}
+
+// Hover overlay: a pointer-events: none canvas so the chart canvas keeps
+// receiving mouse events. Painted by paintDimmer() — background-color rects
+// over every bar except the hovered process's. Shares the wrapper's
+// coordinate space (inset: 0), so convertToPixel coords map directly.
+.hover-dimmer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 5;
+  transition: opacity 0.25s ease;
+
+  &.visible {
+    opacity: 1;
+  }
 }
 
 .timeline-legend {
