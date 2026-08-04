@@ -27,7 +27,7 @@
     <!-- Error -->
     <div v-if="error" class="error-banner mb-3">
       {{ error }}
-      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')">✕</button>
+      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')"><X :size="16" /></button>
     </div>
 
     <!-- Charts row -->
@@ -61,7 +61,12 @@
                 :class="{ playing: m.playbackStatus === 'Playing' }"
               >
                 <td><span :key="m.durationFmt" class="flicker-text">{{ m.durationFmt }}</span></td>
-                <td><span :key="m.playbackStatus" class="flicker-text">{{ m.playbackStatus === 'Playing' ? '▶' : '⏸' }}</span></td>
+                <td>
+                  <span :key="m.playbackStatus" class="flicker-text playback-status">
+                    <Play v-if="m.playbackStatus === 'Playing'" :size="16" />
+                    <Pause v-else :size="16" />
+                  </span>
+                </td>
                 <td><span :key="m.title" class="flicker-text">{{ m.title }}</span></td>
                 <td><span :key="m.artist" class="flicker-text">{{ m.artist }}</span></td>
               </tr>
@@ -106,6 +111,7 @@ import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
+import { Play, Pause, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()

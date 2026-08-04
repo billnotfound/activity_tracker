@@ -16,15 +16,18 @@ public static class WindowEndpoints
         app.MapGet("/api/system/events", GetSystemEvents);
     }
 
-    private static IResult GetCurrentWindows(SettingsService settings, ProcessNameCache processCache, TagService tagService)
+    private static IResult GetCurrentWindows(SettingsService settings, ProcessNameCache processCache,
+        TagService tagService, TitleNormalizer normalizer, bool raw = false)
     {
         var excluded = settings.Settings.ExcludedProcesses;
         var hidden = tagService.GetHiddenRules();
         // Only strong idle rules (weight >= 10) affect live windows; weak rules
         // are overridden by foreground activity.
         var idle = tagService.GetIdleRules().Where(r => r.Weight >= 10).ToList();
+        var snap = normalizer.CreateSnapshot();
         var windows = WindowTracker.EnumerateVisibleWindows(processCache);
         return Results.Ok(windows
+            .Select(w => (w.ProcessName, Title: raw ? w.Title : snap.Apply(w.ProcessName, w.Title), w.IsFocused))
             .Where(w => !excluded.Contains(w.ProcessName, StringComparer.OrdinalIgnoreCase)
                 && !TagService.MatchesHidden(hidden, w.ProcessName, w.Title)
                 && !TagService.MatchesIdle(idle, w.ProcessName, w.Title))
@@ -37,7 +40,8 @@ public static class WindowEndpoints
     }
 
     private static async Task<IResult> GetTimeline(
-        DateTime? from, DateTime? to, int? limit, int? offset, AppDbContext db, TagService tagService)
+        DateTime? from, DateTime? to, int? limit, int? offset,
+        AppDbContext db, TagService tagService, TitleNormalizer normalizer, bool raw = false)
     {
         var start = from.HasValue
             ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
@@ -108,20 +112,26 @@ public static class WindowEndpoints
                 .ToListAsync();
         }
 
-        var data = rows.Select(r => new
+        var snap = normalizer.CreateSnapshot();
+        var data = rows.Select(r =>
         {
-            r.Timestamp,
-            r.ProcessName,
-            r.WindowTitle,
-            r.DurationSeconds,
-            Tags = tagService.ResolveTags(r.ProcessName, r.WindowTitle)
+            var title = raw ? r.WindowTitle : snap.Apply(r.ProcessName, r.WindowTitle);
+            return new
+            {
+                r.Timestamp,
+                r.ProcessName,
+                WindowTitle = title,
+                r.DurationSeconds,
+                Tags = tagService.ResolveTags(r.ProcessName, title)
+            };
         }).ToList();
 
         return Results.Ok(new { data, total, offset = skip, limit = take, sampled });
     }
 
     private static async Task<IResult> GetWindowSessions(
-        DateTime? from, DateTime? to, int? limit, AppDbContext db, TagService tagService)
+        DateTime? from, DateTime? to, int? limit,
+        AppDbContext db, TagService tagService, TitleNormalizer normalizer, bool raw = false)
     {
         var start = from.HasValue
             ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
@@ -141,14 +151,21 @@ public static class WindowEndpoints
                 tagService.GetIdleRules())
             .OrderBy(w => w.OpenTime)
             .Take(take)
-            .Select(w => new
+            .Select(w => new WindowSessionRow
             {
-                w.ProcessName,
-                w.WindowTitle,
-                w.OpenTime,
-                w.CloseTime
+                ProcessName = w.ProcessName,
+                WindowTitle = w.WindowTitle,
+                OpenTime = w.OpenTime,
+                CloseTime = w.CloseTime
             })
             .ToListAsync();
+
+        if (!raw)
+        {
+            var snap = normalizer.CreateSnapshot();
+            foreach (var s in sessions)
+                s.WindowTitle = snap.Apply(s.ProcessName, s.WindowTitle);
+        }
 
         return Results.Ok(sessions);
     }
@@ -193,4 +210,12 @@ internal sealed class TimelineRow
     public string ProcessName { get; set; } = string.Empty;
     public string WindowTitle { get; set; } = string.Empty;
     public double DurationSeconds { get; set; }
+}
+
+internal sealed class WindowSessionRow
+{
+    public string ProcessName { get; set; } = string.Empty;
+    public string WindowTitle { get; set; } = string.Empty;
+    public DateTime OpenTime { get; set; }
+    public DateTime? CloseTime { get; set; }
 }

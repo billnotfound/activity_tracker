@@ -44,7 +44,7 @@
               v-for="th in lightThemes"
               :key="th.id"
               class="theme-option"
-              :class="{ active: !theme.isDark && theme.lightTheme === th.id }"
+              :class="{ active: !isDark && lightTheme === th.id }"
               @click="theme.setLightTheme(th.id)"
             >
               <div class="theme-preview">
@@ -61,8 +61,17 @@
 
           <h3 class="section-title">{{ t('settings.appearance.darkMode') }}</h3>
           <div class="toggle-row">
-            <ToggleSwitch v-model="theme.isDark" />
-            <span class="toggle-label">{{ theme.isDark ? t('settings.appearance.dark') : t('settings.appearance.light') }}</span>
+            <button
+              class="icon-toggle"
+              :class="{ on: isDark }"
+              @click="theme.toggleDark()"
+              :aria-pressed="isDark"
+              :title="isDark ? t('settings.appearance.dark') : t('settings.appearance.light')"
+            >
+              <Check v-if="isDark" :size="18" />
+              <X v-else :size="18" />
+            </button>
+            <span class="toggle-label">{{ isDark ? t('settings.appearance.dark') : t('settings.appearance.light') }}</span>
           </div>
 
           <div class="divider"></div>
@@ -71,18 +80,18 @@
           <div class="button-group">
             <button
               class="option-button"
-              :class="{ active: theme.pageTransition === 'slide' }"
+              :class="{ active: pageTransition === 'slide' }"
               @click="theme.setPageTransition('slide')"
             >
-              <i class="pi pi-arrow-right"></i>
+              <ArrowRight :size="24" />
               <span>{{ t('settings.appearance.slide') }}</span>
             </button>
             <button
               class="option-button"
-              :class="{ active: theme.pageTransition === 'geometric' }"
+              :class="{ active: pageTransition === 'geometric' }"
               @click="theme.setPageTransition('geometric')"
             >
-              <i class="pi pi-th-large"></i>
+              <Grid :size="24" />
               <span>{{ t('settings.appearance.geometric') }}</span>
             </button>
           </div>
@@ -91,7 +100,16 @@
 
           <h3 class="section-title">{{ t('settings.appearance.autoColor') }}</h3>
           <div class="toggle-row">
-            <ToggleSwitch v-model="theme.autoColor" />
+            <button
+              class="icon-toggle"
+              :class="{ on: autoColor }"
+              @click="theme.setAutoColor(!autoColor)"
+              :aria-pressed="autoColor"
+              :title="autoColor ? t('common.enabled') : t('common.disabled')"
+            >
+              <Check v-if="autoColor" :size="18" />
+              <X v-else :size="18" />
+            </button>
             <span class="toggle-label">{{ t('settings.appearance.autoColorHelp') }}</span>
           </div>
         </MemphisCard>
@@ -102,7 +120,16 @@
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.tracking.status') }}</h3>
           <div class="toggle-row mb-3">
-            <ToggleSwitch v-model="form.trackingEnabled" />
+            <button
+              class="icon-toggle"
+              :class="{ on: form.trackingEnabled }"
+              @click="form.trackingEnabled = !form.trackingEnabled"
+              :aria-pressed="form.trackingEnabled"
+              :title="form.trackingEnabled ? t('settings.trackingEnabled') : t('settings.trackingPaused')"
+            >
+              <Check v-if="form.trackingEnabled" :size="18" />
+              <X v-else :size="18" />
+            </button>
             <span class="toggle-label">
               <strong>{{ form.trackingEnabled ? t('settings.trackingEnabled') : t('settings.trackingPaused') }}</strong>
             </span>
@@ -114,19 +141,25 @@
           <h3 class="section-title">{{ t('settings.tracking.pollInterval') }}</h3>
           <div class="input-grid">
             <div class="input-field">
-              <label>{{ t('settings.windowPollLabel') }}</label>
-              <InputNumber v-model="form.windowPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
-              <small>{{ t('settings.windowPollHelp') }}</small>
+              <label>
+                {{ t('settings.windowPollLabel') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.windowPollHelp')" />
+              </label>
+              <InputNumber v-model="form.windowPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.windowPollPlaceholder')" />
             </div>
             <div class="input-field">
-              <label>{{ t('settings.processPollLabel') }}</label>
-              <InputNumber v-model="form.processPollSeconds" :min="5" :suffix="t('time.seconds.suffix')" />
-              <small>{{ t('settings.processPollHelp') }}</small>
+              <label>
+                {{ t('settings.processPollLabel') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.processPollHelp')" />
+              </label>
+              <InputNumber v-model="form.processPollSeconds" :min="5" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.processPollPlaceholder')" />
             </div>
             <div class="input-field">
-              <label>{{ t('settings.mediaPollLabel') }}</label>
-              <InputNumber v-model="form.mediaPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
-              <small>{{ t('settings.mediaPollHelp') }}</small>
+              <label>
+                {{ t('settings.mediaPollLabel') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.mediaPollHelp')" />
+              </label>
+              <InputNumber v-model="form.mediaPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.mediaPollPlaceholder')" />
             </div>
           </div>
 
@@ -134,19 +167,45 @@
 
           <h3 class="section-title">{{ t('settings.tracking.idleDetection') }}</h3>
           <div class="input-field">
-            <label>{{ t('settings.idleThresholdLabel') }}</label>
-            <InputNumber v-model="form.idleThresholdMinutes" :min="1" :suffix="t('time.minutes.suffix')" />
-            <small>{{ t('settings.idleThresholdHelp') }}</small>
+            <label>
+              {{ t('settings.idleThresholdLabel') }}
+              <CircleHelp :size="14" class="help-icon" :title="t('settings.idleThresholdHelp')" />
+            </label>
+            <InputNumber v-model="form.idleThresholdMinutes" :min="1" :suffix="t('time.minutes.suffix')" :placeholder="t('settings.idleThresholdPlaceholder')" />
           </div>
 
           <div class="checkbox-list">
             <div class="checkbox-item">
-              <Checkbox v-model="form.fullscreenBypassIdle" :binary="true" inputId="fullscreen" />
-              <label for="fullscreen">{{ t('settings.fullscreenBypassLabel') }}</label>
+              <button
+                class="icon-toggle"
+                :class="{ on: form.fullscreenBypassIdle }"
+                @click="form.fullscreenBypassIdle = !form.fullscreenBypassIdle"
+                :aria-pressed="form.fullscreenBypassIdle"
+                :title="form.fullscreenBypassIdle ? t('common.enabled') : t('common.disabled')"
+              >
+                <Check v-if="form.fullscreenBypassIdle" :size="18" />
+                <X v-else :size="18" />
+              </button>
+              <label @click="form.fullscreenBypassIdle = !form.fullscreenBypassIdle">
+                {{ t('settings.fullscreenBypassLabel') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.fullscreenBypassHelp')" />
+              </label>
             </div>
             <div class="checkbox-item">
-              <Checkbox v-model="form.mergeSameProcessSwitches" :binary="true" inputId="merge" />
-              <label for="merge">{{ t('settings.mergeSwitchesLabel') }}</label>
+              <button
+                class="icon-toggle"
+                :class="{ on: form.mergeSameProcessSwitches }"
+                @click="form.mergeSameProcessSwitches = !form.mergeSameProcessSwitches"
+                :aria-pressed="form.mergeSameProcessSwitches"
+                :title="form.mergeSameProcessSwitches ? t('common.enabled') : t('common.disabled')"
+              >
+                <Check v-if="form.mergeSameProcessSwitches" :size="18" />
+                <X v-else :size="18" />
+              </button>
+              <label @click="form.mergeSameProcessSwitches = !form.mergeSameProcessSwitches">
+                {{ t('settings.mergeSwitchesLabel') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.mergeSwitchesHelp')" />
+              </label>
             </div>
           </div>
 
@@ -169,40 +228,53 @@
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.database.dataRetention') }}</h3>
           <div class="input-field">
-            <label>{{ t('settings.retentionLabel') }}</label>
-            <InputNumber v-model="form.dataRetentionDays" :min="1" :suffix="t('common.day.suffix')" />
-            <small>{{ t('settings.retentionHelp') }}</small>
+            <label>
+              {{ t('settings.retentionLabel') }}
+              <CircleHelp :size="14" class="help-icon" :title="t('settings.retentionHelp')" />
+            </label>
+            <InputNumber v-model="form.dataRetentionDays" :min="1" :suffix="t('common.day.suffix')" :placeholder="t('settings.retentionPlaceholder')" />
           </div>
 
           <div class="divider"></div>
 
           <h3 class="section-title">{{ t('settings.database.operations') }}</h3>
           <div class="button-row">
-            <Button :label="t('settings.refreshStats')" icon="pi pi-refresh" @click="loadDbStats" :loading="false" />
-            <Button
-              :label="t('settings.database.clearIconCache')"
-              icon="pi pi-image"
-              severity="secondary"
+            <button class="icon-btn" @click="loadDbStats" :title="t('settings.refreshStats')" :aria-label="t('settings.refreshStats')">
+              <RefreshCw :size="18" />
+            </button>
+            <button
+              class="icon-btn secondary"
               @click="clearIconCache"
-              :loading="clearingIcons"
-            />
-            <Button
-              :label="t('settings.cleanupNow')"
-              icon="pi pi-trash"
-              severity="warning"
+              :disabled="clearingIcons"
+              :title="t('settings.database.clearIconCache')"
+              :aria-label="t('settings.database.clearIconCache')"
+            >
+              <Image :size="18" :class="{ spin: clearingIcons }" />
+            </button>
+            <button
+              class="icon-btn warning"
               @click="runCleanup"
-              :loading="cleaning"
-            />
+              :disabled="cleaning"
+              :title="t('settings.cleanupNow')"
+              :aria-label="t('settings.cleanupNow')"
+            >
+              <Trash2 :size="18" :class="{ spin: cleaning }" />
+            </button>
             <Button
               v-if="!resetConfirm"
               :label="t('settings.deleteAll')"
-              icon="pi pi-times"
               severity="danger"
               @click="resetConfirm = true"
-            />
+            >
+              <template #icon><Trash2 :size="16" /></template>
+            </Button>
             <template v-else>
-              <Button :label="t('settings.confirmDelete')" severity="danger" @click="runReset" :loading="resetting" />
-              <Button :label="t('settings.cancel')" severity="secondary" text @click="resetConfirm = false" />
+              <Button :label="t('settings.confirmDelete')" severity="danger" @click="runReset" :loading="resetting">
+                <template #icon><Trash2 :size="16" /></template>
+              </Button>
+              <Button :label="t('settings.cancel')" severity="secondary" text @click="resetConfirm = false">
+                <template #icon><X :size="16" /></template>
+              </Button>
             </template>
           </div>
 
@@ -404,11 +476,12 @@ subject to the terms of the Common Public License version 1.0.</pre>
     <div class="save-section">
       <Button
         :label="t('settings.saveSettings')"
-        icon="pi pi-check"
         size="large"
         @click="saveSettings"
         :loading="saving"
-      />
+      >
+        <template #icon><Check :size="16" /></template>
+      </Button>
     </div>
   </div>
 </template>
@@ -423,14 +496,20 @@ import TabList from 'primevue/tablist'
 import Tab from 'primevue/tab'
 import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
-import ToggleSwitch from 'primevue/toggleswitch'
 import InputNumber from 'primevue/inputnumber'
-import Checkbox from 'primevue/checkbox'
 import Button from 'primevue/button'
+import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, CircleHelp } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
 const theme = useTheme()
+
+// useTheme() exposes refs; unwrap for template binding (templates don't
+// unwrap refs nested inside plain objects).
+const isDark = computed(() => theme.isDark.value)
+const autoColor = computed(() => theme.autoColor.value)
+const lightTheme = computed(() => theme.lightTheme.value)
+const pageTransition = computed(() => theme.pageTransition.value)
 
 const languages = [
   { code: 'zh-CN', name: '中文' },
@@ -746,10 +825,6 @@ async function runReset() {
     color: var(--surface-card);
     box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
   }
-
-  i {
-    font-size: 1.5rem;
-  }
 }
 
 .input-grid {
@@ -790,6 +865,10 @@ async function runReset() {
   label {
     font-weight: 600;
     color: var(--text-color);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 }
 

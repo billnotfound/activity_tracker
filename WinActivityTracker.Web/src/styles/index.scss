@@ -165,6 +165,131 @@ code, pre, .code, .mono {
   }
 }
 
+// ── Shared icon button / toggle styles (Lucide) ──
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 2px solid var(--primary-color);
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  &:hover:not(:disabled) {
+    background: var(--primary-color);
+    color: var(--surface-card);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 var(--primary-color);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &.secondary {
+    border-color: var(--secondary-color);
+
+    &:hover:not(:disabled) {
+      background: var(--secondary-color);
+      box-shadow: 0 4px 0 var(--secondary-color);
+    }
+  }
+
+  &.warning {
+    border-color: var(--warning-color);
+    color: var(--warning-color);
+
+    &:hover:not(:disabled) {
+      background: var(--warning-color);
+      color: white;
+      box-shadow: 0 4px 0 var(--warning-color);
+    }
+  }
+
+  &.danger {
+    border-color: var(--danger-color);
+    color: var(--danger-color);
+
+    &:hover:not(:disabled) {
+      background: var(--danger-color);
+      color: white;
+      box-shadow: 0 4px 0 var(--danger-color);
+    }
+  }
+
+  .spin {
+    animation: spin 1s linear infinite;
+  }
+}
+
+.icon-toggle {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  background: transparent;
+  color: var(--surface-400);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+
+  // Gradient fills the tile when on — fades in smoothly.
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  svg {
+    position: relative;
+    z-index: 1;
+  }
+
+  &:hover {
+    border-color: var(--border-color);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+  }
+
+  &.on {
+    color: var(--surface-card);
+    border-color: var(--primary-color);
+
+    &::before {
+      opacity: 1;
+    }
+  }
+}
+
+.help-icon {
+  color: var(--surface-400);
+  cursor: help;
+  vertical-align: -2px;
+  transition: color 0.2s;
+
+  &:hover {
+    color: var(--primary-color);
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 // Utility classes
 .flex {
   display: flex;

@@ -17,7 +17,7 @@
     <!-- Error -->
     <div v-if="error" class="error-banner mb-3">
       {{ error }}
-      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')">✕</button>
+      <button class="close-btn" @click="error = ''" :aria-label="t('common.close')"><X :size="16" /></button>
     </div>
 
     <!-- Visual timeline -->
@@ -80,6 +80,7 @@ import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
+import { X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()

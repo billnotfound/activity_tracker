@@ -35,7 +35,7 @@
             :aria-label="isDark ? t('app.lightMode') : t('app.darkMode')"
             :aria-pressed="isDark"
           >
-            <i :class="isDark ? 'pi pi-sun' : 'pi pi-moon'" aria-hidden="true"></i>
+            <component :is="isDark ? Sun : Moon" :size="20" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -57,6 +57,7 @@ import { useTheme } from './composables/useTheme.js'
 import { useRoute } from 'vue-router'
 import { watch, onMounted, nextTick, ref, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
+import { Sun, Moon } from '@lucide/vue'
 import timerIconRaw from './ico/timer.svg?raw'
 import settingsIconRaw from './ico/settings.svg?raw'
 

@@ -14,6 +14,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@lucide/vue": "^1.28.0",
     "echarts": "^6.1.0",
     "primeicons": "^7.0.0",
     "primevue": "^4.5.5",

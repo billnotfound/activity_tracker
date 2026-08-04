@@ -46,6 +46,31 @@ public class TitleNormalizer
         return rule.Apply(title) ?? title;
     }
 
+    // Snapshot for hot paths (e.g. API responses over up to 50k rows):
+    // rules are applied without the ApplyOnWrite gate and without per-row
+    // file-time checks; safe because LoadFromFile never mutates old rule objects.
+    public TitleSnapshot CreateSnapshot()
+    {
+        ReloadIfChanged();
+        lock (_reloadLock)
+        {
+            return new TitleSnapshot(_rules);
+        }
+    }
+
+    public sealed class TitleSnapshot
+    {
+        private readonly Dictionary<string, TitleRule> _rules;
+
+        internal TitleSnapshot(Dictionary<string, TitleRule> rules) => _rules = rules;
+
+        public string Apply(string process, string title)
+        {
+            if (!_rules.TryGetValue(process, out var rule)) return title;
+            return rule.Apply(title) ?? title;
+        }
+    }
+
     public class TitleRule
     {
         public string? Process { get; set; }
@@ -57,6 +82,9 @@ public class TitleNormalizer
         [JsonIgnore]
         public string? ErrorMessage { get; set; }
 
+        [JsonIgnore]
+        private Regex? _compiledRegex;
+
         internal string? Apply(string originalTitle)
         {
             if (!string.IsNullOrEmpty(Title))
@@ -64,13 +92,10 @@ public class TitleNormalizer
 
             if (!string.IsNullOrEmpty(TitleRegex) && !string.IsNullOrEmpty(TitleReplacement))
             {
-                try { return Regex.Replace(originalTitle, TitleRegex, TitleReplacement,
-                    RegexOptions.None, TimeSpan.FromSeconds(1)); }
-                catch (RegexParseException ex)
-                {
-                    ErrorMessage = $"Regex error in rule '{Process}': {ex.Message}";
-                    return null;
-                }
+                var regex = _compiledRegex ??= TryCompileRegex();
+                if (regex == null) return null;
+
+                try { return regex.Replace(originalTitle, TitleReplacement); }
                 catch (RegexMatchTimeoutException)
                 {
                     ErrorMessage = $"Regex timed out in rule '{Process}'";
@@ -79,6 +104,19 @@ public class TitleNormalizer
             }
 
             return null;
+        }
+
+        private Regex? TryCompileRegex()
+        {
+            try
+            {
+                return new Regex(TitleRegex!, RegexOptions.Compiled, TimeSpan.FromSeconds(1));
+            }
+            catch (RegexParseException ex)
+            {
+                ErrorMessage = $"Regex error in rule '{Process}': {ex.Message}";
+                return null;
+            }
         }
     }
 
