@@ -26,6 +26,7 @@ LangString UNINST_DATA_ASK    ${LANG_ENGLISH} "Do you want to keep your activity
 LangString UNINST_CONFIRM_DEL ${LANG_ENGLISH} "Are you sure you want to completely remove taskmonitor114?$\n$\nAll activity data will NOT be kept.$\nThis CANNOT BE UNDONE!"
 LangString UNINST_CONFIRM     ${LANG_ENGLISH} "Are you sure you want to completely remove taskmonitor114?$\n$\nYour activity data and settings will be kept."
 LangString UNINST_DATA_DEL    ${LANG_ENGLISH} "Deleting user data..."
+LangString MSG_DETECT_FAIL    ${LANG_ENGLISH} "Old version detection script failed; proceeding as fresh install."
 
 ; ---- SimpChinese ----
 LangString LANG_SELECT_TITLE  ${LANG_SIMPCHINESE} "安装程序语言"
@@ -51,3 +52,4 @@ LangString UNINST_DATA_ASK    ${LANG_SIMPCHINESE} "是否保留活动数据？$\
 LangString UNINST_CONFIRM_DEL ${LANG_SIMPCHINESE} "确定要完全移除 taskmonitor114 吗？$\n$\n所有活动数据将不被保留。$\n此操作不可恢复！"
 LangString UNINST_CONFIRM     ${LANG_SIMPCHINESE} "确定要完全移除 taskmonitor114 吗？$\n$\n活动数据和设置将被保留。"
 LangString UNINST_DATA_DEL    ${LANG_SIMPCHINESE} "正在删除用户数据..."
+LangString MSG_DETECT_FAIL    ${LANG_SIMPCHINESE} "旧版本检测脚本执行失败，按全新安装继续。"

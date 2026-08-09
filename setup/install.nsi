@@ -23,16 +23,27 @@
 !define PRODUCT_AUTOSTART_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
 !define PRODUCT_AUTOSTART_VALUE "taskmonitor114"
 
-; ---- Includes ----
-!include "MUI2.nsh"
-!include "LogicLib.nsh"
-!include "FileFunc.nsh"
-!include "StrFunc.nsh"
+; ---- MultiUser.nsh defines (must precede !include MultiUser.nsh) ----
+!define MULTIUSER_INSTALLMODE_ALLOW_BOTH_INSTALLATION
+!define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
+!define MULTIUSER_EXECUTIONLEVEL "Highest"
+!define MULTIUSER_INSTALLMODE_COMMANDLINE
+!define MULTIUSER_INSTALLMODE_INSTDIR "${PRODUCT_NAME}"
+!if "${PLATFORM}" == "win-x64"
+  !define MULTIUSER_USE_PROGRAMFILES64
+!endif
 
-; ---- String functions ----
+; ---- String functions (must precede MultiUser.nsh, which defines StrStr itself) ----
+!include "StrFunc.nsh"
 ${StrRep}
 ${StrStr}
 ${StrTrimNewLines}
+
+; ---- Includes ----
+!include "MultiUser.nsh"
+!include "MUI2.nsh"
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 ; ---- Macro: delete files matching a wildcard pattern ----
 !macro DeletePattern Dir Pattern
@@ -49,14 +60,7 @@ ${StrTrimNewLines}
 ; ---- Installer attributes ----
 Name "${PRODUCT_NAME} ${VERSION}"
 OutFile "${PUBLISH_DIR}\${PRODUCT_NAME}-setup-${PLATFORM}.exe"
-!if "${PLATFORM}" == "win-x86"
-  InstallDir "$PROGRAMFILES32\${PRODUCT_NAME}"
-!else if "${PLATFORM}" == "win-x86-selfcontained"
-  InstallDir "$PROGRAMFILES32\${PRODUCT_NAME}"
-!else
-  InstallDir "$PROGRAMFILES64\${PRODUCT_NAME}"
-!endif
-RequestExecutionLevel admin
+InstallDir "$LOCALAPPDATA\Programs\${PRODUCT_NAME}"
 ShowInstDetails show
 ShowUnInstDetails show
 XPStyle on
@@ -75,16 +79,23 @@ VIAddVersionKey "LegalCopyright" "${PRODUCT_PUBLISHER}"
 
 ; ---- Interface settings ----
 !define MUI_ABORTWARNING
-!define MUI_FINISHPAGE_RUN "$INSTDIR\taskmonitor114.exe"
+; RUN checkbox is created only when MUI_FINISHPAGE_RUN is defined;
+; RUN_FUNCTION replaces the default Exec (interactive user token via explorer).
+!define MUI_FINISHPAGE_RUN ""
+!define MUI_FINISHPAGE_RUN_FUNCTION "LaunchAppInteractive"
 
 ; ---- Variables ----
 Var IsUpgrade
 Var IsSilent
 Var DeleteData
+Var OldExe
+Var OldMode
 
 ; ============================================================
 ; Pages (interactive mode)
 ; ============================================================
+!define MULTIUSER_PAGE_CUSTOMFUNCTION_PRE SkipInstallModeIfUpgrade
+!insertmacro MULTIUSER_PAGE_INSTALLMODE
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_COMPONENTS
@@ -105,99 +116,106 @@ Var DeleteData
 !include "install-lang.nsh"
 
 ; ============================================================
-; .onInit 闁?Detect old install, language selection
+; ParseKey 闁?extract "KEY=value" from stdout blob
+;   Input : stack top = KEY, below = stdout
+;   Output: stack top = value (empty string if not found)
+; ============================================================
+Function ParseKey
+  Pop $0
+  Pop $1
+  Push $2
+  Push $3
+  Push $4
+  StrCpy $2 ""
+  ${StrStr} $3 "$1" "$0="
+  ${If} $3 != ""
+    StrLen $4 "$0="
+    StrCpy $3 $3 "" $4
+    ${StrStr} $4 "$3" "$\r$\n"
+    ${If} $4 == ""
+      StrCpy $2 $3
+    ${Else}
+      StrLen $0 $3
+      StrLen $4 $4
+      IntOp $0 $0 - $4
+      StrCpy $2 $3 $0
+    ${EndIf}
+  ${EndIf}
+  StrCpy $0 $2
+  Pop $4
+  Pop $3
+  Pop $2
+  Push $0
+FunctionEnd
+
+; 取 stdout 字段的宏：${GetField} $outVar "$stdout" "KEY"
+!define GetField `!insertmacro GetFieldImpl`
+!macro GetFieldImpl OutVar Stdout Key
+  Push "${Stdout}"
+  Push "${Key}"
+  Call ParseKey
+  Pop "${OutVar}"
+!macroend
+
+; ============================================================
+; .onInit 闁?MultiUser init, script-based old install detect
 ; ============================================================
 Function .onInit
   StrCpy $IsUpgrade "0"
+  StrCpy $OldExe ""
+  StrCpy $OldMode ""
   StrCpy $IsSilent "0"
   IfSilent 0 +2
   StrCpy $IsSilent "1"
+
+  !insertmacro MULTIUSER_INIT
 
   ; Language selection (interactive only)
   ${If} $IsSilent == "0"
     !insertmacro MUI_LANGDLL_DISPLAY
   ${EndIf}
 
-  ; 鈹€鈹€ Detect existing install (system-wide signals, elevated-safe) 鈹€鈹€
-  ; NOTE: HKCU and $LOCALAPPDATA resolve to the admin account when elevated,
-  ; so system-wide signals (Program Files, running process, user scan) come first.
-
-  ; 1. Default install location (platform-aware Program Files)
-  !if "${PLATFORM}" == "win-x86"
-    StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
-  !else if "${PLATFORM}" == "win-x86-selfcontained"
-    StrCpy $0 "$PROGRAMFILES32\${PRODUCT_NAME}"
-  !else
-    StrCpy $0 "$PROGRAMFILES64\${PRODUCT_NAME}"
-  !endif
-  ${If} ${FileExists} "$0\taskmonitor114.exe"
-    StrCpy $INSTDIR $0
-    StrCpy $IsUpgrade "1"
+  ; 鈹€鈹€ Detect existing install via PowerShell script (stdout parse) 鈹€鈹€
+  ; Script failure (no OLD_FOUND) is treated as a fresh install.
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "detect-old.ps1"
+  nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\detect-old.ps1" detect'
+  Pop $0
+  Pop $1
+  ${GetField} $0 "$1" "OLD_FOUND"
+  ${If} $0 == "1"
+    ${GetField} $OldExe "$1" "OLD_EXE"
+    ${If} ${FileExists} "$OldExe"
+      ${GetParent} $OldExe $INSTDIR
+      StrCpy $IsUpgrade "1"
+      ${GetField} $OldMode "$1" "OLD_MODE"
+    ${Else}
+      StrCpy $OldExe ""
+    ${EndIf}
   ${EndIf}
 
-  ; 2. Running process: get executable path via PowerShell (system-wide)
-  ${If} $IsUpgrade == "0"
-    nsExec::ExecToStack 'powershell -NoProfile -Command "(Get-Process -Name taskmonitor114 -ErrorAction SilentlyContinue).Path"'
-    Pop $0
-    Pop $1
-    ${StrTrimNewLines} $1 $1
-    ${If} $1 != ""
-      ${GetParent} $1 $0
-      ${If} ${FileExists} "$0\taskmonitor114.exe"
-        StrCpy $INSTDIR $0
-        StrCpy $IsUpgrade "1"
+  ; 鈹€鈹€ Upgrade: keep the old install mode 鈹€鈹€
+  ; InstallMode page is skipped on upgrade; MultiUser already defaulted to
+  ; CurrentUser. Only switch to AllUsers when the old install was per-machine
+  ; AND the current token actually has admin rights.
+  ${If} $IsUpgrade == "1"
+    ${If} $OldMode == "ADMIN"
+      ${If} $MultiUser.Privileges == "Admin"
+      ${OrIf} $MultiUser.Privileges == "Power"
+        StrCpy $MultiUser.InstallMode "AllUsers"
+        SetShellVarContext all
       ${EndIf}
     ${EndIf}
   ${EndIf}
+FunctionEnd
 
-  ; 3. Scan user profiles for per-user installs (elevated-safe)
-  ${If} $IsUpgrade == "0"
-    FindFirst $R4 $R5 "C:\Users\*"
-    ${If} $R5 != ""
-      ${Do}
-        ${If} $R5 != "."
-        ${AndIf} $R5 != ".."
-        ${AndIf} $R5 != "Public"
-        ${AndIf} $R5 != "Default"
-          ${If} ${FileExists} "C:\Users\$R5\AppData\Local\${PRODUCT_NAME}\taskmonitor114.exe"
-            StrCpy $INSTDIR "C:\Users\$R5\AppData\Local\${PRODUCT_NAME}"
-            StrCpy $IsUpgrade "1"
-            Goto userscan_done
-          ${EndIf}
-        ${EndIf}
-        FindNext $R4 $R5
-      ${LoopUntil} ${Errors}
-      userscan_done:
-      FindClose $R4
-    ${EndIf}
-  ${EndIf}
-
-  ; 4. Registry: DataDir (HKCU 鈥?may miss when elevated, last resort)
-  ${If} $IsUpgrade == "0"
-    ReadRegStr $0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
-    ${If} $0 != ""
-      ${If} ${FileExists} "$0\taskmonitor114.exe"
-        StrCpy $INSTDIR $0
-        StrCpy $IsUpgrade "1"
-      ${EndIf}
-    ${EndIf}
-  ${EndIf}
-
-  ; 5. Registry: auto-start Run key (same HKCU caveat)
-  ${If} $IsUpgrade == "0"
-    ReadRegStr $0 HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
-    ${If} $0 != ""
-      Push $0
-      Call ParseExePath
-      Pop $0
-      ${If} $0 != ""
-        ${GetParent} $0 $1
-        ${If} ${FileExists} "$1\taskmonitor114.exe"
-          StrCpy $INSTDIR $1
-          StrCpy $IsUpgrade "1"
-        ${EndIf}
-      ${EndIf}
-    ${EndIf}
+; ============================================================
+; SkipInstallModeIfUpgrade 闁?skip install mode page when upgrading
+; ============================================================
+Function SkipInstallModeIfUpgrade
+  ${If} $IsUpgrade == "1"
+    Abort
   ${EndIf}
 FunctionEnd
 
@@ -235,33 +253,51 @@ Section "$(SEC_MAIN_NAME)" SEC_MAIN
   SetOverwrite on
   File /r /x *.pdb /x "taskmonitor114-setup-*.exe" /x "updater.exe" /x "remove-list.txt" "${PUBLISH_DIR}\*"
 
-  ; ---- Phase 4: Registry 闁?app paths ----
   ; ---- Phase 4: data in LOCALAPPDATA by default (no registry override needed) ----
-  ; ---- Phase 5: Registry 闁?uninstall info ----
-  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
-  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\taskmonitor114.exe"'
-  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
-  WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${VERSION}"
-  WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoModify" 1
-  WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+  ; ---- Phase 5: Registry 闁?uninstall info + auto-start (per install mode) ----
+  ${If} $MultiUser.InstallMode == "AllUsers"
+    !if "${PLATFORM}" == "win-x64"
+      SetRegView 64
+    !else
+      SetRegView 32
+    !endif
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\taskmonitor114.exe"'
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+    WriteRegStr HKLM "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${VERSION}"
+    WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoModify" 1
+    WriteRegDWORD HKLM "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+    WriteRegStr HKLM "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
+  ${Else}
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayName" "${PRODUCT_NAME}"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayIcon" '"$INSTDIR\taskmonitor114.exe"'
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "Publisher" "${PRODUCT_PUBLISHER}"
+    WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "DisplayVersion" "${VERSION}"
+    WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoModify" 1
+    WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+    WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
+  ${EndIf}
 
   ; ---- Uninstaller ----
   WriteUninstaller "$INSTDIR\uninstall.exe"
-
-  ; ---- Phase 6: Auto-start (fresh install only, upgrade handled separately) ----
-  ${If} $IsUpgrade == "0"
-    WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
-  ${Else}
-    Call UpdateAutoStart
-  ${EndIf}
 SectionEnd
 
 ; ============================================================
 ; Section "Auto-start with Windows" (selected by default)
 ; ============================================================
 Section "$(SEC_STARTUP_NAME)" SEC_STARTUP
-  WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
+  ${If} $MultiUser.InstallMode == "AllUsers"
+    !if "${PLATFORM}" == "win-x64"
+      SetRegView 64
+    !else
+      SetRegView 32
+    !endif
+    WriteRegStr HKLM "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
+  ${Else}
+    WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
+  ${EndIf}
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
@@ -278,16 +314,56 @@ Section "Uninstall"
   ; Remove application files (NOT user data unless user opted in)
   Delete "$INSTDIR\taskmonitor114.exe"
   Delete "$INSTDIR\*.dll"
+  Delete "$INSTDIR\createdump.exe"
   Delete "$INSTDIR\appsettings.json"
   Delete "$INSTDIR\resource.txt"
   Delete "$INSTDIR\*.md"
   Delete "$INSTDIR\web.config"
   Delete "$INSTDIR\uninstall.exe"
+  Delete "$INSTDIR\taskmonitor114.deps.json"
+  Delete "$INSTDIR\taskmonitor114.runtimeconfig.json"
+  Delete "$INSTDIR\taskmonitor114.staticwebassets.endpoints.json"
+  Delete "$INSTDIR\runtimeconfig.template.json"
   RMDir /r "$INSTDIR\wwwroot"
   RMDir /r "$INSTDIR\Resources"
   RMDir /r "$INSTDIR\i18n"
-  RMDir "$INSTDIR"
+  ; .NET satellite language dirs
+  RMDir /r "$INSTDIR\cs"
+  RMDir /r "$INSTDIR\de"
+  RMDir /r "$INSTDIR\es"
+  RMDir /r "$INSTDIR\fr"
+  RMDir /r "$INSTDIR\it"
+  RMDir /r "$INSTDIR\ja"
+  RMDir /r "$INSTDIR\ko"
+  RMDir /r "$INSTDIR\pl"
+  RMDir /r "$INSTDIR\pt-BR"
+  RMDir /r "$INSTDIR\ru"
+  RMDir /r "$INSTDIR\tr"
+  RMDir /r "$INSTDIR\zh-Hans"
+  RMDir /r "$INSTDIR\zh-Hant"
+  ; Delete data branch: wipe the whole dir; keep branch: only empty leftovers
+  ${If} $DeleteData == "1"
+    RMDir /r "$INSTDIR"
+  ${Else}
+    RMDir "$INSTDIR"
+  ${EndIf}
 
+  ; ---- Registry cleanup via script (enumerates HKU/HKLM all views) ----
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "detect-old.ps1"
+  nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\detect-old.ps1" cleanup'
+  Pop $0
+  Pop $1
+  DetailPrint "Registry cleanup: $1"
+
+  ; ---- NSIS fallback (still removes keys visible to this process) ----
+  SetRegView 64
+  DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
+  DeleteRegValue HKLM "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
+  SetRegView 32
+  DeleteRegKey HKLM "${PRODUCT_UNINST_KEY}"
+  DeleteRegValue HKLM "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
   DeleteRegKey HKCU "${PRODUCT_UNINST_KEY}"
   DeleteRegValue HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
 
@@ -406,60 +482,19 @@ Function RemoveOrphanFiles
 FunctionEnd
 
 ; ============================================================
-; UpdateAutoStart 闁?update if path changed
-; ============================================================
-Function UpdateAutoStart
-  ReadRegStr $0 HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}"
-  ${If} $0 != '"$INSTDIR\taskmonitor114.exe" --autostart'
-    WriteRegStr HKCU "${PRODUCT_AUTOSTART_KEY}" "${PRODUCT_AUTOSTART_VALUE}" '"$INSTDIR\taskmonitor114.exe" --autostart'
-    DetailPrint "Updated auto-start registry."
-  ${Else}
-    DetailPrint "Auto-start path unchanged."
-  ${EndIf}
-FunctionEnd
-
-; ============================================================
-; ParseExePath 闁?extract exe path from registry value
-;   "<path>" --autostart 闁?path
-; ============================================================
-Function ParseExePath
-  Exch $0
-  Push $1
-  Push $2
-
-  StrCpy $1 $0 1
-  ${If} $1 == '"'
-    StrCpy $1 $0 "" 1
-    ${StrStr} $2 $1 '"'
-    ${If} $2 != ""
-      StrLen $3 $1
-      StrLen $4 $2
-      IntOp $5 $3 - $4
-      StrCpy $0 $1 $5
-    ${EndIf}
-  ${Else}
-    ${StrStr} $2 $0 " "
-    ${If} $2 != ""
-      StrLen $3 $0
-      StrLen $4 $2
-      IntOp $5 $3 - $4
-      StrCpy $0 $0 $5
-    ${EndIf}
-  ${EndIf}
-
-  Pop $2
-  Pop $1
-  Exch $0
-FunctionEnd
-
-; ============================================================
-; ============================================================
-; .onInstSuccess 闁?auto-run app in silent mode
+; .onInstSuccess 闁?auto-run app in silent mode (interactive user token)
 ; ============================================================
 Function .onInstSuccess
   ${If} $IsSilent == "1"
-    Exec '"$INSTDIR\taskmonitor114.exe" --autostart'
+    ExecShell "open" '"$INSTDIR\taskmonitor114.exe"' "--autostart"
   ${EndIf}
+FunctionEnd
+
+; ============================================================
+; LaunchAppInteractive 闁?finish-page "Run" (interactive user token)
+; ============================================================
+Function LaunchAppInteractive
+  ExecShell "open" '"$INSTDIR\taskmonitor114.exe"' "--autostart"
 FunctionEnd
 
 ; ============================================================
@@ -480,31 +515,58 @@ FunctionEnd
 Function un.DeleteAllData
   DetailPrint "$(UNINST_DATA_DEL)"
 
-  ; Resolve data directory (registry 闁?fallback to default)
+  ; Resolve data directory (registry 闁?fallback to app default %LOCALAPPDATA%\WinActivityTracker)
+  ; Note: the app only writes DataDir/ConfigDir registry values when the user
+  ; changes paths via the admin API; normal installs have no values, so the
+  ; fallback (not $LOCALAPPDATA\${PRODUCT_NAME}) is what actually holds the data.
   ReadRegStr $R0 HKCU "${PRODUCT_REG_KEY}" "DataDir"
   ${If} $R0 == ""
-    StrCpy $R0 "$LOCALAPPDATA\${PRODUCT_NAME}"
+    StrCpy $R0 "$LOCALAPPDATA\WinActivityTracker"
   ${EndIf}
 
-  ; Resolve config directory
+  ; Resolve config directory (usually the same as DataDir)
   ReadRegStr $R1 HKCU "${PRODUCT_REG_KEY}" "ConfigDir"
   ${If} $R1 == ""
-    StrCpy $R1 "$LOCALAPPDATA\${PRODUCT_NAME}"
+    StrCpy $R1 "$LOCALAPPDATA\WinActivityTracker"
   ${EndIf}
 
   ; Helper: delete all files matching a pattern in a directory
   ; Uses $R2/$R3 as scratch registers
 
-  ; Delete database files from data dir
+  ; Delete database + WAL + pid files from data dir, then the dir itself
   !insertmacro DeletePattern "$R0" "*.db"
+  !insertmacro DeletePattern "$R0" "*.db-shm"
+  !insertmacro DeletePattern "$R0" "*.db-wal"
   !insertmacro DeletePattern "$R0" "*.sqlite"
   !insertmacro DeletePattern "$R0" "*.sqlite3"
   !insertmacro DeletePattern "$R0" "*.bak"
+  !insertmacro DeletePattern "$R0" "*.pid"
+  Delete "$R0\settings.json"
+  Delete "$R0\tags.json"
+  Delete "$R0\title_rules.json"
+  RMDir /r "$R0"
 
-  ; Delete config files from config dir
-  Delete "$R1\settings.json"
-  Delete "$R1\tags.json"
-  Delete "$R1\title_rules.json"
+  ; Delete config files from config dir, then the dir itself
+  ${If} $R1 != $R0
+    Delete "$R1\settings.json"
+    Delete "$R1\tags.json"
+    Delete "$R1\title_rules.json"
+    !insertmacro DeletePattern "$R1" "*.pid"
+    RMDir /r "$R1"
+  ${EndIf}
+
+  ; Legacy default dir ($LOCALAPPDATA\taskmonitor114) from earlier installers
+  ${If} $R0 != "$LOCALAPPDATA\taskmonitor114"
+    !insertmacro DeletePattern "$LOCALAPPDATA\taskmonitor114" "*.db"
+    !insertmacro DeletePattern "$LOCALAPPDATA\taskmonitor114" "*.sqlite"
+    !insertmacro DeletePattern "$LOCALAPPDATA\taskmonitor114" "*.sqlite3"
+    !insertmacro DeletePattern "$LOCALAPPDATA\taskmonitor114" "*.bak"
+    !insertmacro DeletePattern "$LOCALAPPDATA\taskmonitor114" "*.pid"
+    Delete "$LOCALAPPDATA\taskmonitor114\settings.json"
+    Delete "$LOCALAPPDATA\taskmonitor114\tags.json"
+    Delete "$LOCALAPPDATA\taskmonitor114\title_rules.json"
+    RMDir /r "$LOCALAPPDATA\taskmonitor114"
+  ${EndIf}
 
   ; Also clean $INSTDIR in case data lived alongside the app
   ${If} $R0 != "$INSTDIR"
@@ -526,8 +588,10 @@ Function un.DeleteAllData
 FunctionEnd
 
 Function un.onInit
+  !insertmacro MULTIUSER_UNINIT
   ; "Keep data?" — YES keeps, NO deletes
-  MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" IDYES +2
+  ; /SD IDYES: silent uninstall auto-answers YES (keep data) so no dialog blocks
+  MessageBox MB_YESNO|MB_ICONEXCLAMATION "$(UNINST_DATA_ASK)" /SD IDYES IDYES +2
   StrCpy $DeleteData "1"
   Goto confirm
   StrCpy $DeleteData "0"
@@ -536,12 +600,12 @@ confirm:
   StrCmp $DeleteData "1" del_dialog keep_dialog
 
 del_dialog:
-  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM_DEL)" IDYES +2
+  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM_DEL)" /SD IDYES IDYES +2
   Abort
   Goto done
 
 keep_dialog:
-  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" IDYES +2
+  MessageBox MB_YESNO|MB_ICONQUESTION "$(UNINST_CONFIRM)" /SD IDYES IDYES +2
   Abort
 
 done:
