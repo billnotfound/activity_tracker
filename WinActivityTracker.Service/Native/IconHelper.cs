@@ -1,4 +1,4 @@
-// Helper class for loading embedded icon resources
+// Loads embedded icon resources; falls back to system icons on failure.
 using System.Drawing;
 
 namespace WinActivityTracker.Service.Native;

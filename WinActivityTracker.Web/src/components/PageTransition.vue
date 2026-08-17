@@ -22,7 +22,6 @@ const currentTransition = computed(() => {
   if (pageTransition.value === 'geometric') {
     return 'geometric'
   }
-  // For slide, determine direction
   return isForward.value ? 'slide-left' : 'slide-right'
 })
 

@@ -24,12 +24,11 @@ public static class IconEndpoints
     {
         try
         {
-            // Normalize process name
             processName = processName.Trim();
             if (string.IsNullOrEmpty(processName))
                 return Results.BadRequest(new { error = "Process name is required" });
 
-            // Time-aware query: if ?at= is provided, find the icon valid at that time
+            // If ?at= is provided, find the icon valid at that time
             if (httpContext.Request.Query.TryGetValue("at", out var atValues) &&
                 DateTime.TryParse(atValues.FirstOrDefault(), null,
                     System.Globalization.DateTimeStyles.RoundtripKind, out var atTime))
@@ -51,7 +50,7 @@ public static class IconEndpoints
                 // Fall through to live extraction if no icon valid at that time
             }
 
-            // First, try to find cached mapping for this process name
+            // Cached mapping for this process name
             var mapping = await db.ProcessIconMappings
                 .Where(m => m.ProcessName == processName)
                 .OrderByDescending(m => m.LastSeen)
@@ -59,7 +58,6 @@ public static class IconEndpoints
 
             if (mapping != null)
             {
-                // Found cached mapping, get the icon from database
                 var cachedIcon = await db.ProcessIcons
                     .FirstOrDefaultAsync(i => i.IconHash == mapping.IconHash);
 
@@ -113,9 +111,9 @@ public static class IconEndpoints
                 // Process not running or unexpected error
             }
 
-            // Fallback: use ExePath from a previous successful extraction.
-            // The .exe file on disk is usually readable by all users — this
-            // recovers icons for admin processes that were cached when non-elevated.
+            // Fallback: ExePath from a previous successful extraction. The exe on
+            // disk is usually readable by all users — recovers icons for admin
+            // processes cached while non-elevated.
             if (string.IsNullOrEmpty(exePath) && mapping != null && !string.IsNullOrEmpty(mapping.ExePath))
                 exePath = mapping.ExePath;
 
@@ -189,11 +187,10 @@ public static class IconEndpoints
 
             var hash = Convert.ToHexString(SHA256.HashData(iconResult.PngData)).ToLowerInvariant();
 
-            // Check if icon already exists in database
             var existingIcon = await db.ProcessIcons.FirstOrDefaultAsync(i => i.IconHash == hash);
             if (existingIcon != null)
             {
-                // Version-aware mapping: find latest mapping, check for hash change
+                // Version-aware mapping: latest mapping for this exe path, compare hash
                 var existingMapping = await db.ProcessIconMappings
                     .Where(m => m.ProcessName == processName && m.ExePath == exePath)
                     .OrderByDescending(m => m.FirstSeen)
@@ -203,7 +200,7 @@ public static class IconEndpoints
                 {
                     if (existingMapping.IconHash != hash)
                     {
-                        // Icon changed — create new versioned mapping, keep old one
+                        // Icon changed: create a new versioned mapping, keep the old one
                         db.ProcessIconMappings.Add(new ProcessIconMapping
                         {
                             ProcessName = processName,
@@ -231,7 +228,6 @@ public static class IconEndpoints
                 }
                 await db.SaveChangesAsync();
 
-                // Return existing icon data from database
                 return Results.Ok(new
                 {
                     processName,
@@ -253,7 +249,6 @@ public static class IconEndpoints
                 ColorAccent = iconResult.ColorAccent
             });
 
-            // Create mapping for this process name
             db.ProcessIconMappings.Add(new ProcessIconMapping
             {
                 ProcessName = processName,

@@ -120,8 +120,8 @@ const hoverDimmerRef = ref(null)
 // Bars of the latest render grouped by chart row: each row has its center Y,
 // the focused-bar band height, and the bars' x-intervals ({proc, x, w}).
 // Computed once per render/resize with convertToPixel; hover just reads this —
-// calling convertToPixel per hover was the old perf killer (thousands of
-// matrix transforms per mouse move).
+// calling convertToPixel per hover was slow (thousands of matrix transforms
+// per mouse move).
 let allBarsPx = [] // rows: [{ centerY, barH, bars: [{ proc, x, w, focused }] }]
 let focusedWindowsData = []
 let backgroundWindowsData = []
@@ -725,7 +725,7 @@ async function renderTimeline(myLoadId) {
   // Sorted sleep periods enable early-exit in the inner check
   sleepPeriods.sort((a, b) => a.start - b.start)
 
-  // O(log S) check using sorted sleep periods
+  // Early-exit scan over sorted sleep periods
   function isDuringSleep(tsMs) {
     for (const p of sleepPeriods) {
       if (tsMs < p.start) return false  // sorted → no later period can match
@@ -758,7 +758,7 @@ async function renderTimeline(myLoadId) {
 
   console.log('Idle events from backend:', backendIdleAreas.length)
 
-  // Step 3.6: Detect idle periods from gaps in the FULL timeline data (before top-15 filter).
+  // Step 3.6: Detect idle periods from gaps in the FULL timeline data (before the per-day top-20 filter).
   // Fallback for old data before backend Idle events existed.
   // Each entry has a start (timestamp) and end (timestamp + duration). A real idle gap
   // is when the END of one entry is far from the START of the next — NOT when two
@@ -798,8 +798,8 @@ async function renderTimeline(myLoadId) {
   let idleAreas = [...backendIdleAreas, ...gapIdleAreas]
 
   // Step 3.7: Subtract sleep/shutdown periods from idle areas so idle never overlaps with sleep.
-  // Both backend Idle events and gap-detected idle can span into sleep when the system
-  // auto-suspends during user AFK time. Sleep takes precedence in the display.
+  // Both backend Idle events and gap-detected idle can span into sleep when the
+  // system auto-suspends while the user is away. Sleep takes precedence in the display.
   {
     const sleepPeriods = systemEvents.value
       .filter(e => (e.eventType === 'Sleep' || e.eventType === 'Shutdown') && e.durationSeconds > 3)

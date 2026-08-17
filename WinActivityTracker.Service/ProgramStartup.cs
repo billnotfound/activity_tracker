@@ -1,5 +1,4 @@
-// Pre-flight checks for taskmonitor114 startup.
-// Extracted from Program.cs to keep the main entry point readable.
+// Pre-flight checks for taskmonitor114 startup (extracted from Program.cs).
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Services;
 using Microsoft.EntityFrameworkCore;
@@ -9,9 +8,9 @@ namespace WinActivityTracker.Service;
 internal static class ProgramStartup
 {
     /// <summary>
-    /// Single-instance guard via PID file in DataDir. Writes the current PID
-    /// to taskmonitor114.pid on success. Call DeletePidFile() on shutdown.
-    /// Returns true if startup should proceed, false if another instance is running.
+    /// Single-instance guard via PID file in DataDir. Writes the current PID to
+    /// taskmonitor114.pid on success; DeletePidFile() removes it on shutdown.
+    /// Returns false if another instance is running.
     /// </summary>
     public static bool EnsureSingleInstance(string dataDir, bool silent)
     {
@@ -37,14 +36,14 @@ internal static class ProgramStartup
                     }
                     catch (ArgumentException)
                     {
-                        // Stale lock file — process no longer exists.
+                        // Stale lock file: process no longer exists.
                         File.Delete(pidFile);
                     }
                 }
             }
             catch
             {
-                // Corrupted or inaccessible lock file — delete and continue.
+                // Corrupted or inaccessible lock file: delete and continue.
                 try { File.Delete(pidFile); } catch { }
             }
         }
@@ -55,7 +54,7 @@ internal static class ProgramStartup
         }
         catch
         {
-            // Can't write PID file — not fatal, continue without guard.
+            // Can't write PID file: not fatal, continue without guard.
         }
 
         return true;
@@ -136,13 +135,14 @@ internal static class ProgramStartup
         await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;PRAGMA cache_size=-2000");
         MigrateMediaSessions(db);
         MigrateProcessIconMappings(db);
+        MigrateHeartbeatMonotonic(db);
         await EnsureMissingIndexes(db);
     }
 
     /// <summary>
-    /// EnsureCreated() only creates schema when the database is empty. For existing
-    /// SQLite files, replay EF's create script for tables/indexes that are missing.
-    /// This keeps lightweight upgrade behavior without full EF migrations.
+    /// EnsureCreated() only creates the schema for an empty database. For existing
+    /// SQLite files, replay EF's create script for missing tables/indexes — a
+    /// lightweight upgrade path without full EF migrations.
     /// </summary>
     private static async Task EnsureMissingTables(AppDbContext db)
     {
@@ -239,6 +239,31 @@ internal static class ProgramStartup
                 "ALTER TABLE ProcessIconMappings ADD COLUMN FirstSeen TEXT NOT NULL DEFAULT '0001-01-01T00:00:00'");
             db.Database.ExecuteSqlRaw(
                 "UPDATE ProcessIconMappings SET FirstSeen = LastSeen WHERE FirstSeen = '0001-01-01T00:00:00'");
+        }
+    }
+
+    /// <summary>
+    /// Adds LastMonotonicMs and BootWallTime to Heartbeats for monotonic-clock time
+    /// anomaly detection. Existing row backfilled with defaults (0 / MinValue,
+    /// treated as "unset"): first heartbeat after upgrade skips the delta check
+    /// and only records the current tick + boot anchor.
+    /// </summary>
+    private static void MigrateHeartbeatMonotonic(AppDbContext db)
+    {
+        var columns = db.Database.SqlQuery<ColumnInfo>($"""
+            SELECT name FROM pragma_table_info('Heartbeats')
+        """).Select(c => c.Name).ToHashSet();
+
+        if (!columns.Contains("LastMonotonicMs"))
+        {
+            db.Database.ExecuteSqlRaw(
+                $"ALTER TABLE Heartbeats ADD COLUMN LastMonotonicMs INTEGER NOT NULL DEFAULT 0");
+        }
+
+        if (!columns.Contains("BootWallTime"))
+        {
+            db.Database.ExecuteSqlRaw(
+                $"ALTER TABLE Heartbeats ADD COLUMN BootWallTime TEXT NOT NULL DEFAULT '0001-01-01T00:00:00'");
         }
     }
 

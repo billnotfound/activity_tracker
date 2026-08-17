@@ -253,6 +253,15 @@ Section "$(SEC_MAIN_NAME)" SEC_MAIN
   SetOverwrite on
   File /r /x *.pdb /x "taskmonitor114-setup-*.exe" /x "updater.exe" /x "remove-list.txt" "${PUBLISH_DIR}\*"
 
+  ; ---- Phase 6: settings.json upgrade (NTP checkbox) ----
+  ; Runs for fresh installs AND upgrades: adds/updates the UseNtp key in each
+  ; existing user's settings.json (surgical text edit, timestamped .bak).
+  ; Fresh install + unchecked → pre-writes a minimal multi-line config so the
+  ; app's smart-merge keeps UseNtp=false on first start.
+  ; (Body lives in a function defined after the section declarations so the
+  ;  ${SEC_NTP} section constant is available — NSIS is single-pass.)
+  Call UpgradeSettingsJson
+
   ; ---- Phase 4: data in LOCALAPPDATA by default (no registry override needed) ----
   ; ---- Phase 5: Registry 闁?uninstall info + auto-start (per install mode) ----
   ${If} $MultiUser.InstallMode == "AllUsers"
@@ -300,10 +309,38 @@ Section "$(SEC_STARTUP_NAME)" SEC_STARTUP
   ${EndIf}
 SectionEnd
 
+; ============================================================
+; Section "Use NTP time verification" (selected by default)
+; Component carries no files; the checked state is read by the
+; main section's Phase 6 (settings.json upgrade).
+; ============================================================
+Section "$(SEC_NTP_NAME)" SEC_NTP
+SectionEnd
+
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_MAIN} "$(PRODUCT_DESC)"
   !insertmacro MUI_DESCRIPTION_TEXT ${SEC_STARTUP} "$(SEC_STARTUP_DESC)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SEC_NTP} "$(SEC_NTP_DESC)"
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
+
+; ============================================================
+; Function: UpgradeSettingsJson — add/update UseNtp in settings.json
+; Called from SEC_MAIN Phase 6. Defined here (after the section
+; declarations) so ${SEC_NTP} is available at parse time.
+; ============================================================
+Function UpgradeSettingsJson
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File "settings-upgrade.ps1"
+  ${If} ${SectionIsSelected} ${SEC_NTP}
+    nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\settings-upgrade.ps1" -UseNtp 1'
+  ${Else}
+    nsExec::ExecToStack 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\settings-upgrade.ps1" -UseNtp 0'
+  ${EndIf}
+  Pop $0
+  Pop $1
+  DetailPrint "Settings upgrade: $1"
+FunctionEnd
 
 ; ============================================================
 ; Uninstall section

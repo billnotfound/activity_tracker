@@ -1,6 +1,6 @@
-// Minimal raw-Socket listener that owns the API port when Kestrel is down.
-// On incoming connection: sends an HTML loading page with meta-refresh,
-// stops itself to free the port, then triggers Kestrel startup via callback.
+// Minimal raw-socket listener that owns the API port while Kestrel is down.
+// On incoming connection: sends an HTML loading page with meta-refresh, stops
+// to free the port, then starts Kestrel via callback.
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -68,8 +68,8 @@ public class PortWatcher
             catch (ObjectDisposedException) { break; }
             catch (SocketException) { break; }
 
-            // Send loading page with meta-refresh — the browser will retry every 1s
-            // until Kestrel is up and serving the real dashboard.
+            // Loading page with meta-refresh: the browser retries every 1s
+            // until Kestrel is up and serving the dashboard.
             try
             {
                 await SendLoadingPage(client, ct);

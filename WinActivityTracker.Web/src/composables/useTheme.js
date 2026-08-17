@@ -1,14 +1,11 @@
-// ============================================================
 // Theme Management Composable
-// ============================================================
-// Reads theme definitions from src/styles/theme.config.js and
-// applies them to :root as CSS custom properties at runtime.
+// Reads theme definitions from src/styles/theme.config.js and applies them to
+// :root as CSS custom properties at runtime.
 //
-// User preferences (color scheme, dark mode, page transition,
-// auto-color) are persisted to localStorage under `theme-settings`.
+// User preferences (color scheme, dark mode, page transition, auto-color) are
+// persisted to localStorage under `theme-settings`.
 //
 // To change theme colors, edit theme.config.js — no rebuild needed.
-// ============================================================
 import { ref, computed, watch } from 'vue'
 import {
   THEMES,

@@ -7,9 +7,7 @@ export function parseUtcTs(ts) {
   return new Date(ts.endsWith('Z') ? ts : ts + 'Z')
 }
 
-// RFC 3339 timestamp — always appends 'Z' for API interoperability.
-// Unlike toISOString(), this guarantees correct UTC parsing even when
-// the backend returns dates without timezone info.
+// Format a DB timestamp as a localized display string ('?' when missing).
 export function toUtcIso(ts) {
   if (!ts) return '?'
   const d = parseUtcTs(ts)

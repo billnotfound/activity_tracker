@@ -8,4 +8,6 @@ public class Heartbeat
 {
     public int Id { get; set; } = 1;  // single row
     public DateTime LastTick { get; set; }
+    public ulong LastMonotonicMs { get; set; }  // 上次心跳的 GetTickCount64；0 = 未初始化
+    public DateTime BootWallTime { get; set; }  // 当前 boot 的墙钟起点（服务启动时锚定）；default = 旧数据
 }

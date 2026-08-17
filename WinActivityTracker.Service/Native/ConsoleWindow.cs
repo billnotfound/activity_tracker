@@ -1,9 +1,9 @@
 // In-app console window — displays Console output captured by ConsoleMirror.
-// ConsoleMirror batches updates every ~200ms; we re-read GetHistory() on each
-// tick and only touch the TextBox if content changed.
+// ConsoleMirror batches updates every ~200ms; re-read GetHistory() on each
+// tick and touch the TextBox only if content changed.
 //
-// Closing this window does NOT exit the application (it's just a Form).
-// All output is also tee'd to the original stdout for terminal visibility.
+// Closing this window does not exit the application (it's just a Form).
+// All output is also tee'd to the original stdout.
 using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Native;
@@ -39,8 +39,8 @@ public class ConsoleWindow : Form
         };
         Controls.Add(_output);
 
-        // Timer callback — reads the full buffer and updates the TextBox.
-        // Runs on the timer thread; uses BeginInvoke for UI thread safety.
+        // Timer callback: reads the buffer and updates the TextBox. Runs on the
+        // timer thread; BeginInvoke marshals to the UI thread.
         _onTick = () =>
         {
             if (_output.IsDisposed) return;

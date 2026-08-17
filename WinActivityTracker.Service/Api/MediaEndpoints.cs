@@ -60,7 +60,7 @@ public static class MediaEndpoints
         var merged = MergeConsecutive(data);
 
         // Idle/hidden-tagged processes hide their media records too. Matched
-        // in-memory: records are already merged, and the tag rule count is tiny.
+        // in-memory: records are already merged and the rule count is small.
         merged = await FilterIdleMedia(db, merged, tagService.GetIdleRules(), tagService.GetHiddenRules());
 
         if (merged.Count > (limit ?? 50))
@@ -79,16 +79,16 @@ public static class MediaEndpoints
     }
 
     /// <summary>
-    /// Hides media records under the idle/hidden tags:
+    /// Hides media records under idle/hidden tags:
     /// - a record whose own process/title matches a __hidden rule is always
-    ///   hidden (SQL layer above already does this for the raw rows)
+    ///   hidden (the SQL layer above already does this for raw rows)
     /// - a record matching a strong idle rule (weight >= 10) is hidden
     /// - a record matching a weak idle rule (weight &lt; 10) is hidden unless the
     ///   process has foreground focus during the record's span (weak rules are
     ///   overridden by foreground activity, e.g. actively playing music)
     /// - any focus record inside the record's span that is hidden or strong-idle
     ///   hides the record too (lock screen, screensaver, ... hide all media of
-    ///   that period regardless of which process produced it)
+    ///   that period regardless of producing process)
     /// </summary>
     private static async Task<List<MediaSessionRecord>> FilterIdleMedia(
         AppDbContext db,
@@ -121,8 +121,8 @@ public static class MediaEndpoints
             var minStart = merged.Min(m => m.StartTime);
             var maxEnd = merged.Max(m => m.EndTime ?? DateTime.UtcNow);
 
-            // Day of slack before minStart so a focus record that started
-            // before the earliest media record can still overlap it.
+            // One day of slack before minStart so a focus record that started
+            // earlier can still overlap the earliest media record.
             var focusRows = await db.FocusChanges.AsNoTracking()
                 .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
                 .Where(f => f.Timestamp <= maxEnd && f.Timestamp >= minStart.AddDays(-1))
@@ -285,8 +285,7 @@ public static class MediaEndpoints
 
             db.ChangeTracker.DetectChanges();
             await db.SaveChangesAsync();
-            // Clear the tracker so accumulated entities don't grow memory
-            // across a long run (each batch stays independent).
+            // Clear the tracker so entities don't accumulate in memory across batches.
             db.ChangeTracker.Clear();
             lastId = batch[^1].Id;
         }

@@ -16,7 +16,6 @@ export function normalizeProcessName(processName) {
     return trimmed
   }
 
-  // Add .exe suffix
   return trimmed + '.exe'
 }
 

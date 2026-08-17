@@ -21,6 +21,8 @@ public class AppDbContext : DbContext
     public DbSet<SystemEvent> SystemEvents => Set<SystemEvent>();
     public DbSet<ProcessIcon> ProcessIcons => Set<ProcessIcon>();
     public DbSet<ProcessIconMapping> ProcessIconMappings => Set<ProcessIconMapping>();
+    public DbSet<TimeAnomaly> TimeAnomalies => Set<TimeAnomaly>();
+    public DbSet<TimeOffsetApplication> TimeOffsetApplications => Set<TimeOffsetApplication>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -96,6 +98,20 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.ProcessName);
             e.HasIndex(x => x.IconHash);
             e.HasIndex(x => new { x.ProcessName, x.FirstSeen });
+        });
+
+        modelBuilder.Entity<TimeAnomaly>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.DetectedAt);
+            e.HasIndex(x => x.Status);
+        });
+
+        modelBuilder.Entity<TimeOffsetApplication>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.AnomalyId);
+            e.HasIndex(x => x.AppliedAt);
         });
     }
 }

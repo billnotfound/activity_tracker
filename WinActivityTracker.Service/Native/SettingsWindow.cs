@@ -1,6 +1,6 @@
 // Native settings form.
-// Uses a simple TableLayoutPanel with fixed-height GroupBoxes — no AutoSize
-// conflicts, no overlapping. Each GroupBox docks an inner panel for its content.
+// TableLayoutPanel with fixed-height GroupBoxes — no AutoSize conflicts or
+// overlapping. Each GroupBox docks an inner panel for its content.
 using System.Drawing;
 using WinActivityTracker.Core.Services;
 
@@ -66,7 +66,7 @@ public partial class SettingsWindow : Form
 
         // === Helpers ===
 
-        // GroupBox with inner Panel — fixed Height, Dock=Fill inner so content stretches.
+        // GroupBox with inner Panel: fixed height, inner Dock=Fill so content stretches.
         GroupBox MakeGroup(string title, int height)
         {
             var g = new GroupBox

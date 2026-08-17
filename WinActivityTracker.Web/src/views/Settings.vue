@@ -220,6 +220,55 @@
               :placeholder="t('settings.exclusionsLabel')"
             ></textarea>
           </div>
+
+          <div class="divider"></div>
+
+          <!-- Time anomaly detection -->
+          <h3 class="section-title">{{ t('settings.timeSection.title') }}</h3>
+          <div class="toggle-row mb-3">
+            <button
+              class="icon-toggle"
+              :class="{ on: form.useNtp }"
+              @click="form.useNtp = !form.useNtp"
+              :aria-pressed="form.useNtp"
+              :title="form.useNtp ? t('common.enabled') : t('common.disabled')"
+            >
+              <Check v-if="form.useNtp" :size="18" />
+              <X v-else :size="18" />
+            </button>
+            <span class="toggle-label">
+              <strong>{{ t('settings.useNtp') }}</strong>
+            </span>
+          </div>
+
+          <div class="input-grid">
+            <div class="input-field">
+              <label>{{ t('settings.timeServer') }}</label>
+              <input v-model="form.timeServer" type="text" class="memphis-text-input" placeholder="pool.ntp.org" />
+            </div>
+            <div class="input-field">
+              <label>{{ t('settings.timeSourceMode') }}</label>
+              <select v-model="form.timeSourceMode" class="memphis-select">
+                <option v-for="m in timeSourceModes" :key="m.value" :value="m.value">
+                  {{ m.label }}
+                </option>
+              </select>
+            </div>
+            <div class="input-field">
+              <label>
+                {{ t('settings.timeAnomalyThresholdSeconds') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" />
+              </label>
+              <InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" :suffix="t('time.seconds.suffix')" />
+            </div>
+            <div class="input-field">
+              <label>
+                {{ t('settings.ntpEpsilonSeconds') }}
+                <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" />
+              </label>
+              <InputNumber v-model="form.ntpEpsilonSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
+            </div>
+          </div>
         </MemphisCard>
       </TabPanel>
 
@@ -530,7 +579,17 @@ const form = reactive({
   idleThresholdMinutes: 2,
   dataRetentionDays: 90,
   apiPort: 32579,
+  useNtp: true,
+  timeServer: 'pool.ntp.org',
+  timeSourceMode: 'Sntp',
+  timeAnomalyThresholdSeconds: 180,
+  ntpEpsilonSeconds: 5,
 })
+
+const timeSourceModes = [
+  { value: 'Sntp', label: 'Sntp' },
+  { value: 'Http', label: 'Http' },
+]
 
 const excludeText = ref('')
 const saving = ref(false)
@@ -580,6 +639,11 @@ async function loadSettings() {
       idleThresholdMinutes: s.idleThresholdMinutes,
       dataRetentionDays: s.dataRetentionDays,
       apiPort: s.apiPort || 32579,
+      useNtp: s.useNtp ?? true,
+      timeServer: s.timeServer || 'pool.ntp.org',
+      timeSourceMode: s.timeSourceMode || 'Sntp',
+      timeAnomalyThresholdSeconds: s.timeAnomalyThresholdSeconds ?? 180,
+      ntpEpsilonSeconds: s.ntpEpsilonSeconds ?? 5,
     })
     excludeText.value = (s.excludedProcesses || []).join(', ')
     statusOk.value = true
@@ -886,6 +950,27 @@ async function runReset() {
     outline: none;
     border-color: var(--primary-color);
   }
+}
+
+.memphis-text-input,
+.memphis-select {
+  width: 100%;
+  padding: 8px 12px;
+  border: 2px solid var(--surface-200);
+  background: var(--surface-card);
+  color: var(--text-color);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.2s ease;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+}
+
+.memphis-select {
+  cursor: pointer;
 }
 
 .button-row {

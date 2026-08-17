@@ -95,5 +95,8 @@
   "appPaths.fileExistsSkip": "[AppPaths] Skipping existing file: {0}",
   "appPaths.fileMigrated": "[AppPaths] Migrated: {0}",
   "appPaths.migrationFailed": "[AppPaths] Migration failed for '{0}': {1}",
-  "appPaths.emptyDirCleaned": "[AppPaths] Cleaned empty directory: {0}"
+  "appPaths.emptyDirCleaned": "[AppPaths] Cleaned empty directory: {0}",
+
+  "timeAnomaly.toastTitle": "Time Anomaly Detected",
+  "timeAnomaly.toastBody": "Clock offset of {0} seconds detected. Click for details and fix."
 }

@@ -68,4 +68,16 @@ public class TrackerSettings
     public int PressureElevatedLatencySec { get; set; } = 3;
     // 严重压力：刷盘延迟秒数阈值。最小 5，默认 10。
     public int PressureCriticalLatencySec { get; set; } = 10;
+
+    // ===== 时间异常检测 =====
+    // 是否使用网络时间参照（SNTP/HTTP）。settings.json 缺失时默认 true。
+    public bool UseNtp { get; set; } = true;
+    // 参照源服务器。SNTP 用 UDP 123，HTTP 模式用 HTTPS 443。
+    public string TimeServer { get; set; } = "pool.ntp.org";
+    // 参照源模式："Sntp" 或 "Http"。失败时自动降级尝试另一模式。
+    public string TimeSourceMode { get; set; } = "Sntp";
+    // 偏移超过此秒数判定为确认异常。最小 30，默认 180。
+    public int TimeAnomalyThresholdSeconds { get; set; } = 180;
+    // NTP 证实时钟错的最小差值（秒）。最小 1，默认 5。
+    public int NtpEpsilonSeconds { get; set; } = 5;
 }

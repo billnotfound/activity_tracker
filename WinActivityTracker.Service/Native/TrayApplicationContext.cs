@@ -3,9 +3,9 @@
 // Runs on the WinForms STA thread. Console is an in-app ConsoleWindow form,
 // not the system console — closing it does not exit the application.
 //
-// On first launch, StatusWindow opens after 1s delay.
-// "Open Dashboard" / double-click starts the on-demand DashboardServer,
-// waits for Kestrel to be ready, then opens the browser.
+// On first launch, StatusWindow opens after a 1s delay. "Open Dashboard" /
+// double-click starts the on-demand DashboardServer and opens the browser
+// once Kestrel is ready.
 using System.Diagnostics;
 using System.Drawing;
 
@@ -136,6 +136,16 @@ public class TrayApplicationContext : ApplicationContext
             await _dashboard.StartAsync();
             OpenUrl($"http://localhost:{_dashboard.Port}");
         };
+
+        // Task 10: toast 激活转发。点击 toast → 系统以 -Embedding 拉起新实例 →
+        // 命名管道转发 "open-time" → relay 触发 → 打开 /time 面板（不弹第二个实例）。
+        var relay = new ToastActivationRelay();
+        relay.OpenTimeRequested += async _ =>
+        {
+            await _dashboard.StartAsync();
+            OpenUrl($"http://localhost:{_dashboard.Port}/time");
+        };
+        relay.Start();
     }
 
     // ===== Open URL in browser =====

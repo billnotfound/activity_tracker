@@ -26,6 +26,7 @@ public class WindowTracker : BackgroundService
     private string _currentProcess = string.Empty;
     private string _currentTitle = string.Empty;
     private DateTime _focusStart = DateTime.UtcNow;
+    private ulong _focusStartTick;
     private DateTime _lastPollTime = DateTime.UtcNow;
     private bool _wasIdle;
     private DateTime? _idleStartedAt;
@@ -79,6 +80,7 @@ public class WindowTracker : BackgroundService
                         _currentProcess = string.Empty;
                         _currentTitle = string.Empty;
                         _focusStart = now;
+                        _focusStartTick = MonotonicClock.NowMs;
                     }
                 }
 
@@ -169,6 +171,7 @@ public class WindowTracker : BackgroundService
             _currentProcess = processName;
             _currentTitle = title;
             _focusStart = DateTime.UtcNow;
+            _focusStartTick = MonotonicClock.NowMs;
 
             // Notify icon cache when a new process gains focus (event-driven, no polling)
             _iconCache.NotifyProcess(processName);
@@ -186,7 +189,9 @@ public class WindowTracker : BackgroundService
         if (string.IsNullOrEmpty(process)) return;
 
         var end = endTime ?? DateTime.UtcNow;
-        var duration = (end - start).TotalSeconds;
+        var duration = endTime == null
+            ? ComputeFocusDuration(_focusStartTick, MonotonicClock.NowMs)  // tick 差值，不受墙钟跳变影响
+            : (end - start).TotalSeconds;                                  // 睡眠 gap 兜底路径仍用墙钟
         if (duration < 0.5) return;
 
         _currentProcess = string.Empty;
@@ -205,6 +210,10 @@ public class WindowTracker : BackgroundService
             });
         });
     }
+
+    /// <summary>tick 差值换算秒数（UInt64 减法自动处理回绕）。</summary>
+    public static double ComputeFocusDuration(ulong startTick, ulong endTick)
+        => (endTick - startTick) / 1000.0;
 
     private void FlushIdleEvent()
     {

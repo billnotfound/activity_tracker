@@ -1,14 +1,11 @@
-// ============================================================
 // Memphis Theme Configuration
-// ============================================================
-// This is the SINGLE SOURCE OF TRUTH for all theme colors.
-// Edit values here to change the look of the entire app.
-// No SCSS recompilation needed — themes are applied at runtime
-// via CSS variables.
+// This is the single source of truth for all theme colors. Edit values here to
+// change the look of the entire app. No SCSS recompilation needed — themes are
+// applied at runtime via CSS variables.
 //
-// Each theme is a flat map of CSS variable names (without `--`)
-// to color values. The active theme is applied by writing each
-// entry to `document.documentElement.style.setProperty`.
+// Each theme is a flat map of CSS variable names (without `--`) to color
+// values. The active theme is applied by writing each entry to
+// `document.documentElement.style.setProperty`.
 //
 // To add a new theme:
 //   1. Add an entry to THEMES below.
@@ -17,9 +14,8 @@
 // To add a new variable:
 //   1. Add the key to every theme map.
 //   2. Use it in SCSS via `var(--your-key, fallback)`.
-// ============================================================
 
-// 80s Memphis — warm, vibrant but refined for less visual fatigue
+// 80s Memphis — warm palette tuned to reduce visual fatigue
 export const memphis80s = {
   // Core palette
   'primary-color': '#F4A261',        // Warm orange

@@ -175,20 +175,17 @@ public class IconCacheService : BackgroundService
         }
     }
 
-    // Manual refresh cache (can be called from API)
     public async Task RefreshCacheAsync()
     {
         _extractedIcons.Clear();
         await LoadExistingIconsToCache();
     }
 
-    // Check if a process has an icon
     public bool HasIcon(string processName)
     {
         return _extractedIcons.TryGetValue(processName, out var hasIcon) && hasIcon;
     }
 
-    // Get cache statistics
     public (int Total, int WithIcons, int Failed) GetCacheStats()
     {
         var total = _extractedIcons.Count;

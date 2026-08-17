@@ -60,7 +60,7 @@
   }
 }
 
-// Memphis Button - clean with hover effect
+// Memphis Button
 .memphis-button {
   border: 2px solid var(--primary-color, $memphis-fallback-primary);
   background: transparent;
@@ -106,7 +106,7 @@
   }
 }
 
-// Memphis Skeleton - cleaner animation
+// Memphis Skeleton
 .memphis-skeleton {
   display: flex;
   gap: $memphis-spacing-md;
@@ -136,7 +136,7 @@
   }
 }
 
-// Memphis Tag - subtle with border
+// Memphis Tag
 .memphis-tag {
   display: inline-flex;
   align-items: center;

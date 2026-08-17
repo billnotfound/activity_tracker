@@ -264,7 +264,6 @@ public class IconService
     {
         try
         {
-            // Find a running process with this name
             var processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processName));
             if (processes.Length == 0)
             {

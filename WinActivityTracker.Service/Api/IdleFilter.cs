@@ -6,16 +6,15 @@ namespace WinActivityTracker.Service.Api;
 
 /// <summary>
 /// Applies "__idle" tag rules (see TagService.IdleTag) as SQL WHERE clauses.
-/// A rule can match by process name, by window/media title pattern, or both.
-/// Idle records are excluded from activity totals and from timelines that
-/// derive activity from gaps (the frontend renders idle gaps itself), while
-/// the summary reports idle time separately as totalIdleSeconds.
-/// Semantics mirror TagService.MatchesIdle.
+/// A rule matches by process name, by window/media title pattern, or both.
+/// Idle records are excluded from activity totals and from gap-derived
+/// timelines (the frontend renders idle gaps itself); the summary reports
+/// idle time separately as totalIdleSeconds. Semantics mirror
+/// TagService.MatchesIdle.
 ///
-/// Only strong rules (weight >= 10) affect focus/window/process records here:
-/// weak rules (weight < 10) are overridden by foreground activity (e.g. the
-/// user actively playing music in the foreground) and are applied only to
-/// media records in MediaEndpoints.
+/// Only strong rules (weight >= 10) apply here: weak rules (weight < 10)
+/// are overridden by foreground activity (e.g. actively playing music) and
+/// are applied only to media records in MediaEndpoints.
 /// </summary>
 public static class IdleFilter
 {

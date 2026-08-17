@@ -49,8 +49,8 @@ public static class FocusEndpoints
     {
         var offPeriods = await GetOffPeriods(db, start, end);
 
-        // Exclude records whose timestamp falls inside a sleep/shutdown window.
-        // Applied BEFORE GroupBy so TotalSeconds and SwitchCount both exclude sleep time.
+        // Exclude records inside a sleep/shutdown window; applied before GroupBy
+        // so TotalSeconds and SwitchCount both exclude sleep time.
         var baseQuery = db.FocusChanges
             .AsNoTracking()
             .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
@@ -63,8 +63,8 @@ public static class FocusEndpoints
         // reports them separately as totalIdleSeconds.
         var activeQuery = IdleFilter.ExcludeIdle(filtered, tagService.GetIdleRules());
 
-        // Run summary, adjusted-switch-count and total queries concurrently
-        // (all hit FocusChanges with the same filter; no reason to wait).
+        // Run summary, adjusted switch counts and totals concurrently
+        // (all hit FocusChanges with the same filter).
         var summaryTask = activeQuery
             .GroupBy(f => f.ProcessName)
             .Select(g => new
@@ -78,8 +78,8 @@ public static class FocusEndpoints
 
         var adjTask = ComputeAdjustedSwitchCounts(activeQuery);
 
-        // Total (hidden-excluded) seconds minus the active summary total
-        // yields the idle seconds without a second aggregation over active rows.
+        // Filtered total minus the active summary total yields the idle seconds
+        // without a second aggregation over active rows.
         var allSecTask = filtered.SumAsync(f => f.DurationSeconds);
 
         await Task.WhenAll(summaryTask, adjTask, allSecTask);
@@ -120,11 +120,11 @@ public static class FocusEndpoints
     }
 
     /// <summary>
-    /// Adds WHERE clauses to exclude FocusChange records whose Timestamp falls
-    /// inside any sleep/shutdown window. Uses De Morgan's law:
+    /// Excludes FocusChange records whose Timestamp falls inside any
+    /// sleep/shutdown window. Uses De Morgan's law:
     ///   NOT (Timestamp >= Start AND Timestamp < End)
     ///   = Timestamp < Start OR Timestamp >= End
-    /// Written as explicit OR so EF Core translates it reliably to SQLite.
+    /// Written as an explicit OR so EF Core translates it reliably to SQLite.
     /// </summary>
     private static IQueryable<FocusChange> ExcludeOffPeriods(
         IQueryable<FocusChange> query,

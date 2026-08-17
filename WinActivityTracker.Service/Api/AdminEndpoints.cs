@@ -138,6 +138,11 @@ public static class AdminEndpoints
             deletedProcSessions = await db.ProcessSessions.Where(p => p.StartTime < cutoff).ExecuteDeleteAsync();
             deletedMedia = await db.MediaSessionRecords.Where(m => m.StartTime < cutoff).ExecuteDeleteAsync();
             deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
+            // 时间异常清理协同：平移日志的引用行若已被保留期清掉，则一并清理
+            //（MaxRowTimestamp 为日志引用行的最大时间戳）；异常记录按 DetectedAt 清。
+            await db.Database.ExecuteSqlAsync(
+                $"DELETE FROM TimeOffsetApplications WHERE MaxRowTimestamp < {cutoff}");
+            await db.TimeAnomalies.Where(a => a.DetectedAt < cutoff).ExecuteDeleteAsync();
             await tx.CommitAsync();
         }
         catch

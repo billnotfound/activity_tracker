@@ -150,7 +150,7 @@ public partial class StatusWindow : Form
             // rules are overridden by foreground activity.
             var idleRules = tagService.GetIdleRules().Where(r => r.Weight >= 10).ToList();
 
-            // 1. Current focus — direct P/Invoke, no API needed
+            // 1. Current focus (direct P/Invoke)
             var windows = WindowTracker.EnumerateVisibleWindows(processCache);
             var focused = windows.FirstOrDefault(w =>
                 w.IsFocused && !TagService.MatchesHidden(hiddenRules, w.ProcessName, w.Title)

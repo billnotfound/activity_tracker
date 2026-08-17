@@ -32,12 +32,12 @@ code, pre, .code, .mono {
   min-height: 100vh;
 }
 
-// Override PrimeVue default styles to match Memphis (refined)
+// Override PrimeVue default styles to match Memphis
 .p-component {
   font-family: inherit;
 }
 
-// PrimeVue Button override - cleaner style
+// PrimeVue Button override
 .p-button {
   border-radius: 0 !important;
   border-width: 2px !important;
@@ -56,7 +56,7 @@ code, pre, .code, .mono {
   }
 }
 
-// PrimeVue Card override - minimal decoration
+// PrimeVue Card override
 .p-card {
   border-radius: 0 !important;
   border: 2px solid var(--surface-200) !important;
@@ -70,7 +70,7 @@ code, pre, .code, .mono {
   }
 }
 
-// PrimeVue DataTable override - clean borders
+// PrimeVue DataTable override
 .p-datatable {
   border: 2px solid var(--surface-200) !important;
   border-radius: 0 !important;
@@ -115,7 +115,7 @@ code, pre, .code, .mono {
   }
 }
 
-// PrimeVue Tabs override - Memphis button style
+// PrimeVue Tabs override
 .p-tabs {
   .p-tablist {
     border: none !important;
@@ -425,9 +425,9 @@ code, pre, .code, .mono {
   }
 }
 
-// Respect user's reduced-motion preference: kill all animations and
-// transitions site-wide. Affects nav frame slide, card hover lifts,
-// page transitions, flicker effects, skeleton shimmer, etc.
+// Honor the user's reduced-motion preference: disable all animations and
+// transitions site-wide (nav frame slide, card hover lifts, page transitions,
+// flicker effects, skeleton shimmer).
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

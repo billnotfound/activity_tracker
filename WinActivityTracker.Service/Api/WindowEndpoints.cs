@@ -50,25 +50,24 @@ public static class WindowEndpoints
             ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
             : DateTime.UtcNow;
 
-        var take = Math.Clamp(limit ?? 2000, 1, 50000); // Increased max to 50k for longer ranges
+        var take = Math.Clamp(limit ?? 2000, 1, 50000); // 50k max supports longer ranges
         var skip = Math.Max(0, offset ?? 0);
 
         var baseQuery = HiddenFilter.ExcludeHidden(
             db.FocusChanges.AsNoTracking().Where(f => f.Timestamp >= start && f.Timestamp <= end),
             tagService.GetHiddenRules());
 
-        // Idle-tagged rows are dropped so the frontend's gap detection renders
-        // those spans as idle (gray) areas instead of activity.
+        // Idle rows are dropped so the frontend's gap detection renders
+        // those spans as idle areas instead of activity.
         baseQuery = IdleFilter.ExcludeIdle(baseQuery, tagService.GetIdleRules());
 
         var total = await baseQuery.CountAsync();
 
-        // Sampling for wide ranges: the frontend renders at most MAX_POINTS
-        // (8000) points, so shipping up to 50k rows is mostly wasted bytes.
-        // Fetch all matching rows (hidden rules already applied), then keep
-        // every Nth in memory so the chart still spans the whole range evenly.
-        // Only for the full-range fetch (skip == 0); explicit pagination keeps
-        // its exact semantics.
+        // Wide-range sampling: the frontend renders at most maxPoints (8000)
+        // points, so shipping up to 50k rows is mostly wasted bytes. Fetch all
+        // matching rows and keep every Nth in memory so the chart spans the
+        // whole range evenly. Full-range fetch only (skip == 0); explicit
+        // pagination keeps its semantics.
         const int maxPoints = 8000;
         var sampled = false;
         List<TimelineRow> rows;
@@ -142,7 +141,6 @@ public static class WindowEndpoints
 
         var take = Math.Clamp(limit ?? 5000, 1, 50000);
 
-        // Get window sessions that overlap with the time range
         var sessions = await IdleFilter.ExcludeIdle(
                 HiddenFilter.ExcludeHidden(
                     db.WindowSessions.AsNoTracking()
@@ -193,9 +191,9 @@ public static class WindowEndpoints
             })
             .ToListAsync();
 
-        // Filter in-memory: keep only events that actually overlap [start, end].
-        // A sleep starting before 'start' but lasting into the range must be included
-        // so the frontend can draw the partial dashed box.
+        // In-memory filter: keep only events that overlap [start, end]. A sleep
+        // starting before 'start' but lasting into the range must be included so
+        // the frontend can draw the partial dashed box.
         events = events
             .Where(e => e.Timestamp.AddSeconds(e.DurationSeconds) > start)
             .ToList();

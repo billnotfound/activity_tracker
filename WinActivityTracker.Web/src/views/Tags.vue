@@ -331,7 +331,7 @@ async function loadRules() {
     if (!r.ok) return
     const data = await r.json()
 
-    // ---- tags.json 区块 ----
+    // ---- tags.json ----
     const tagsWrite = data.tags?.lastWrite || ''
     tagError.value = data.tags?.error || ''
     if (tagsWrite !== lastTagsWrite.value || !tagsWrite) {
@@ -349,7 +349,7 @@ async function loadRules() {
       rules.value = [...serverRules, ...unsaved]
     }
 
-    // ---- title_rules.json 区块 ----
+    // ---- title_rules.json ----
     const titleWrite = data.titleRules?.lastWrite || ''
     titleRulesError.value = data.titleRules?.error || ''
     if (titleWrite !== lastTitleWrite.value || !titleWrite) {

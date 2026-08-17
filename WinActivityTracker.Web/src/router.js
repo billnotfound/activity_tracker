@@ -1,11 +1,12 @@
 // Vue Router with HTML5 history mode (no hash in URLs).
-// Four routes, each lazy-loading a view component via dynamic import()
+// Five routes, each lazy-loading a view component via dynamic import()
 // so the initial bundle only contains the currently-visited view.
 //
 // Navigation:
 //   /           Dashboard   — today's charts, media history
 //   /history    History     — date-range query, aggregated data table, visual timeline
 //   /tags       Tags        — tag rules editor
+//   /time       Time        — time anomaly detection panel
 //   /settings   Settings    — backend configuration, DB maintenance, theme settings, third-party licenses
 //
 // history: createWebHistory() means the .NET Web server MUST have
@@ -18,6 +19,7 @@ export default createRouter({
     { path: '/', component: () => import('./views/Dashboard.vue') },
     { path: '/history', component: () => import('./views/History.vue') },
     { path: '/tags', component: () => import('./views/Tags.vue') },
+    { path: '/time', component: () => import('./views/TimeAnomaly.vue') },
     { path: '/settings', component: () => import('./views/Settings.vue') },
   ]
 })

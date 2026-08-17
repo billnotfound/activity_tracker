@@ -7,8 +7,8 @@ namespace WinActivityTracker.Service.Api;
 
 /// <summary>
 /// Applies "__hidden" tag rules (see TagService.HiddenTag) as SQL WHERE clauses.
-/// A rule can hide by process name, by window/media title pattern, or both.
-/// Hidden records are excluded globally — every endpoint and the status window —
+/// A rule hides by process name, by window/media title pattern, or both.
+/// Hidden records are excluded globally (every endpoint and the status window)
 /// and never count toward totals. Semantics mirror TagService.MatchesHidden.
 /// </summary>
 public static class HiddenFilter

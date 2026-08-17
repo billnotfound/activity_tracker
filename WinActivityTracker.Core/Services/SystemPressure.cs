@@ -1,5 +1,7 @@
 namespace WinActivityTracker.Core.Services;
 
+using WinActivityTracker.Core.Models;
+
 public enum PressureLevel
 {
     Normal = 0,
@@ -23,13 +25,25 @@ public class SystemPressure
         if (!_settings.Settings.PressureThrottlingEnabled)
             return PressureLevel.Normal;
 
-        var fill = _writeQueue.ChannelFillPercent;
-        var elapsed = (DateTime.UtcNow - _writeQueue.LastSuccessfulFlush).TotalSeconds;
-        var cfg = _settings.Settings;
+        return Evaluate(
+            _writeQueue.ChannelFillPercent,
+            (DateTime.UtcNow - _writeQueue.LastSuccessfulFlush).TotalSeconds,
+            _settings.Settings);
+    }
 
-        if (fill >= cfg.PressureCriticalFillPercent || elapsed >= cfg.PressureCriticalLatencySec)
+    /// <summary>
+    /// 纯判定逻辑，可单测。空闲队列（fill==0）不刷盘，elapsed 持续增长表示
+    /// "无待处理工作"而非 IO 阻塞——只有队列非空时 elapsed 才代表刷盘延迟。
+    /// </summary>
+    public static PressureLevel Evaluate(int fill, double elapsedSec, TrackerSettings cfg)
+    {
+        var hasPendingWork = fill > 0;
+
+        if (fill >= cfg.PressureCriticalFillPercent
+            || (hasPendingWork && elapsedSec >= cfg.PressureCriticalLatencySec))
             return PressureLevel.Critical;
-        if (fill >= cfg.PressureElevatedFillPercent || elapsed >= cfg.PressureElevatedLatencySec)
+        if (fill >= cfg.PressureElevatedFillPercent
+            || (hasPendingWork && elapsedSec >= cfg.PressureElevatedLatencySec))
             return PressureLevel.Elevated;
         return PressureLevel.Normal;
     }

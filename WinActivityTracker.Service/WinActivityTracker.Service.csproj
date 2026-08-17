@@ -12,6 +12,12 @@
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
     <InformationalVersion>1.0.0</InformationalVersion>
+
+    <!-- Toast notifications (Task 10): CommunityToolkit.Labs.Notifications was
+         compiled against Microsoft.Windows.SDK.NET 10.0.26100.38 + WinRT.Runtime
+         2.2.0. Default net10.0-windows10.0.19041.0 projection ships WinRT.Runtime
+         2.1.0 → CS1705. Pin 10.0.26100.84 (ships 2.2.0); see cache/toast-spike/RESULT.md. -->
+    <WindowsSdkPackageVersion>10.0.26100.84</WindowsSdkPackageVersion>
   </PropertyGroup>
 
   <ItemGroup>
@@ -52,6 +58,7 @@
   <ItemGroup>
     <ProjectReference Include="..\WinActivityTracker.Core\WinActivityTracker.Core.csproj" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.8" />
+    <PackageReference Include="CommunityToolkit.Labs.Notifications" Version="0.1.251217-build.2433" />
   </ItemGroup>
 
   <!-- Embed icon files as resources -->

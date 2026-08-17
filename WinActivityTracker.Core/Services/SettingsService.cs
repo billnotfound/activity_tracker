@@ -17,7 +17,7 @@ public class SettingsService
     };
     private readonly object _lock = new();
 
-    // Map of JSON property paths to their // comment lines.
+    // Maps JSON property names to comment lines injected into settings.json.
     // Add entries here when adding new properties to TrackerSettings.
     private static readonly Dictionary<string, string[]> PropertyComments = new()
     {
@@ -80,7 +80,15 @@ public class SettingsService
         },
         ["PressureCriticalLatencySec"] = new[] {
             "// 最近一次成功刷盘距今秒数阈值 —— 触发严重压力模式。最小 5，默认 10。"
-        }
+        },
+        ["UseNtp"] = new[] {
+            "// ===== 时间异常检测 =====",
+            "// 是否使用网络时间参照（SNTP/HTTP）。关闭后仅靠本地单调时钟检测。默认 true。"
+        },
+        ["TimeServer"] = new[] { "// 参照源服务器（SNTP 服务器或 HTTP 时间 URL）。" },
+        ["TimeSourceMode"] = new[] { "// 参照源模式: Sntp 或 Http。" },
+        ["TimeAnomalyThresholdSeconds"] = new[] { "// 偏移超过此秒数判定为确认异常。最小 30，默认 180。" },
+        ["NtpEpsilonSeconds"] = new[] { "// NTP 证实时钟错的最小差值(秒)。最小 1，默认 5。" },
     };
 
     // Derived from TrackerSettings via reflection — always in sync.
@@ -102,6 +110,8 @@ public class SettingsService
         ["PressureCriticalFillPercent"] = (50, 95),
         ["PressureElevatedLatencySec"] = (1, int.MaxValue),
         ["PressureCriticalLatencySec"] = (5, int.MaxValue),
+        ["TimeAnomalyThresholdSeconds"] = (30, int.MaxValue),
+        ["NtpEpsilonSeconds"] = (1, int.MaxValue),
     };
 
     private static readonly PropertyInfo[] SettingProperties = typeof(TrackerSettings)
@@ -288,6 +298,10 @@ public class SettingsService
                     else
                         value = JsonSerializer.Deserialize<List<string>>(jsonProp.Value.GetRawText())
                                  ?? new List<string>();
+                }
+                else if (prop.PropertyType == typeof(string))
+                {
+                    value = jsonProp.Value.GetString() ?? "";
                 }
                 else
                 {

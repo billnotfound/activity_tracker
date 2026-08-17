@@ -1,6 +1,6 @@
-// On-demand Kestrel + Vue SPA server. Only runs when the user opens the dashboard.
-// Stops after idle timeout (default 3 min). PortWatcher rebinds the port when Kestrel
-// is down so a frozen-tab refresh always gets a loading page, never "connection refused".
+// On-demand Kestrel + Vue SPA server, runs only while the dashboard is open.
+// Stops after idle timeout (default 3 min). PortWatcher rebinds the port when
+// Kestrel is down so a frozen-tab refresh gets a loading page, not "connection refused".
 using Microsoft.EntityFrameworkCore;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Services;
@@ -43,8 +43,7 @@ public class DashboardServer
 
         var builder = WebApplication.CreateSlimBuilder([]);
 
-        // Forward singleton services from the Host so API endpoints share the
-        // same instances (SettingsService, TagService, etc.).
+        // Forward Host singletons so API endpoints share the same instances.
         builder.Services.AddSingleton(_services.GetRequiredService<AppPaths>());
         builder.Services.AddSingleton(_services.GetRequiredService<I18nService>());
         builder.Services.AddSingleton(_services.GetRequiredService<SettingsService>());
@@ -54,6 +53,12 @@ public class DashboardServer
         builder.Services.AddSingleton(_services.GetRequiredService<IconService>());
         builder.Services.AddSingleton(_services.GetRequiredService<WriteQueue>());
         builder.Services.AddSingleton(_services.GetRequiredService<SystemPressure>());
+        // Time anomaly services (Task 9): forwarded so endpoints share the Host's
+        // instances (TimeAnomalyService is a Host BackgroundService singleton;
+        // TimeOffsetApplyService registered there per Ruling B1).
+        builder.Services.AddSingleton(_services.GetRequiredService<TimeAnomalyService>());
+        builder.Services.AddSingleton(_services.GetRequiredService<NtpSyncService>());
+        builder.Services.AddSingleton(_services.GetRequiredService<TimeOffsetApplyService>());
 
         builder.Services.ConfigureHttpJsonOptions(o =>
         {
@@ -95,11 +100,12 @@ public class DashboardServer
         app.MapWindowEndpoints();
         app.MapTagEndpoints();
         app.MapIconEndpoints();
+        app.MapTimeAnomalyEndpoints();
 
         if (serveSpa && fp != null)
             app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = fp });
 
-        // Idle tracking middleware — records the last request time for the idle monitor.
+        // Idle tracking middleware: records the last request time for the idle monitor.
         _lastRequestTime = DateTime.UtcNow;
         app.Use(async (context, next) =>
         {
@@ -147,10 +153,10 @@ public class DashboardServer
         try { await app.DisposeAsync(); }
         catch { }
 
-        // PhysicalFileProvider holds a FileSystemWatcher on wwwroot; it is
-        // not owned by the WebApplication's DI container (passed via
-        // StaticFileOptions), so app.DisposeAsync won't release it. Each
-        // open/close cycle leaks ~5 native handles if not disposed here.
+        // PhysicalFileProvider holds a FileSystemWatcher on wwwroot and is not owned
+        // by the WebApplication's DI container (passed via StaticFileOptions), so
+        // app.DisposeAsync won't release it — each open/close cycle leaks ~5 native
+        // handles without an explicit dispose here.
         try { fp?.Dispose(); }
         catch { }
 

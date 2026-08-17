@@ -96,5 +96,8 @@
   "appPaths.fileExistsSkip": "[AppPaths] 跳过已存在文件: {0}",
   "appPaths.fileMigrated": "[AppPaths] 已迁移: {0}",
   "appPaths.migrationFailed": "[AppPaths] 迁移失败 '{0}': {1}",
-  "appPaths.emptyDirCleaned": "[AppPaths] 已清理空目录: {0}"
+  "appPaths.emptyDirCleaned": "[AppPaths] 已清理空目录: {0}",
+
+  "timeAnomaly.toastTitle": "检测到时间异常",
+  "timeAnomaly.toastBody": "时钟偏移 {0} 秒。点击查看详情并修复。"
 }
