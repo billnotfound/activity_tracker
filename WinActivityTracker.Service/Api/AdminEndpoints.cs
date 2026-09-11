@@ -123,7 +123,15 @@ public static class AdminEndpoints
         int? days, bool? vacuum, AppDbContext db, SettingsService settings)
     {
         var retention = days ?? settings.Settings.DataRetentionDays;
-        var cutoff = DateTime.UtcNow.AddDays(-retention);
+        if (retention < 1)
+            return Results.BadRequest(new { error = "Retention days must be at least 1." });
+
+        DateTime cutoff;
+        try { cutoff = DateTime.UtcNow.AddDays(-retention); }
+        catch (ArgumentOutOfRangeException)
+        {
+            return Results.BadRequest(new { error = "Retention days are outside the supported range." });
+        }
 
         await using var tx = await db.Database.BeginTransactionAsync();
 
@@ -133,16 +141,24 @@ public static class AdminEndpoints
         {
             deletedFocus = await db.FocusChanges.Where(f => f.Timestamp < cutoff).ExecuteDeleteAsync();
             deletedWindows = await db.WindowSnapshots.Where(w => w.Timestamp < cutoff).ExecuteDeleteAsync();
-            deletedSessions = await db.WindowSessions.Where(w => w.OpenTime < cutoff).ExecuteDeleteAsync();
+            // 会话类表只删"已结束且完全早于 cutoff"的行:仍在进行(CloseTime/EndTime
+            // 为空)或跨越 cutoff 的行保留,避免活跃会话被静默删除。
+            (deletedSessions, deletedProcSessions, deletedMedia) =
+                await DeleteExpiredActivityAsync(db, cutoff);
             deletedProcesses = await db.ProcessSnapshots.Where(p => p.Timestamp < cutoff).ExecuteDeleteAsync();
-            deletedProcSessions = await db.ProcessSessions.Where(p => p.StartTime < cutoff).ExecuteDeleteAsync();
-            deletedMedia = await db.MediaSessionRecords.Where(m => m.StartTime < cutoff).ExecuteDeleteAsync();
             deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
-            // 时间异常清理协同：平移日志的引用行若已被保留期清掉，则一并清理
-            //（MaxRowTimestamp 为日志引用行的最大时间戳）；异常记录按 DetectedAt 清。
-            await db.Database.ExecuteSqlAsync(
-                $"DELETE FROM TimeOffsetApplications WHERE MaxRowTimestamp < {cutoff}");
-            await db.TimeAnomalies.Where(a => a.DetectedAt < cutoff).ExecuteDeleteAsync();
+            // 活跃恢复日志与异常记录成对保留。只有异常时间和日志引用行都过期时，
+            // 才先删日志再删异常；已恢复的旧日志可独立清理。
+            await db.TimeOffsetApplications
+                .Where(j => j.MaxRowTimestamp < cutoff
+                    && (j.RevertedAt != null
+                        || db.TimeAnomalies.Any(a => a.Id == j.AnomalyId && a.DetectedAt < cutoff)
+                        || !db.TimeAnomalies.Any(a => a.Id == j.AnomalyId)))
+                .ExecuteDeleteAsync();
+            await db.TimeAnomalies
+                .Where(a => a.DetectedAt < cutoff
+                    && !db.TimeOffsetApplications.Any(j => j.AnomalyId == a.Id))
+                .ExecuteDeleteAsync();
             await tx.CommitAsync();
         }
         catch
@@ -155,14 +171,17 @@ public static class AdminEndpoints
 
         await db.Database.ExecuteSqlRawAsync("PRAGMA optimize");
 
+        JournalCompactionResult? journalCompaction = null;
         if (vacuum == true)
-            await db.Database.ExecuteSqlRawAsync("VACUUM");
+            journalCompaction = await ReclaimStorageAsync(db);
 
         return Results.Ok(new
         {
             retentionDays = retention,
             cutoff = cutoff,
             vacuumed = vacuum == true,
+            compactedRepairJournals = journalCompaction?.CompactedRows ?? 0,
+            repairJournalBytesSaved = journalCompaction?.BytesSaved ?? 0,
             deleted = new
             {
                 focusChanges = deletedFocus,
@@ -176,32 +195,31 @@ public static class AdminEndpoints
         });
     }
 
+    /// <summary>
+    /// 保留期清理核心:只删除"已结束且完全早于 cutoff"的窗口/进程/媒体会话行。
+    /// 仍在进行(CloseTime/EndTime 为空)或跨越 cutoff 的行保留。
+    /// </summary>
+    public static async Task<(int Sessions, int ProcSessions, int Media)> DeleteExpiredActivityAsync(
+        AppDbContext db, DateTime cutoff)
+    {
+        var sessions = await db.WindowSessions
+            .Where(w => w.OpenTime < cutoff && w.CloseTime != null && w.CloseTime < cutoff)
+            .ExecuteDeleteAsync();
+        var procSessions = await db.ProcessSessions
+            .Where(p => p.StartTime < cutoff && p.EndTime != null && p.EndTime < cutoff)
+            .ExecuteDeleteAsync();
+        var media = await db.MediaSessionRecords
+            .Where(m => m.StartTime < cutoff && m.EndTime != null && m.EndTime < cutoff)
+            .ExecuteDeleteAsync();
+        return (sessions, procSessions, media);
+    }
+
     private static async Task<IResult> RunReset(bool? confirm, AppDbContext db)
     {
         if (confirm != true)
             return Results.BadRequest(new { error = "Set ?confirm=true to delete all data. This cannot be undone." });
 
-        var tables = await db.Database.SqlQuery<string>($"""
-            SELECT name AS Value FROM sqlite_master
-            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-        """).ToListAsync();
-
-        var deleted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var table in tables)
-        {
-            var quoted = QuoteSqliteIdentifier(table);
-            var deleteSql = "DELETE FROM " + quoted;
-            deleted[table] = await db.Database.ExecuteSqlRawAsync(deleteSql);
-        }
-
-        try
-        {
-            await db.Database.ExecuteSqlRawAsync("DELETE FROM sqlite_sequence");
-        }
-        catch
-        {
-            // sqlite_sequence exists only when AUTOINCREMENT tables have been created.
-        }
+        var deleted = await DeleteAllUserRowsAsync(db);
 
         await db.Database.ExecuteSqlRawAsync("VACUUM");
 
@@ -212,10 +230,50 @@ public static class AdminEndpoints
         });
     }
 
+    /// <summary>
+    /// 全量重置核心:事务内删除全部用户表数据。不清 sqlite_sequence——保留自增计数,
+    /// 防止重置后新行复用旧 Id(tracker 内存缓存的陈旧 DbId 会误更新到新行)。
+    /// </summary>
+    public static async Task<Dictionary<string, int>> DeleteAllUserRowsAsync(AppDbContext db)
+    {
+        var tables = await db.Database.SqlQuery<string>($"""
+            SELECT name AS Value FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+        """).ToListAsync();
+
+        var deleted = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        await using var tx = await db.Database.BeginTransactionAsync();
+        foreach (var table in tables)
+        {
+            // Names come from sqlite_master and are quoted as SQLite identifiers.
+            var quoted = QuoteSqliteIdentifier(table);
+#pragma warning disable EF1003
+            deleted[table] = await db.Database.ExecuteSqlRawAsync("DELETE FROM " + quoted);
+#pragma warning restore EF1003
+        }
+        await tx.CommitAsync();
+        return deleted;
+    }
+
     private static async Task<IResult> RunVacuum(AppDbContext db)
     {
+        var compacted = await ReclaimStorageAsync(db);
+        return Results.Ok(new
+        {
+            message = "Database optimization complete.",
+            compactedRepairJournals = compacted.CompactedRows,
+            repairJournalBytesSaved = compacted.BytesSaved
+        });
+    }
+
+    private static async Task<JournalCompactionResult> ReclaimStorageAsync(AppDbContext db)
+    {
+        var compacted = await TimeOffsetJournalCodec.CompactLegacyAsync(db);
+        db.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
+        await SqliteMaintenance.TryTruncateWalAsync(db);
         await db.Database.ExecuteSqlRawAsync("VACUUM");
-        return Results.Ok(new { message = "VACUUM complete." });
+        await SqliteMaintenance.TryTruncateWalAsync(db);
+        return compacted;
     }
 
     private static string QuoteSqliteIdentifier(string value) =>

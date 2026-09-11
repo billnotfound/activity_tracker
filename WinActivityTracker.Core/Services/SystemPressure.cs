@@ -27,17 +27,18 @@ public class SystemPressure
 
         return Evaluate(
             _writeQueue.ChannelFillPercent,
+            _writeQueue.PendingCount,
             (DateTime.UtcNow - _writeQueue.LastSuccessfulFlush).TotalSeconds,
             _settings.Settings);
     }
 
     /// <summary>
-    /// 纯判定逻辑，可单测。空闲队列（fill==0）不刷盘，elapsed 持续增长表示
+    /// 纯判定逻辑，可单测。空闲队列（pendingCount==0）不刷盘，elapsed 持续增长表示
     /// "无待处理工作"而非 IO 阻塞——只有队列非空时 elapsed 才代表刷盘延迟。
     /// </summary>
-    public static PressureLevel Evaluate(int fill, double elapsedSec, TrackerSettings cfg)
+    public static PressureLevel Evaluate(int fill, int pendingCount, double elapsedSec, TrackerSettings cfg)
     {
-        var hasPendingWork = fill > 0;
+        var hasPendingWork = pendingCount > 0;
 
         if (fill >= cfg.PressureCriticalFillPercent
             || (hasPendingWork && elapsedSec >= cfg.PressureCriticalLatencySec))

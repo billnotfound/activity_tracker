@@ -16,4 +16,5 @@ public class TimeAnomaly
     public DateTime? ToWall { get; set; }
     public string? Note { get; set; }
     public DateTime? LastAppliedAt { get; set; }
+    public string? Direction { get; set; }  // "pre"/"post"/null，与说明文案分开持久化
 }

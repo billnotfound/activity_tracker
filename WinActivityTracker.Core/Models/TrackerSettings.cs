@@ -74,7 +74,7 @@ public class TrackerSettings
     public bool UseNtp { get; set; } = true;
     // 参照源服务器。SNTP 用 UDP 123，HTTP 模式用 HTTPS 443。
     public string TimeServer { get; set; } = "pool.ntp.org";
-    // 参照源模式："Sntp" 或 "Http"。失败时自动降级尝试另一模式。
+    // 参照源模式："Sntp" 或 "Http"。查询失败时保留上次成功结果。
     public string TimeSourceMode { get; set; } = "Sntp";
     // 偏移超过此秒数判定为确认异常。最小 30，默认 180。
     public int TimeAnomalyThresholdSeconds { get; set; } = 180;

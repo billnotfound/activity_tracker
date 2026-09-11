@@ -24,15 +24,15 @@ var isTesting = Environment.GetEnvironmentVariable("WTA_TESTING") == "1";
 
 // Toast 激活进程：COM 激活器回调在本进程内执行，经命名管道转发给主实例后退出。
 // 必须在 EnsureSingleInstance 之前——激活进程不应弹单实例框。
-// 转发成功即退出；失败（主实例不在 / 管道不可用）回退为正常启动。
+// 无论转发是否成功都退出；激活进程不得回退为完整追踪实例。
 if (args.Any(a => a is "-Embedding"))
 {
     try
     {
         await ToastActivationClient.SendAsync();
-        return;  // 转发成功，主实例接管点击，本进程退出
     }
-    catch { /* 主实例不在或管道不可用，回退为正常启动 */ }
+    catch { /* 主实例不在或管道不可用 */ }
+    return;
 }
 
 // 服务模式 helper：LocalSystem 服务用 CreateProcessAsUser 把同 exe 的 helper 分支
@@ -85,7 +85,7 @@ builder.Services.AddSingleton<TitleNormalizer>();
 builder.Services.AddSingleton<ProcessNameCache>();
 builder.Services.AddSingleton<IconService>();
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite($"Data Source={dbPath};Mode=ReadWriteCreate;Cache=Shared"));
+    options.UseSqlite(SqliteConnectionStrings.Build(dbPath)));
 builder.Services.AddSingleton<IdleDetector>();
 builder.Services.AddSingleton<WriteQueue>();
 builder.Services.AddSingleton<SystemPressure>();
@@ -95,13 +95,13 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<WriteQueue>());
 builder.Services.AddHostedService<WindowTracker>();
 builder.Services.AddHostedService<ProcessTracker>();
 builder.Services.AddHostedService<MediaSessionTracker>();
-// Time anomaly detection (Task 7): event-log reader + NTP scheduler + lifecycle service.
+// Time anomaly detection: event-log reader + NTP scheduler + lifecycle service.
 // AddHostedService<T> 只注册 IHostedService→T 映射，不注册具体类型——必须先
 // AddSingleton，再用 GetRequiredService 注册 hosted，构造注入/工厂解析才能拿到同一实例。
 builder.Services.AddSingleton<SystemTimeChangeReader>();
 builder.Services.AddSingleton<NtpSyncService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NtpSyncService>());
-// Task 10/11: 通知出口。交互模式 → 常驻进程直接 ToastNotifier（点击经 -Embedding
+// 通知出口。交互模式 → 常驻进程直接 ToastNotifier（点击经 -Embedding
 // → 命名管道转发回本进程 relay 打开 /time）；服务模式（会话 0）→ ServiceModeNotifier
 // 投递到交互会话的 --toast-helper 分支。
 if (Environment.UserInteractive)
@@ -110,7 +110,7 @@ else
     builder.Services.AddSingleton<ITimeAnomalyNotifier, ServiceModeNotifier>();
 builder.Services.AddSingleton<TimeAnomalyService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<TimeAnomalyService>());
-builder.Services.AddSingleton<TimeOffsetApplyService>();  // Ruling B1: DI 注册（Apply/Restore 端点注入）
+builder.Services.AddSingleton<TimeOffsetApplyService>();  // Apply/Restore 端点注入
 builder.Services.AddHostedService(sp =>
 {
     var settings = sp.GetRequiredService<SettingsService>();

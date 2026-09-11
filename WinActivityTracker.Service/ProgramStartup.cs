@@ -136,7 +136,39 @@ internal static class ProgramStartup
         MigrateMediaSessions(db);
         MigrateProcessIconMappings(db);
         MigrateHeartbeatMonotonic(db);
+        MigrateTimeAnomalyDirection(db);
         await EnsureMissingIndexes(db);
+
+        // v1 repair journals stored every affected id as decimal JSON and could
+        // occupy hundreds of MB. Convert them losslessly to consecutive-id ranges
+        // before hosted writers start. A large saving gets a one-time VACUUM so
+        // the physical database file shrinks immediately, not merely its freelist.
+        var compacted = await TimeOffsetJournalCodec.CompactLegacyAsync(db);
+        if (compacted.CompactedRows > 0)
+        {
+            Console.WriteLine(
+                "Compacted {0} time-repair journals; logical saving {1:N0} bytes.",
+                compacted.CompactedRows, compacted.BytesSaved);
+            if (compacted.BytesSaved >= 16L * 1024 * 1024)
+            {
+                try
+                {
+                    db.Database.SetCommandTimeout(TimeSpan.FromMinutes(30));
+                    await SqliteMaintenance.TryTruncateWalAsync(db);
+                    await db.Database.ExecuteSqlRawAsync("VACUUM");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        "Journal compaction succeeded, but VACUUM could not reclaim the file yet: {0}",
+                        ex.Message);
+                }
+            }
+        }
+
+        // Bound the retained physical WAL after maintenance/repair bursts.
+        await SqliteMaintenance.TryTruncateWalAsync(db);
+        await db.Database.ExecuteSqlRawAsync("PRAGMA wal_autocheckpoint=1000");
     }
 
     /// <summary>
@@ -265,6 +297,19 @@ internal static class ProgramStartup
             db.Database.ExecuteSqlRaw(
                 $"ALTER TABLE Heartbeats ADD COLUMN BootWallTime TEXT NOT NULL DEFAULT '0001-01-01T00:00:00'");
         }
+    }
+
+    /// <summary>
+    /// 为 TimeAnomalies 增加 Direction 列("pre"/"post"/null,应用时解析的方向)。
+    /// </summary>
+    private static void MigrateTimeAnomalyDirection(AppDbContext db)
+    {
+        var columns = db.Database.SqlQuery<ColumnInfo>($"""
+            SELECT name FROM pragma_table_info('TimeAnomalies')
+        """).Select(c => c.Name).ToHashSet();
+
+        if (!columns.Contains("Direction"))
+            db.Database.ExecuteSqlRaw("ALTER TABLE TimeAnomalies ADD COLUMN Direction TEXT NULL");
     }
 
     private sealed class ColumnInfo { public string Name { get; set; } = string.Empty; }

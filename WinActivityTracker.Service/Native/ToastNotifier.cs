@@ -1,4 +1,4 @@
-// Task 10: 确认时间异常的系统 Toast 通知（普通交互模式）。
+// 确认时间异常的系统 Toast 通知（普通交互模式）。
 // 基于 CommunityToolkit.Labs.Notifications（免打包、无 AOT/XAML 依赖；实测结论见
 // cache/toast-spike/RESULT.md）：
 //   - 立即弹一条 + 2 分钟后第二条（排程句柄持有对象引用以便取消——Labs 的 Id setter
@@ -58,7 +58,7 @@ public sealed class ToastNotifier : ITimeAnomalyNotifier
     private static void ShowNow(ToastContentBuilder builder)
     {
         try { builder.Show(); }
-        catch { /* 无交互会话/无 toast 基础设施时静默（Ruling B3 预期） */ }
+        catch { /* 无交互会话或 toast 基础设施时忽略 */ }
     }
 
     private static ScheduledToastNotification? ScheduleReminder(ToastContentBuilder builder, long anomalyId)

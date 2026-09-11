@@ -40,16 +40,20 @@ public class PortWatcher
 
     public void Stop()
     {
+        CancellationTokenSource? cts;
         lock (_lock)
         {
             if (!IsListening) return;
 
-            _cts?.Cancel();
+            cts = _cts;
+            _cts = null;
+            cts?.Cancel();
             try { _listener?.Close(); } catch { }
             try { _listener?.Dispose(); } catch { }
             _listener = null;
             IsListening = false;
         }
+        cts?.Dispose();
     }
 
     private async Task AcceptLoop(CancellationToken ct)

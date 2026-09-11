@@ -21,15 +21,15 @@ public class SystemTimeChangeReader
         try
         {
             var q = new EventLogQuery("System", PathType.LogName, QueryTemplate)
-            { ReverseDirection = false };
-            var events = new EventLogReader(q);
+            { ReverseDirection = true };
+            using var events = new EventLogReader(q);
             EventRecord? rec;
             while ((rec = events.ReadEvent()) != null)
             {
                 using (rec)
                 {
-                    if (rec.TimeCreated == null || rec.TimeCreated.Value.ToUniversalTime() < sinceUtc)
-                        continue;
+                    if (rec.TimeCreated == null) continue;
+                    if (rec.TimeCreated.Value.ToUniversalTime() < sinceUtc) break;
                     var change = ParseEventXml(rec.ToXml());
                     if (change != null) result.Add(change);
                 }
@@ -40,6 +40,7 @@ public class SystemTimeChangeReader
             // 无日志读取权限或服务不可用：静默降级，由心跳检测兜底
             System.Diagnostics.Trace.WriteLine($"Event log query failed: {ex.Message}");
         }
+        result.Reverse();
         return result;
     }
 

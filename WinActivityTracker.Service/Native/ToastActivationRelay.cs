@@ -1,4 +1,4 @@
-// Task 10: Toast 激活转发管道。
+// Toast 激活转发管道。
 // 主实例监听命名管道，接收 toast 激活进程（-Embedding 拉起的新实例）转发的
 // "open-time" 请求；ToastActivationClient 由激活进程调用发送。relay 触发
 // OpenTimeRequested 事件 → TrayApplicationContext 打开 /time 面板。
@@ -12,6 +12,9 @@ public sealed class ToastActivationRelay : IDisposable
     public const string PipeName = "taskmonitor114-toast-activation";
     public event Action<string>? OpenTimeRequested;
     private readonly CancellationTokenSource _cts = new();
+    private readonly string _pipeName;
+
+    public ToastActivationRelay(string? pipeName = null) => _pipeName = pipeName ?? PipeName;
 
     public void Start()
     {
@@ -22,7 +25,7 @@ public sealed class ToastActivationRelay : IDisposable
                 try
                 {
                     await using var server = new NamedPipeServerStream(
-                        PipeName, PipeDirection.InOut, 1,
+                        _pipeName, PipeDirection.InOut, 1,
                         PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                     await server.WaitForConnectionAsync(_cts.Token);
                     using var reader = new StreamReader(server);
@@ -46,11 +49,24 @@ public sealed class ToastActivationRelay : IDisposable
 /// <summary>toast 激活进程（-Embedding）：把 "open-time" 转发给主实例后退出。</summary>
 public static class ToastActivationClient
 {
-    public static async Task SendAsync()
+    public static async Task SendAsync(string? pipeName = null)
     {
-        await using var client = new NamedPipeClientStream(".", ToastActivationRelay.PipeName, PipeDirection.Out);
-        await client.ConnectAsync(1000);
-        await using var writer = new StreamWriter(client) { AutoFlush = true };
-        await writer.WriteLineAsync("open-time");
+        pipeName ??= ToastActivationRelay.PipeName;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var client = new NamedPipeClientStream(
+                    ".", pipeName, PipeDirection.Out);
+                await client.ConnectAsync(1000);
+                await using var writer = new StreamWriter(client) { AutoFlush = true };
+                await writer.WriteLineAsync("open-time");
+                return;
+            }
+            catch when (attempt < 3)
+            {
+                await Task.Delay(200);
+            }
+        }
     }
 }

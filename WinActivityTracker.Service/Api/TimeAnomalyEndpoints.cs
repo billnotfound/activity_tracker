@@ -1,4 +1,4 @@
-// 时间异常 API（Task 9），仿 AdminEndpoints 静态扩展模式。
+// 时间异常 API，沿用 AdminEndpoints 的静态扩展模式。
 // 消费：TimeAnomalyService（列表/NTP 触发）、NtpSyncService（状态）、
 // TimeOffsetApplyService（预览/应用/恢复）。Ignore 直接对 AppDbContext 做条件更新
 // （与 AdminEndpoints 的 RunCleanup/RunReset 一致，避免为单端点扩展服务面）。
@@ -37,18 +37,21 @@ public static class TimeAnomalyEndpoints
 
     /// <summary>
     /// apply：preview=true → 只返回每表受影响行数；否则真实应用并返回结果。
-    /// direction（pre/post）仅 EventLog Pending 行必填；Heartbeat 行由偏移符号决定。
+    /// direction（pre/post）可显式指定；未指定时重新查询时间参照，不能判定则返回 404。
     /// </summary>
-    private static async Task<IResult> Apply(TimeOffsetApplyService apply, long id,
+    private static async Task<IResult> Apply(TimeOffsetApplyService apply, NtpSyncService ntp, long id,
         bool preview = false, string? direction = null)
     {
+        var reference = string.IsNullOrWhiteSpace(direction)
+            ? await ntp.RequestCheckAsync()
+            : null;
         if (preview)
         {
-            var p = await apply.PreviewAsync(id, direction);
+            var p = await apply.PreviewAsync(id, direction, reference);
             return p == null ? Results.NotFound(new { error = "anomaly not found" })
                 : Results.Ok(new { tableCounts = p.TableCounts });
         }
-        var r = await apply.Apply(id, direction);
+        var r = await apply.Apply(id, direction, reference);
         return r == null ? Results.NotFound(new { error = "anomaly not found" })
             : Results.Ok(r);
     }

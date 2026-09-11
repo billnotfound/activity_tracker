@@ -1,4 +1,4 @@
-// Task 11: 服务模式通知的 helper 进程入口。
+// 服务模式通知的 helper 进程入口。
 //
 // --toast-helper 模式：由服务（会话 0）CreateProcessAsUser 投递到交互会话的同 exe
 // 分支。只弹 toast 并处理点击（开浏览器到 /time），不启动追踪器、不做单实例检查。
@@ -7,11 +7,11 @@
 // 会话 0 侧；helper 在用户桌面侧重解析 AppPaths 会读到交互用户的目录，拿不到服务侧
 // 的异常/端口）——helper 不读 settings.json / DB，仅用命令行参数弹 toast 并转发点击。
 //
-// 点击路由与 Task 10 同机制：toast launch 参数内嵌 action=open-time → 系统以
+// 点击路由：toast launch 参数内嵌 action=open-time → 系统以
 // -Embedding 拉起同 exe → ToastActivationClient 命名管道转发 open-time → 本进程
 // 自带的 ToastActivationRelay 触发事件 → Process.Start 打开 http://localhost:{port}/time
 // （API 在服务模式常开，端口由服务侧经 --port 传入）。免打包 exe 无 AUMID 注册，
-// 实际点击投递无法在无头环境证明——Task 14 VM 验证，见 cache/toast-spike/RESULT.md。
+// 实际点击投递需在交互桌面环境验证。
 using System.Diagnostics;
 using System.Globalization;
 using WinActivityTracker.Core.Models;

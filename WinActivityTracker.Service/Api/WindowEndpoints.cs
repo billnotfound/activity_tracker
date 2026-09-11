@@ -43,12 +43,8 @@ public static class WindowEndpoints
         DateTime? from, DateTime? to, int? limit, int? offset,
         AppDbContext db, TagService tagService, TitleNormalizer normalizer, bool raw = false)
     {
-        var start = from.HasValue
-            ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow.AddHours(-1);
-        var end = to.HasValue
-            ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow;
+        var start = from.HasValue ? NormalizeToUtc(from.Value) : DateTime.UtcNow.AddHours(-1);
+        var end = to.HasValue ? NormalizeToUtc(to.Value) : DateTime.UtcNow;
 
         var take = Math.Clamp(limit ?? 2000, 1, 50000); // 50k max supports longer ranges
         var skip = Math.Max(0, offset ?? 0);
@@ -63,35 +59,50 @@ public static class WindowEndpoints
 
         var total = await baseQuery.CountAsync();
 
-        // Wide-range sampling: the frontend renders at most maxPoints (8000)
-        // points, so shipping up to 50k rows is mostly wasted bytes. Fetch all
-        // matching rows and keep every Nth in memory so the chart spans the
-        // whole range evenly. Full-range fetch only (skip == 0); explicit
-        // pagination keeps its semantics.
+        // Wide-range sampling: keep the work and allocation bounded in SQLite.
+        // The former implementation materialized every matching row and then
+        // discarded most of them in memory, making week-sized ranges regress as
+        // the database grew. Activity ids are monotonic and dense, so modulo-id
+        // sampling gives stable coverage; explicit first/last anchors preserve
+        // both ends of the selected range.
         const int maxPoints = 8000;
         var sampled = false;
         List<TimelineRow> rows;
         if (total > maxPoints && skip == 0)
         {
-            var all = await baseQuery
+            var step = (total + maxPoints - 1) / maxPoints;
+            rows = await baseQuery
+                .Where(f => f.Id % step == 0)
                 .OrderBy(f => f.Timestamp)
+                .Take(maxPoints - 2)
                 .Select(f => new TimelineRow
                 {
+                    Id = f.Id,
                     Timestamp = f.Timestamp,
                     ProcessName = f.ProcessName,
                     WindowTitle = f.WindowTitle,
                     DurationSeconds = f.DurationSeconds
                 })
                 .ToListAsync();
-            var step = (total + maxPoints - 1) / maxPoints;
+
+            var first = await baseQuery.OrderBy(f => f.Timestamp)
+                .Select(f => new TimelineRow
+                {
+                    Id = f.Id, Timestamp = f.Timestamp, ProcessName = f.ProcessName,
+                    WindowTitle = f.WindowTitle, DurationSeconds = f.DurationSeconds
+                })
+                .FirstAsync();
+            var last = await baseQuery.OrderByDescending(f => f.Timestamp)
+                .Select(f => new TimelineRow
+                {
+                    Id = f.Id, Timestamp = f.Timestamp, ProcessName = f.ProcessName,
+                    WindowTitle = f.WindowTitle, DurationSeconds = f.DurationSeconds
+                })
+                .FirstAsync();
+            if (rows.All(row => row.Id != first.Id)) rows.Add(first);
+            if (rows.All(row => row.Id != last.Id)) rows.Add(last);
+            rows.Sort((left, right) => left.Timestamp.CompareTo(right.Timestamp));
             sampled = true;
-            rows = [];
-            for (var i = 0; i < all.Count; i += step)
-                rows.Add(all[i]);
-            // Anchor the last row so the chart reaches the range end even if
-            // the stride misses it.
-            if (all.Count > 0 && rows[^1] != all[^1])
-                rows.Add(all[^1]);
             skip = 0;
             take = rows.Count;
         }
@@ -103,6 +114,7 @@ public static class WindowEndpoints
                 .Take(take)
                 .Select(f => new TimelineRow
                 {
+                    Id = f.Id,
                     Timestamp = f.Timestamp,
                     ProcessName = f.ProcessName,
                     WindowTitle = f.WindowTitle,
@@ -132,12 +144,8 @@ public static class WindowEndpoints
         DateTime? from, DateTime? to, int? limit,
         AppDbContext db, TagService tagService, TitleNormalizer normalizer, bool raw = false)
     {
-        var start = from.HasValue
-            ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow.AddHours(-1);
-        var end = to.HasValue
-            ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow;
+        var start = from.HasValue ? NormalizeToUtc(from.Value) : DateTime.UtcNow.AddHours(-1);
+        var end = to.HasValue ? NormalizeToUtc(to.Value) : DateTime.UtcNow;
 
         var take = Math.Clamp(limit ?? 5000, 1, 50000);
 
@@ -171,17 +179,33 @@ public static class WindowEndpoints
     private static async Task<IResult> GetSystemEvents(
         DateTime? from, DateTime? to, AppDbContext db)
     {
-        var start = from.HasValue
-            ? DateTime.SpecifyKind(from.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow.AddDays(-7);
-        var end = to.HasValue
-            ? DateTime.SpecifyKind(to.Value, DateTimeKind.Local).ToUniversalTime()
-            : DateTime.UtcNow;
+        var start = from.HasValue ? NormalizeToUtc(from.Value) : DateTime.UtcNow.AddDays(-7);
+        var end = to.HasValue ? NormalizeToUtc(to.Value) : DateTime.UtcNow;
 
+        var eventTypes = new[]
+        {
+            SystemEventTypes.Sleep, SystemEventTypes.Shutdown, SystemEventTypes.Idle
+        };
         var events = await db.SystemEvents
             .AsNoTracking()
-            .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown || e.EventType == SystemEventTypes.Idle)
-                && e.Timestamp < end)
+            .Where(e => eventTypes.Contains(e.EventType)
+                && e.Timestamp >= start && e.Timestamp < end)
+            .OrderBy(e => e.Timestamp)
+            .ToListAsync();
+
+        // At most one earlier interval of each type can be the interval crossing
+        // the left boundary. This avoids reading every historical SystemEvent.
+        foreach (var eventType in eventTypes)
+        {
+            var preceding = await db.SystemEvents.AsNoTracking()
+                .Where(e => e.EventType == eventType && e.Timestamp < start)
+                .OrderByDescending(e => e.Timestamp)
+                .FirstOrDefaultAsync();
+            if (preceding != null) events.Add(preceding);
+        }
+
+        var result = events
+            .Where(e => e.Timestamp.AddSeconds(e.DurationSeconds) > start)
             .OrderBy(e => e.Timestamp)
             .Select(e => new
             {
@@ -189,21 +213,22 @@ public static class WindowEndpoints
                 e.Timestamp,
                 e.DurationSeconds
             })
-            .ToListAsync();
-
-        // In-memory filter: keep only events that overlap [start, end]. A sleep
-        // starting before 'start' but lasting into the range must be included so
-        // the frontend can draw the partial dashed box.
-        events = events
-            .Where(e => e.Timestamp.AddSeconds(e.DurationSeconds) > start)
             .ToList();
 
-        return Results.Ok(events);
+        return Results.Ok(result);
     }
+
+    private static DateTime NormalizeToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime()
+    };
 }
 
 internal sealed class TimelineRow
 {
+    public long Id { get; set; }
     public DateTime Timestamp { get; set; }
     public string ProcessName { get; set; } = string.Empty;
     public string WindowTitle { get; set; } = string.Empty;

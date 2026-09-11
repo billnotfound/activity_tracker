@@ -1,4 +1,4 @@
-// Task 11: 服务模式通知（会话 0 / LocalSystem）。
+// 服务模式通知（会话 0 / LocalSystem）。
 //
 // 服务进程运行在会话 0，无交互桌面，不能直接弹 toast。本实现用
 // WTSGetActiveConsoleSessionId + WTSQueryUserToken + CreateEnvironmentBlock +
@@ -6,7 +6,7 @@
 // helper 在用户桌面弹 toast、处理点击。
 //
 // 骨架级实现（P/Invoke）：无交互会话 / 非 LocalSystem / 启动失败 → 只写日志，
-// 不中断检测主流程。已以服务身份在 VM 上运行验证（Task 11/14）。
+// 不中断检测主流程。
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;

@@ -69,7 +69,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<WindowSession>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasIndex(x => x.OpenTime);       // query open windows: WHERE CloseTime IS NULL
+            e.HasIndex(x => x.OpenTime);
+            e.HasIndex(x => x.CloseTime);      // active-session and retention queries
         });
 
         modelBuilder.Entity<SystemEvent>(e =>
@@ -77,6 +78,7 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.EventType);
             e.HasIndex(x => x.Timestamp);
+            e.HasIndex(x => new { x.EventType, x.Timestamp });
         });
 
         modelBuilder.Entity<DailySummary>(e =>

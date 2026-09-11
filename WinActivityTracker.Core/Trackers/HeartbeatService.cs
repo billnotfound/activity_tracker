@@ -63,11 +63,12 @@ public class HeartbeatService : BackgroundService
                 {
                     var wallDelta = (now - hb.LastTick).TotalSeconds;
 
-                    if (!IsSameBoot(hb.BootWallTime, _bootWallTime))
+                    var sameBoot = IsSameBoot(hb.BootWallTime, _bootWallTime);
+                    if (!sameBoot)
                     {
                         // 跨重启/升级旧数据：tick 跨 boot 归零不可比，豁免异常检测；
                         // 但墙钟 gap 的睡眠/关机检测必须保留（HandleGapAsync 是 Start 事件的唯一写入者）
-                        if (wallDelta > GapThresholdSec)
+                        if (ShouldRecordGap(0, wallDelta, sameBoot))
                             await HandleGapAsync(db, hb.LastTick, now);
                     }
                     else
@@ -80,15 +81,19 @@ public class HeartbeatService : BackgroundService
                         {
                             case TimeAnomalyKind.ForwardJump:
                             case TimeAnomalyKind.BackwardJump:
-                                // 时间被改：写异常，不写 Sleep（旧逻辑会误判为睡眠）
+                                // 时钟变化单独记异常；是否睡眠由 tick 间隔判定。
                                 detected = RecordAnomaly(db, hb, cls, now);
+                                if (ShouldRecordGap(tickDelta, wallDelta, sameBoot))
+                                    await HandleGapAsync(db, hb.LastTick, now);
                                 break;
                             case TimeAnomalyKind.SuspiciousHourOffset:
                             case TimeAnomalyKind.Drift:
                                 detected = RecordSilent(db, hb, cls, now);
+                                if (ShouldRecordGap(tickDelta, wallDelta, sameBoot))
+                                    await HandleGapAsync(db, hb.LastTick, now);
                                 break;
                             default:
-                                if (wallDelta > GapThresholdSec)
+                                if (ShouldRecordGap(tickDelta, wallDelta, sameBoot))
                                     await HandleGapAsync(db, hb.LastTick, now);  // 现有睡眠/关机逻辑
                                 break;
                         }
@@ -125,6 +130,12 @@ public class HeartbeatService : BackgroundService
     public static bool IsSameBoot(DateTime storedBootWall, DateTime currentBootWall)
         => storedBootWall != default && Math.Abs((storedBootWall - currentBootWall).TotalSeconds) < 2;
 
+    public static bool ShouldRecordGap(double tickDelta, double wallDelta, bool sameBoot)
+    {
+        if (!sameBoot) return wallDelta > GapThresholdSec;
+        return tickDelta > GapThresholdSec;
+    }
+
     private TimeAnomaly RecordAnomaly(AppDbContext db, Heartbeat hb, TimeAnomalyClassification cls, DateTime now)
     {
         _logger.LogWarning("Time change detected: offset {Offset}s at {At}", cls.OffsetSeconds, now);
@@ -154,7 +165,7 @@ public class HeartbeatService : BackgroundService
             Status = cls.Kind == TimeAnomalyKind.Drift
                 ? TimeAnomalyStatus.Drift
                 : TimeAnomalyStatus.Suspicious,
-            FromWall = hb.LastTick,
+            FromWall = hb.LastTick.AddSeconds(Math.Max(0, cls.OffsetSeconds)),
             Note = cls.Note
         };
         // Suspicious/Drift 同样回调（TimeAnomalyService 对 Drift 是 no-op，

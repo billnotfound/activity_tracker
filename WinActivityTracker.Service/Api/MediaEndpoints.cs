@@ -49,7 +49,8 @@ public static class MediaEndpoints
 
         query = HiddenFilter.ExcludeHidden(query, tagService.GetHiddenRules());
 
-        var fetchCount = (limit ?? 50) * 3;
+        var take = Math.Clamp(limit ?? 50, 1, 1000);
+        var fetchCount = take * 3;
 
         var data = await query
             .OrderByDescending(m => m.StartTime)
@@ -63,8 +64,8 @@ public static class MediaEndpoints
         // in-memory: records are already merged and the rule count is small.
         merged = await FilterIdleMedia(db, merged, tagService.GetIdleRules(), tagService.GetHiddenRules());
 
-        if (merged.Count > (limit ?? 50))
-            merged = merged.GetRange(merged.Count - (limit ?? 50), limit ?? 50);
+        if (merged.Count > take)
+            merged = merged.GetRange(merged.Count - take, take);
 
         return Results.Ok(merged.Select(m => new
         {
@@ -121,13 +122,40 @@ public static class MediaEndpoints
             var minStart = merged.Min(m => m.StartTime);
             var maxEnd = merged.Max(m => m.EndTime ?? DateTime.UtcNow);
 
-            // One day of slack before minStart so a focus record that started
-            // earlier can still overlap the earliest media record.
             var focusRows = await db.FocusChanges.AsNoTracking()
                 .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-                .Where(f => f.Timestamp <= maxEnd && f.Timestamp >= minStart.AddDays(-1))
+                .Where(f => f.Timestamp >= minStart && f.Timestamp <= maxEnd)
                 .Select(f => new { f.ProcessName, f.Timestamp, f.DurationSeconds, f.WindowTitle })
                 .ToListAsync();
+            var preceding = await db.FocusChanges.AsNoTracking()
+                .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess && f.Timestamp < minStart)
+                .OrderByDescending(f => f.Timestamp)
+                .Select(f => new { f.ProcessName, f.Timestamp, f.DurationSeconds, f.WindowTitle })
+                .FirstOrDefaultAsync();
+            if (preceding != null) focusRows.Insert(0, preceding);
+
+            var globalHidden = new List<(DateTime Start, DateTime End)>();
+            var focusByProcess = new Dictionary<string, List<(DateTime Start, DateTime End)>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var f in focusRows)
+            {
+                var interval = (f.Timestamp,
+                    f.Timestamp.AddSeconds(Math.Max(0, f.DurationSeconds)));
+                if (!focusByProcess.TryGetValue(f.ProcessName, out var processIntervals))
+                {
+                    processIntervals = [];
+                    focusByProcess[f.ProcessName] = processIntervals;
+                }
+                processIntervals.Add(interval);
+
+                if (TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle)
+                    || TagService.MatchesIdle(strongIdle, f.ProcessName, f.WindowTitle))
+                    globalHidden.Add(interval);
+            }
+
+            var globalHiddenIndex = new IntervalOverlapIndex(globalHidden);
+            var processIndexes = focusByProcess.ToDictionary(
+                x => x.Key, x => new IntervalOverlapIndex(x.Value), StringComparer.OrdinalIgnoreCase);
 
             // Focus span that is hidden or strong-idle hides the media record.
             if (strongIdle.Count > 0 || hiddenRules.Count > 0)
@@ -137,16 +165,7 @@ public static class MediaEndpoints
                     if (hideIds.Contains(m.Id)) continue;
                     var start = m.StartTime;
                     var end = m.EndTime ?? DateTime.UtcNow;
-                    foreach (var f in focusRows)
-                    {
-                        if (f.Timestamp > end || f.Timestamp.AddSeconds(f.DurationSeconds) < start) continue;
-                        if (TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle)
-                            || TagService.MatchesIdle(strongIdle, f.ProcessName, f.WindowTitle))
-                        {
-                            hideIds.Add(m.Id);
-                            break;
-                        }
-                    }
+                    if (globalHiddenIndex.Overlaps(start, end)) hideIds.Add(m.Id);
                 }
             }
 
@@ -156,9 +175,8 @@ public static class MediaEndpoints
                 if (hideIds.Contains(m.Id)) continue;
                 var start = m.StartTime;
                 var end = m.EndTime ?? DateTime.UtcNow;
-                var hasFocus = focusRows.Any(f =>
-                    string.Equals(f.ProcessName, m.AppName, StringComparison.OrdinalIgnoreCase)
-                    && f.Timestamp <= end && f.Timestamp.AddSeconds(f.DurationSeconds) >= start);
+                var hasFocus = processIndexes.TryGetValue(m.AppName, out var processIndex)
+                    && processIndex.Overlaps(start, end);
                 if (!hasFocus) hideIds.Add(m.Id);
             }
         }

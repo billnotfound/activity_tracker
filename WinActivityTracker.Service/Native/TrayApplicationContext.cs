@@ -45,8 +45,15 @@ public class TrayApplicationContext : ApplicationContext
         var dashboardItem = new ToolStripMenuItem(I18nService._("tray.openDashboard"));
         dashboardItem.Click += async (_, _) =>
         {
-            await _dashboard.StartAsync();
-            OpenUrl($"http://localhost:{_dashboard.Port}");
+            try
+            {
+                await _dashboard.StartAsync();
+                OpenUrl($"http://localhost:{_dashboard.Port}");
+            }
+            catch (Exception ex)
+            {
+                ReportDashboardOpenError(ex);
+            }
         };
         dashboardItem.Font = new Font(dashboardItem.Font, FontStyle.Bold);
         menu.Items.Add(dashboardItem);
@@ -133,19 +140,48 @@ public class TrayApplicationContext : ApplicationContext
 
         _trayIcon.DoubleClick += async (_, _) =>
         {
-            await _dashboard.StartAsync();
-            OpenUrl($"http://localhost:{_dashboard.Port}");
+            try
+            {
+                await _dashboard.StartAsync();
+                OpenUrl($"http://localhost:{_dashboard.Port}");
+            }
+            catch (Exception ex)
+            {
+                ReportDashboardOpenError(ex);
+            }
         };
 
-        // Task 10: toast 激活转发。点击 toast → 系统以 -Embedding 拉起新实例 →
+        // Toast 激活转发。点击 toast → 系统以 -Embedding 拉起新实例 →
         // 命名管道转发 "open-time" → relay 触发 → 打开 /time 面板（不弹第二个实例）。
         var relay = new ToastActivationRelay();
         relay.OpenTimeRequested += async _ =>
         {
-            await _dashboard.StartAsync();
-            OpenUrl($"http://localhost:{_dashboard.Port}/time");
+            // async void 在无同步上下文的管道读取线程上：异常不接住会终止进程
+            try
+            {
+                await _dashboard.StartAsync();
+                OpenUrl($"http://localhost:{_dashboard.Port}/time");
+            }
+            catch (Exception ex)
+            {
+                ReportDashboardOpenError(ex);
+            }
         };
         relay.Start();
+    }
+
+    /// <summary>
+    /// async void 处理器(托盘点击/双击/toast relay)中 StartAsync 若抛异常,
+    /// 在无同步上下文线程上不接住会终止进程。统一走此处标记并提示。
+    /// </summary>
+    private void ReportDashboardOpenError(Exception ex)
+    {
+        try
+        {
+            var msg = I18nService._("tray.cannotOpenBrowser", ex.Message);
+            MessageBox.Show(msg, "taskmonitor114", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch { }
     }
 
     // ===== Open URL in browser =====

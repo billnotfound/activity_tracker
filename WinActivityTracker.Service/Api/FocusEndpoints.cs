@@ -48,47 +48,58 @@ public static class FocusEndpoints
     private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end, TagService tagService)
     {
         var offPeriods = await GetOffPeriods(db, start, end);
-
-        // Exclude records inside a sleep/shutdown window; applied before GroupBy
-        // so TotalSeconds and SwitchCount both exclude sleep time.
-        var baseQuery = db.FocusChanges
+        var rows = await db.FocusChanges
             .AsNoTracking()
             .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
-            .Where(f => f.Timestamp >= start && f.Timestamp <= end);
-
-        var filtered = ExcludeOffPeriods(baseQuery, offPeriods);
-        filtered = HiddenFilter.ExcludeHidden(filtered, tagService.GetHiddenRules());
-
-        // Idle-tagged records are excluded from activity totals; the summary
-        // reports them separately as totalIdleSeconds.
-        var activeQuery = IdleFilter.ExcludeIdle(filtered, tagService.GetIdleRules());
-
-        // Run summary, adjusted switch counts and totals concurrently
-        // (all hit FocusChanges with the same filter).
-        var summaryTask = activeQuery
-            .GroupBy(f => f.ProcessName)
-            .Select(g => new
+            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+            .OrderBy(f => f.Timestamp)
+            .Select(f => new SummaryFocusRow
             {
-                ProcessName = g.Key,
-                TotalSeconds = g.Sum(f => f.DurationSeconds),
-                SwitchCount = g.Count()
+                Timestamp = f.Timestamp,
+                ProcessName = f.ProcessName,
+                WindowTitle = f.WindowTitle,
+                DurationSeconds = f.DurationSeconds
             })
-            .OrderByDescending(x => x.TotalSeconds)
             .ToListAsync();
 
-        var adjTask = ComputeAdjustedSwitchCounts(activeQuery);
+        // The previous query shape ran three FocusChanges scans, each with a
+        // correlated SystemEvents NOT EXISTS. A day with only a few thousand
+        // focus rows consequently took several seconds. The range index now
+        // feeds one ordered read and all small rule/off-period checks happen in
+        // a single linear pass.
+        var hiddenRules = tagService.GetHiddenRules();
+        var idleRules = tagService.GetIdleRules().Where(rule => rule.Weight >= 10).ToList();
+        var buckets = new Dictionary<string, SummaryBucket>(StringComparer.OrdinalIgnoreCase);
+        var previousProcess = (string?)null;
+        var offIndex = 0;
+        double totalIdleSec = 0;
+        foreach (var row in rows)
+        {
+            while (offIndex < offPeriods.Count && offPeriods[offIndex].End <= row.Timestamp)
+                offIndex++;
+            if (offIndex < offPeriods.Count
+                && offPeriods[offIndex].Start <= row.Timestamp
+                && row.Timestamp < offPeriods[offIndex].End)
+                continue;
+            if (TagService.MatchesHidden(hiddenRules, row.ProcessName, row.WindowTitle))
+                continue;
+            if (TagService.MatchesIdle(idleRules, row.ProcessName, row.WindowTitle))
+            {
+                totalIdleSec += row.DurationSeconds;
+                continue;
+            }
 
-        // Filtered total minus the active summary total yields the idle seconds
-        // without a second aggregation over active rows.
-        var allSecTask = filtered.SumAsync(f => f.DurationSeconds);
-
-        await Task.WhenAll(summaryTask, adjTask, allSecTask);
-
-        var data = summaryTask.Result;
-        var adj = adjTask.Result;
+            if (!buckets.TryGetValue(row.ProcessName, out var bucket))
+                buckets[row.ProcessName] = bucket = new SummaryBucket(row.ProcessName);
+            bucket.TotalSeconds += row.DurationSeconds;
+            bucket.SwitchCount++;
+            if (!string.Equals(previousProcess, row.ProcessName, StringComparison.OrdinalIgnoreCase))
+                bucket.AdjustedSwitchCount++;
+            previousProcess = row.ProcessName;
+        }
 
         var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
-        var totalIdleSec = Math.Max(0, allSecTask.Result - data.Sum(d => d.TotalSeconds));
+        var data = buckets.Values.OrderByDescending(x => x.TotalSeconds).ToList();
 
         return Results.Ok(new
         {
@@ -97,7 +108,7 @@ public static class FocusEndpoints
                 d.ProcessName,
                 d.TotalSeconds,
                 SwitchCount = d.SwitchCount,
-                AdjustedSwitchCount = adj.GetValueOrDefault(d.ProcessName, d.SwitchCount),
+                d.AdjustedSwitchCount,
                 Tags = tagService.ResolveTags(d.ProcessName, null)
             }),
             totalSleepSeconds = totalSleepSec,
@@ -111,46 +122,44 @@ public static class FocusEndpoints
         var events = await db.SystemEvents
             .AsNoTracking()
             .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
-                && e.Timestamp >= start && e.Timestamp <= end)
+                && e.Timestamp >= start && e.Timestamp < end)
             .ToListAsync();
+        foreach (var eventType in new[] { SystemEventTypes.Sleep, SystemEventTypes.Shutdown })
+        {
+            var preceding = await db.SystemEvents.AsNoTracking()
+                .Where(e => e.EventType == eventType && e.Timestamp < start)
+                .OrderByDescending(e => e.Timestamp)
+                .FirstOrDefaultAsync();
+            if (preceding != null) events.Add(preceding);
+        }
 
         return events
-            .Select(e => (Start: e.Timestamp, End: e.Timestamp.AddSeconds(e.DurationSeconds), e.DurationSeconds))
+            .Select(e =>
+            {
+                var clippedStart = e.Timestamp < start ? start : e.Timestamp;
+                var eventEnd = e.Timestamp.AddSeconds(e.DurationSeconds);
+                var clippedEnd = eventEnd > end ? end : eventEnd;
+                return (Start: clippedStart, End: clippedEnd,
+                    DurationSeconds: (clippedEnd - clippedStart).TotalSeconds);
+            })
+            .Where(e => e.DurationSeconds > 0)
+            .OrderBy(e => e.Start)
             .ToList();
     }
+}
 
-    /// <summary>
-    /// Excludes FocusChange records whose Timestamp falls inside any
-    /// sleep/shutdown window. Uses De Morgan's law:
-    ///   NOT (Timestamp >= Start AND Timestamp < End)
-    ///   = Timestamp < Start OR Timestamp >= End
-    /// Written as an explicit OR so EF Core translates it reliably to SQLite.
-    /// </summary>
-    private static IQueryable<FocusChange> ExcludeOffPeriods(
-        IQueryable<FocusChange> query,
-        List<(DateTime Start, DateTime End, double DurationSeconds)> offPeriods)
-    {
-        foreach (var p in offPeriods)
-            query = query.Where(f => f.Timestamp < p.Start || f.Timestamp >= p.End);
-        return query;
-    }
+internal sealed class SummaryFocusRow
+{
+    public DateTime Timestamp { get; set; }
+    public string ProcessName { get; set; } = string.Empty;
+    public string WindowTitle { get; set; } = string.Empty;
+    public double DurationSeconds { get; set; }
+}
 
-    private static async Task<Dictionary<string, int>> ComputeAdjustedSwitchCounts(
-        IQueryable<FocusChange> filtered)
-    {
-        var timestamps = await filtered
-            .OrderBy(f => f.Timestamp)
-            .Select(f => new { f.Timestamp, f.ProcessName })
-            .ToListAsync();
-
-        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        string? prev = null;
-        foreach (var r in timestamps)
-        {
-            if (r.ProcessName != prev)
-                counts[r.ProcessName] = counts.GetValueOrDefault(r.ProcessName) + 1;
-            prev = r.ProcessName;
-        }
-        return counts;
-    }
+internal sealed class SummaryBucket(string processName)
+{
+    public string ProcessName { get; } = processName;
+    public double TotalSeconds { get; set; }
+    public int SwitchCount { get; set; }
+    public int AdjustedSwitchCount { get; set; }
 }

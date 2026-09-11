@@ -11,22 +11,29 @@ public class SntpTimeReference : ITimeReference
     private static readonly DateTime NtpEpoch = new(1900, 1, 1, 0, 0, 0, DateTimeKind.Utc);
     private readonly string _server;
 
+    private const int QueryTimeoutSeconds = 5;
+
     public SntpTimeReference(string server) => _server = server;
 
     public async Task<TimeReferenceResult> QueryAsync(CancellationToken ct)
     {
         try
         {
+            // 硬超时：DNS 与 UDP 接收都受控。黑洞网络下 5s 内必返回失败，否则会永久
+            // 占用 NtpSyncService._gate 并卡死 TimeAnomalyService 的启动链。
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(QueryTimeoutSeconds));
+            var token = timeoutCts.Token;
+
             using var udp = new UdpClient(AddressFamily.InterNetwork);
-            udp.Client.ReceiveTimeout = 3000;
-            var serverIp = (await Dns.GetHostAddressesAsync(_server, ct)).First(a => a.AddressFamily == AddressFamily.InterNetwork);
+            var serverIp = (await Dns.GetHostAddressesAsync(_server, token)).First(a => a.AddressFamily == AddressFamily.InterNetwork);
 
             var request = new byte[48];
             request[0] = 0x1B; // LI=0, VN=4, Mode=3 (client)
             var t0 = DateTime.UtcNow;
             WriteTransmitTimestamp(request, t0); // 回填发送时刻（字节 40-47），否则服务器回填的 Originate 无效
-            await udp.SendAsync(request.AsMemory(), new IPEndPoint(serverIp, 123), ct);
-            var response = await udp.ReceiveAsync(ct);
+            await udp.SendAsync(request.AsMemory(), new IPEndPoint(serverIp, 123), token);
+            var response = await udp.ReceiveAsync(token);
             var t3 = DateTime.UtcNow;
 
             if (response.Buffer.Length < 48)
@@ -52,7 +59,7 @@ public class SntpTimeReference : ITimeReference
         }
         catch (Exception ex)
         {
-            // 网络失败：吞掉异常，返回 Succeeded=false
+            // 网络失败/超时：吞掉异常，返回 Succeeded=false
             return Failed(ex.Message);
         }
     }

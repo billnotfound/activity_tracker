@@ -63,65 +63,80 @@ public class WindowTracker : BackgroundService
 
         await CloseOrphanSessions();
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            while (!stoppingToken.IsCancellationRequested)
             {
-                var now = DateTime.UtcNow;
-
-                if ((now - _lastPollTime).TotalSeconds > _settings.Settings.WindowPollSeconds * 3)
+                try
                 {
-                    _logger.LogDebug("Sleep gap detected: {Gap}s — resetting focus state",
-                        (now - _lastPollTime).TotalSeconds);
-                    _idleStartedAt = null;
-                    if (_settings.Settings.TrackingEnabled)
+                    var now = DateTime.UtcNow;
+
+                    if ((now - _lastPollTime).TotalSeconds > _settings.Settings.WindowPollSeconds * 3)
                     {
-                        SaveFocusChange(_lastPollTime);
-                        _currentProcess = string.Empty;
-                        _currentTitle = string.Empty;
-                        _focusStart = now;
-                        _focusStartTick = MonotonicClock.NowMs;
+                        _logger.LogDebug("Sleep gap detected: {Gap}s — resetting focus state",
+                            (now - _lastPollTime).TotalSeconds);
+                        _idleStartedAt = null;
+                        if (_settings.Settings.TrackingEnabled)
+                        {
+                            SaveFocusChange(_lastPollTime);
+                            _currentProcess = string.Empty;
+                            _currentTitle = string.Empty;
+                            _focusStart = now;
+                            _focusStartTick = MonotonicClock.NowMs;
+                        }
+                    }
+
+                    if (!_settings.Settings.TrackingEnabled)
+                    {
+                        SaveFocusChange(now);
+                        if (_openWindows.Count > 0)
+                            await CloseAllWindowSessions();
+                        if (_wasIdle) FlushIdleEvent();
+                        _wasIdle = false;
+                        _idleStartedAt = null;
+                        _lastPollTime = now;
+                        await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
+                        continue;
+                    }
+
+                    var isFullscreen = _settings.Settings.FullscreenBypassIdle && IsForegroundFullscreen();
+                    var isIdle = isFullscreen ? false : _idleDetector.CheckIdle();
+
+                    if (isIdle && !_wasIdle)
+                    {
+                        _logger.LogDebug("User went idle");
+                        SaveFocusChange();
+                        _wasIdle = true;
+                        _idleStartedAt = DateTime.UtcNow;
+                    }
+                    else if (!isIdle)
+                    {
+                        if (_wasIdle) FlushIdleEvent();
+                        _wasIdle = false;
+                        TrackForegroundWindow();
+                        await SyncWindowSessions();
                     }
                 }
-
-                if (!_settings.Settings.TrackingEnabled)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
-                    if (_wasIdle) FlushIdleEvent();
-                    _wasIdle = false;
-                    _idleStartedAt = null;
-                    _lastPollTime = now;
-                    await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
-                    continue;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "WindowTracker poll error");
                 }
 
-                var isFullscreen = _settings.Settings.FullscreenBypassIdle && IsForegroundFullscreen();
-                var isIdle = isFullscreen ? false : _idleDetector.CheckIdle();
-
-                if (isIdle && !_wasIdle)
-                {
-                    _logger.LogDebug("User went idle");
-                    SaveFocusChange();
-                    _wasIdle = true;
-                    _idleStartedAt = DateTime.UtcNow;
-                }
-                else if (!isIdle)
-                {
-                    if (_wasIdle) FlushIdleEvent();
-                    _wasIdle = false;
-                    TrackForegroundWindow();
-                    await SyncWindowSessions();
-                }
+                _lastPollTime = DateTime.UtcNow;
+                await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "WindowTracker poll error");
-            }
-
-            _lastPollTime = DateTime.UtcNow;
-            await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.WindowPollSeconds), stoppingToken);
         }
-
-        await CloseAllWindowSessions();
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally
+        {
+            SaveFocusChange();
+            try { await CloseAllWindowSessions(); }
+            catch (Exception ex) { _logger.LogError(ex, "WindowTracker shutdown cleanup error"); }
+        }
     }
 
     private async Task CloseOrphanSessions()
@@ -161,7 +176,7 @@ public class WindowTracker : BackgroundService
         var processName = _processCache.GetName((int)pid);
         if (processName == null) return;
 
-        if (_settings.Settings.ExcludedProcesses.Contains(processName, StringComparer.OrdinalIgnoreCase))
+        if (ProcessNameMatcher.IsExcluded(_settings.Settings.ExcludedProcesses, processName))
             return;
 
         if (processName != _currentProcess || title != _currentTitle)
@@ -258,7 +273,7 @@ public class WindowTracker : BackgroundService
 
         foreach (var (hwnd, process, title, _) in _reusableWindows)
         {
-            if (excluded.Contains(process, StringComparer.OrdinalIgnoreCase)) continue;
+            if (ProcessNameMatcher.IsExcluded(excluded, process)) continue;
             _reusableHwnds.Add(hwnd);
 
             if (_openWindows.TryGetValue(hwnd, out var existing))

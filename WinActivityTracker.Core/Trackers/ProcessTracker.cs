@@ -43,32 +43,51 @@ public class ProcessTracker : BackgroundService
     {
         _logger.LogInformation("ProcessTracker started, interval: {Interval}s", _settings.Settings.ProcessPollSeconds);
 
-        // Close orphan sessions from a previous crash (EndTime == null).
-        await CloseOrphanSessions();
-
-        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
-
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            try
+            // Close orphan sessions from a previous crash (EndTime == null).
+            await CloseOrphanSessions();
+            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+
+            while (!stoppingToken.IsCancellationRequested)
             {
-                if (!_settings.Settings.TrackingEnabled)
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.ProcessPollSeconds), stoppingToken);
-                    continue;
+                    if (!_settings.Settings.TrackingEnabled)
+                    {
+                        if (_runningProcesses.Count > 0)
+                            await CloseAllProcessSessions();
+                    }
+                    else
+                    {
+                        await SyncProcessSessions();
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "ProcessTracker poll error");
                 }
 
-                await SyncProcessSessions();
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.ProcessPollSeconds), stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "ProcessTracker poll error");
-            }
-
-            await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.ProcessPollSeconds), stoppingToken);
         }
-
-        await CloseAllProcessSessions();
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
+        finally
+        {
+            try { await CloseAllProcessSessions(); }
+            catch (Exception ex) { _logger.LogError(ex, "ProcessTracker shutdown cleanup error"); }
+        }
     }
 
     private async Task CloseOrphanSessions()
@@ -141,7 +160,7 @@ public class ProcessTracker : BackgroundService
         {
             if (_runningProcesses.ContainsKey(pid))
                 continue;
-            if (excluded.Contains(name, StringComparer.OrdinalIgnoreCase))
+            if (ProcessNameMatcher.IsExcluded(excluded, name))
                 continue;
 
             var s = new Models.ProcessSession { ProcessName = name, ProcessId = pid, StartTime = now };
@@ -155,7 +174,7 @@ public class ProcessTracker : BackgroundService
         foreach (var (pid, entry) in _runningProcesses)
         {
             if (!_reusablePids.Contains(pid)
-                || excluded.Contains(entry.Name, StringComparer.OrdinalIgnoreCase))
+                || ProcessNameMatcher.IsExcluded(excluded, entry.Name))
             {
                 _reusableGoneIds.Add(entry.DbId);
                 _reusableGonePids.Add(pid);

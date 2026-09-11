@@ -13,7 +13,6 @@ public class MediaSessionTracker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SettingsService _settings;
     private readonly IdleDetector _idleDetector;
-    private readonly WriteQueue _writeQueue;
     private readonly ILogger<MediaSessionTracker> _logger;
 
     private bool _hasActiveSession;
@@ -22,7 +21,7 @@ public class MediaSessionTracker : BackgroundService
     private string _currentArtist = string.Empty;
     private string _currentStatus = string.Empty;
 
-    private DateTime _lastWakeTime = DateTime.MinValue;
+    private DateTime _lastWakeTime = DateTime.UtcNow;
     private DateTime _lastPollTime = DateTime.UtcNow;
 
     // Write-time merge: when a session flickers (disappears then reappears),
@@ -35,12 +34,11 @@ public class MediaSessionTracker : BackgroundService
     private string _lastClosedStatus = string.Empty;
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
-        IdleDetector idleDetector, WriteQueue writeQueue, ILogger<MediaSessionTracker> logger)
+        IdleDetector idleDetector, ILogger<MediaSessionTracker> logger)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
         _idleDetector = idleDetector;
-        _writeQueue = writeQueue;
         _logger = logger;
     }
 
@@ -48,47 +46,79 @@ public class MediaSessionTracker : BackgroundService
     {
         _logger.LogInformation("MediaSessionTracker started, interval: {Interval}s", _settings.Settings.MediaPollSeconds);
 
-        while (!stoppingToken.IsCancellationRequested)
+        // 启动时把 wake 游标定位到库中最新一条 Wake/Start 事件:历史事件不再重放
+        // (旧行为会为每条历史事件插入幽灵 __SystemSleep 标记,并用远古时间戳关闭
+        // 当前会话);本会话心跳首跳写入的 Start 事件仍会被正常处理。
+        try
         {
-            try
-            {
-                if (!_settings.Settings.TrackingEnabled)
-                {
-                    _lastPollTime = DateTime.UtcNow;
-                    await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.MediaPollSeconds), stoppingToken);
-                    continue;
-                }
-
-                var now = DateTime.UtcNow;
-                var gapSec = (now - _lastPollTime).TotalSeconds;
-                if (_hasActiveSession && gapSec > _settings.Settings.MediaPollSeconds * 3)
-                {
-                    _logger.LogDebug("MediaTracker: sleep gap detected ({Gap}s), closing session", gapSec);
-                    using var gapScope = _scopeFactory.CreateScope();
-                    var gapDb = gapScope.ServiceProvider.GetRequiredService<AppDbContext>();
-                    CloseCurrentSession(gapDb, _lastPollTime);
-                    await gapDb.SaveChangesAsync();
-                }
-
-                await PollMediaSession();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "MediaSessionTracker poll error");
-            }
-
-            _lastPollTime = DateTime.UtcNow;
-            await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.MediaPollSeconds), stoppingToken);
+            using var seedScope = _scopeFactory.CreateScope();
+            var seedDb = seedScope.ServiceProvider.GetRequiredService<AppDbContext>();
+            _lastWakeTime = await ResolveInitialWakeCursorAsync(seedDb, DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "MediaTracker: wake cursor seeding failed, falling back to now");
         }
 
         try
         {
-            using var shutdownScope = _scopeFactory.CreateScope();
-            var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
-            CloseCurrentSession(shutdownDb, DateTime.UtcNow);
-            await shutdownDb.SaveChangesAsync();
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    if (!_settings.Settings.TrackingEnabled)
+                    {
+                        if (_hasActiveSession)
+                            await CloseCurrentSessionAsync(DateTime.UtcNow);
+                        _lastPollTime = DateTime.UtcNow;
+                        await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.MediaPollSeconds), stoppingToken);
+                        continue;
+                    }
+
+                    var now = DateTime.UtcNow;
+                    var gapSec = (now - _lastPollTime).TotalSeconds;
+                    if (_hasActiveSession && gapSec > _settings.Settings.MediaPollSeconds * 3)
+                    {
+                        _logger.LogDebug("MediaTracker: sleep gap detected ({Gap}s), closing session", gapSec);
+                        using var gapScope = _scopeFactory.CreateScope();
+                        var gapDb = gapScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        CloseCurrentSession(gapDb, _lastPollTime);
+                        await gapDb.SaveChangesAsync();
+                    }
+
+                    await PollMediaSession();
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "MediaSessionTracker poll error");
+                }
+
+                _lastPollTime = DateTime.UtcNow;
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_settings.Settings.MediaPollSeconds), stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
         }
-        catch (Exception ex) { _logger.LogError(ex, "MediaSessionTracker shutdown cleanup error"); }
+        finally
+        {
+            try
+            {
+                using var shutdownScope = _scopeFactory.CreateScope();
+                var shutdownDb = shutdownScope.ServiceProvider.GetRequiredService<AppDbContext>();
+                CloseCurrentSession(shutdownDb, DateTime.UtcNow);
+                await shutdownDb.SaveChangesAsync();
+            }
+            catch (Exception ex) { _logger.LogError(ex, "MediaSessionTracker shutdown cleanup error"); }
+        }
     }
 
     private async Task PollMediaSession()
@@ -108,7 +138,7 @@ public class MediaSessionTracker : BackgroundService
             if (session == null)
             {
                 if (_hasActiveSession)
-                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
+                    await CloseCurrentSessionAsync(DateTime.UtcNow);
                 return;
             }
 
@@ -116,7 +146,7 @@ public class MediaSessionTracker : BackgroundService
             if (_settings.Settings.ExcludedProcesses.Contains(appName, StringComparer.OrdinalIgnoreCase))
             {
                 if (_hasActiveSession)
-                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
+                    await CloseCurrentSessionAsync(DateTime.UtcNow);
                 return;
             }
 
@@ -124,7 +154,7 @@ public class MediaSessionTracker : BackgroundService
             if (props == null)
             {
                 if (_hasActiveSession)
-                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
+                    await CloseCurrentSessionAsync(DateTime.UtcNow);
                 return;
             }
 
@@ -135,7 +165,7 @@ public class MediaSessionTracker : BackgroundService
             if (string.IsNullOrEmpty(title))
             {
                 if (_hasActiveSession)
-                    _writeQueue.TryWrite(db => CloseCurrentSession(db, DateTime.UtcNow));
+                    await CloseCurrentSessionAsync(DateTime.UtcNow);
                 return;
             }
 
@@ -149,11 +179,11 @@ public class MediaSessionTracker : BackgroundService
                 return;
 
             var now = DateTime.UtcNow;
-            _writeQueue.TryWrite(db =>
-            {
-                CloseCurrentSession(db, now);
-                StartNewSession(db, appName, title, artist, status, now);
-            });
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            CloseCurrentSession(db, now);
+            StartNewSession(db, appName, title, artist, status, now);
+            await db.SaveChangesAsync();
 
             _logger.LogDebug("Media: {Artist} - {Title} [{Status}]", artist, title, status);
         }
@@ -166,6 +196,14 @@ public class MediaSessionTracker : BackgroundService
         {
             _logger.LogDebug(ex, "MediaSessionTracker: WinRT not ready, retrying next cycle");
         }
+    }
+
+    private async Task CloseCurrentSessionAsync(DateTime endTime)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        CloseCurrentSession(db, endTime);
+        await db.SaveChangesAsync();
     }
 
     private void CloseCurrentSession(AppDbContext db, DateTime endTime)
@@ -265,6 +303,20 @@ public class MediaSessionTracker : BackgroundService
             await db.SaveChangesAsync();
             _logger.LogDebug("MediaTracker: closed {Count} orphan sessions from previous run", orphans.Count);
         }
+    }
+
+    /// <summary>
+    /// 返回库中最新一条 Wake/Start 事件的时间戳作为 wake 游标起点;无历史事件时
+    /// 返回 fallback。用于启动时定位游标,避免重放历史事件。
+    /// </summary>
+    public static async Task<DateTime> ResolveInitialWakeCursorAsync(AppDbContext db, DateTime fallback)
+    {
+        var latest = await db.SystemEvents.AsNoTracking()
+            .Where(e => e.EventType == SystemEventTypes.Wake || e.EventType == SystemEventTypes.Start)
+            .OrderByDescending(e => e.Timestamp)
+            .Select(e => (DateTime?)e.Timestamp)
+            .FirstOrDefaultAsync();
+        return latest ?? fallback;
     }
 
     private async Task CheckForWakeEvent()

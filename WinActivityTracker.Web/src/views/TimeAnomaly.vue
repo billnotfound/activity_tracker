@@ -1,8 +1,8 @@
 <!--
   Time Anomaly panel — /time
   Shows NTP reference status + the anomaly list.
-  Pending anomalies let the user pick a direction (pre/post);
-  Confirmed anomalies show a preview then apply; Applied can be restored;
+  Pending and Confirmed anomalies let the user pick a direction (pre/post);
+  Applied anomalies can be restored;
   Suspicious/Drift can be ignored.
 -->
 <template>
@@ -51,9 +51,11 @@
             <Button :label="t('timeAnomaly.direction.pre')" size="small" @click="apply(a, 'pre')" />
             <Button :label="t('timeAnomaly.direction.post')" size="small" @click="apply(a, 'post')" />
           </template>
-          <!-- Confirmed → preview + apply -->
-          <Button v-else-if="a.status === 'Confirmed'"
-            :label="t('timeAnomaly.apply')" size="small" @click="apply(a, null)" />
+          <!-- Confirmed → direction choice (pre/post) -->
+          <template v-else-if="a.status === 'Confirmed'">
+            <Button :label="t('timeAnomaly.direction.pre')" size="small" @click="apply(a, 'pre')" />
+            <Button :label="t('timeAnomaly.direction.post')" size="small" @click="apply(a, 'post')" />
+          </template>
           <!-- Applied → restore -->
           <Button v-else-if="a.status === 'Applied'"
             :label="t('timeAnomaly.restore')" size="small" @click="restore(a)" />

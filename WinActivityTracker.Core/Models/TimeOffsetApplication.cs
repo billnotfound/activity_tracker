@@ -1,6 +1,7 @@
-// 一次"应用偏移"的精确改动记录：RowsJson 按表列出受影响行主键 Id，
+// 一次"应用偏移"的精确改动记录：RowsJson 按表列出受影响行主键 Id 区间，
 // ShiftSeconds = 相对原始数据的平移量（原始→当前: ts += ShiftSeconds；
-// 恢复 = ts -= ShiftSeconds）。这是恢复原始数据的唯一凭据（非全量备份）。
+// 恢复 = ts -= ShiftSeconds）。v2 使用连续区间压缩；恢复仍兼容旧版 Id 数组。
+// 这是恢复原始数据的唯一凭据（非全量备份）。
 namespace WinActivityTracker.Core.Models;
 
 public class TimeOffsetApplication

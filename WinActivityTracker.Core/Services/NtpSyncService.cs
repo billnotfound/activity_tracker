@@ -5,8 +5,8 @@ using WinActivityTracker.Core.Trackers;
 namespace WinActivityTracker.Core.Services;
 
 /// <summary>
-/// 参照源调度：启动 ~10s 后一次、再 30 分钟后一次；TimeAnomalyService 检测到
-/// 整小时可疑偏移时可 RequestCheckAsync() 按需补查。失败静默，下次再试。
+/// 参照源调度：启动约 10 秒后查询，此后每 30 分钟查询一次；TimeAnomalyService
+/// 检测到整小时可疑偏移时可 RequestCheckAsync() 按需补查。
 /// </summary>
 public class NtpSyncService : BackgroundService
 {
@@ -37,21 +37,21 @@ public class NtpSyncService : BackgroundService
             : new SntpTimeReference(s.TimeServer);
     }
 
-    public async Task<TimeReferenceResult?> RequestCheckAsync()
+    public async Task<TimeReferenceResult?> RequestCheckAsync(CancellationToken cancellationToken = default)
     {
         if (!_settings.Settings.UseNtp) return null;
-        if (!await _gate.WaitAsync(0)) return LastResult; // 已有查询进行中
+        await _gate.WaitAsync(cancellationToken);
         try
         {
-            var result = await (_injected ?? CreateReference()).QueryAsync(CancellationToken.None);
+            var result = await (_injected ?? CreateReference()).QueryAsync(cancellationToken);
+            LastQueryAt = DateTime.UtcNow;
             if (result.Succeeded)
             {
                 LastResult = result;
-                LastQueryAt = DateTime.UtcNow;
                 ResultArrived?.Invoke(result);
             }
             else _logger.LogInformation("Time reference query failed: {Source}", result.SourceName);
-            return LastResult;
+            return result;
         }
         finally { _gate.Release(); }
     }
@@ -60,11 +60,27 @@ public class NtpSyncService : BackgroundService
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
-            await RequestCheckAsync();
-            await Task.Delay(TimeSpan.FromMinutes(30), stoppingToken);
-            await RequestCheckAsync();
+            await RunScheduleAsync(
+                () => RequestCheckAsync(stoppingToken),
+                TimeSpan.FromSeconds(10),
+                TimeSpan.FromMinutes(30),
+                stoppingToken);
         }
         catch (OperationCanceledException) { }
+    }
+
+    internal static async Task RunScheduleAsync(Func<Task> checkAsync,
+        TimeSpan initialDelay, TimeSpan interval, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(initialDelay, cancellationToken);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await checkAsync();
+                await Task.Delay(interval, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 }
