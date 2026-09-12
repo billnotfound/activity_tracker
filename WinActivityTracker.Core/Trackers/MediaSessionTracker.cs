@@ -94,6 +94,11 @@ public class MediaSessionTracker : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    // DB operations update tracked entity state and the in-memory
+                    // session state together. If persistence fails, discard the
+                    // in-memory side so the next poll re-seeds instead of silently
+                    // believing an uncommitted close/start succeeded.
+                    ResetInMemorySessionState();
                     _logger.LogError(ex, "MediaSessionTracker poll error");
                 }
 
@@ -223,8 +228,9 @@ public class MediaSessionTracker : BackgroundService
 
         if (session != null)
         {
-            session.EndTime = endTime;
-            _lastCloseTime = endTime;
+            var safeEndTime = NormalizeEndTime(session.StartTime, endTime);
+            session.EndTime = safeEndTime;
+            _lastCloseTime = safeEndTime;
             _lastClosedRecordId = session.Id;
             _lastClosedAppName = _currentAppName;
             _lastClosedTitle = _currentTitle;
@@ -238,6 +244,24 @@ public class MediaSessionTracker : BackgroundService
         _currentArtist = string.Empty;
         _currentStatus = string.Empty;
     }
+
+    private void ResetInMemorySessionState()
+    {
+        _hasActiveSession = false;
+        _currentAppName = string.Empty;
+        _currentTitle = string.Empty;
+        _currentArtist = string.Empty;
+        _currentStatus = string.Empty;
+        _lastCloseTime = DateTime.MinValue;
+        _lastClosedRecordId = 0;
+        _lastClosedAppName = string.Empty;
+        _lastClosedTitle = string.Empty;
+        _lastClosedArtist = string.Empty;
+        _lastClosedStatus = string.Empty;
+    }
+
+    internal static DateTime NormalizeEndTime(DateTime startTime, DateTime endTime) =>
+        endTime < startTime ? startTime : endTime;
 
     private void StartNewSession(AppDbContext db, string appName, string title, string artist, string status, DateTime startTime)
     {
@@ -324,16 +348,11 @@ public class MediaSessionTracker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var newWake = await db.SystemEvents
-            .Where(e => (e.EventType == SystemEventTypes.Wake || e.EventType == SystemEventTypes.Start)
-                && e.Timestamp > _lastWakeTime)
-            .OrderBy(e => e.Timestamp)
-            .FirstOrDefaultAsync();
+        var newWake = await ResolveLatestWakeAfterAsync(db, _lastWakeTime);
 
         if (newWake == null) return;
 
         _logger.LogInformation("MediaTracker: wake/start event at {WakeTime}", newWake.Timestamp);
-        _lastWakeTime = newWake.Timestamp;
 
         var offEvent = await db.SystemEvents
             .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
@@ -354,5 +373,17 @@ public class MediaSessionTracker : BackgroundService
             PlaybackStatus = SystemMarkers.SystemSleepStatus
         });
         await db.SaveChangesAsync();
+        // Advance only after the marker/session close committed. A failed save
+        // must retry this wake rather than permanently skipping it.
+        _lastWakeTime = newWake.Timestamp;
     }
+
+    internal static Task<SystemEvent?> ResolveLatestWakeAfterAsync(
+        AppDbContext db, DateTime cursor) => db.SystemEvents
+            .Where(e => (e.EventType == SystemEventTypes.Wake || e.EventType == SystemEventTypes.Start)
+                && e.Timestamp > cursor)
+            // Consume a burst at once. Processing the oldest row one poll at a
+            // time repeatedly closed/reopened the same paused media session.
+            .OrderByDescending(e => e.Timestamp)
+            .FirstOrDefaultAsync();
 }

@@ -77,6 +77,7 @@
   "dashboard.media.song": "歌曲",
   "dashboard.media.artist": "艺术家",
   "dashboard.media.noData": "暂无数据",
+  "dashboard.media.anomalousGroup": "异常数据 · {count} 条记录",
   "dashboard.chart.durationLabel": "时长 (分钟)",
   "dashboard.chart.durationAxis": "分钟",
   "dashboard.chart.switchLabel": "切换次数",

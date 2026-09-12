@@ -58,9 +58,13 @@
               <tr
                 v-for="m in displayMedia.slice().reverse()"
                 :key="m.id || m.startTime"
-                :class="{ playing: m.playbackStatus === 'Playing' }"
+                :class="{ playing: m.playbackStatus === 'Playing', anomalous: m.isAnomalous }"
               >
-                <td><span :key="m.durationFmt" class="flicker-text">{{ m.durationFmt }}</span></td>
+                <td>
+                  <span :key="m.durationFmt" class="flicker-text" :class="{ 'anomaly-label': m.isAnomalous }">
+                    {{ m.durationFmt }}
+                  </span>
+                </td>
                 <td>
                   <span :key="m.playbackStatus" class="flicker-text playback-status">
                     <Play v-if="m.playbackStatus === 'Playing'" :size="16" />
@@ -328,21 +332,44 @@ const mediaWithDuration = computed(() => {
   return media.value.map(m => {
     const start = parseUtcTs(m.startTime)?.getTime() || now
     const end = m.endTime ? (parseUtcTs(m.endTime)?.getTime() || now) : now
-    const sec = Math.max(1, Math.round((end - start) / 1000))
-    return { ...m, durationSec: sec, durationFmt: fmtShortDur(sec) }
+    const rawSec = Math.round((end - start) / 1000)
+    const recordCount = Math.max(1, Number(m.recordCount) || 1)
+    const anomalousRecordCount = Math.max(0, Number(m.anomalousRecordCount) || 0)
+    const isAnomalous = m.isAnomalous === true || rawSec < 0 || anomalousRecordCount > 0
+    const sec = Math.max(1, rawSec)
+    return {
+      ...m,
+      recordCount,
+      anomalousRecordCount: isAnomalous ? Math.max(1, anomalousRecordCount) : 0,
+      isAnomalous,
+      durationSec: sec,
+      durationFmt: isAnomalous
+        ? t('dashboard.media.anomalousGroup', { count: recordCount })
+        : fmtShortDur(sec),
+    }
   })
 })
 
 const mergedMedia = computed(() => {
-  const list = mediaWithDuration.value
+  // Remove internal markers before merging. Otherwise a burst of false wake
+  // markers keeps identical Paused rows visually split into dozens of entries.
+  const list = mediaWithDuration.value.filter(m => m.playbackStatus !== 'SystemSleep')
   if (!list.length) return []
   const merged = []
   let cur = { ...list[0] }
   for (let i = 1; i < list.length; i++) {
     const item = list[i]
-    if (cur.title === item.title && cur.playbackStatus === item.playbackStatus) {
+    if (cur.appName === item.appName
+      && cur.title === item.title
+      && cur.artist === item.artist
+      && cur.playbackStatus === item.playbackStatus) {
       cur.durationSec += item.durationSec
-      cur.durationFmt = fmtShortDur(cur.durationSec)
+      cur.recordCount += item.recordCount
+      cur.anomalousRecordCount += item.anomalousRecordCount
+      cur.isAnomalous = cur.isAnomalous || item.isAnomalous
+      cur.durationFmt = cur.isAnomalous
+        ? t('dashboard.media.anomalousGroup', { count: cur.recordCount })
+        : fmtShortDur(cur.durationSec)
       if (item.endTime) cur.endTime = item.endTime
     } else {
       merged.push(cur)
@@ -353,12 +380,10 @@ const mergedMedia = computed(() => {
   return merged
 })
 
-const displayMedia = computed(() =>
-  mergedMedia.value.filter(m => m.playbackStatus !== 'SystemSleep')
-)
+const displayMedia = computed(() => mergedMedia.value)
 
 const totalListenFmt = computed(() => {
-  const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing')
+  const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing' && !m.isAnomalous)
   if (!playing.length) return '0s'
   const intervals = playing
     .map(m => {
@@ -808,7 +833,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
     : new Date(toDate + 'T23:59:59').getTime()
 
   const filtered = mediaList
-    .filter(m => m.playbackStatus === 'Playing')
+    .filter(m => m.playbackStatus === 'Playing' && !m.isAnomalous)
     .map(m => {
       const start = parseUtcTs(m.startTime).getTime()
       const end = m.endTime ? parseUtcTs(m.endTime).getTime() : Date.now()
@@ -1165,6 +1190,10 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
         border-left: 4px solid var(--success-color);
       }
 
+      &.anomalous {
+        border-left: 4px solid var(--danger-color, #dc2626);
+      }
+
       td {
         padding: 12px 16px;
         color: var(--text-color);
@@ -1182,6 +1211,12 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
 .flicker-text {
   display: inline-block;
   animation: textFlicker 0.15s ease;
+}
+
+.anomaly-label {
+  color: var(--danger-color, #dc2626);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 @keyframes textFlicker {

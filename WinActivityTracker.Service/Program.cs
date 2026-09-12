@@ -116,7 +116,6 @@ builder.Services.AddHostedService(sp =>
     var settings = sp.GetRequiredService<SettingsService>();
     var anomaly = sp.GetRequiredService<TimeAnomalyService>();
     return new HeartbeatService(sp.GetRequiredService<IServiceScopeFactory>(),
-        sp.GetRequiredService<WriteQueue>(),
         sp.GetRequiredService<ILogger<HeartbeatService>>(),
         settings, a => anomaly.OnAnomalyDetected(a));
 });

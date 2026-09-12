@@ -34,12 +34,15 @@ public static class MediaEndpoints
     private static async Task<IResult> GetMediaHistory(
         int? limit, string? from, string? to, AppDbContext db, TagService tagService)
     {
-        var query = db.MediaSessionRecords.AsQueryable();
+        var query = db.MediaSessionRecords.AsNoTracking();
 
         if (from != null && DateOnly.TryParse(from, out var fromDate))
         {
             var start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
-            query = query.Where(m => m.StartTime >= start);
+            // Include sessions that began before the selected day but overlap it.
+            // Damaged legacy rows are retained when their StartTime is in range.
+            query = query.Where(m => m.StartTime >= start
+                || m.EndTime == null || m.EndTime >= start);
         }
         if (to != null && DateOnly.TryParse(to, out var toDate))
         {
@@ -58,25 +61,19 @@ public static class MediaEndpoints
             .ToListAsync();
         data.Reverse();
 
-        var merged = MergeConsecutive(data);
-
         // Idle/hidden-tagged processes hide their media records too. Matched
-        // in-memory: records are already merged and the rule count is small.
-        merged = await FilterIdleMedia(db, merged, tagService.GetIdleRules(), tagService.GetHiddenRules());
+        // in-memory while source ids and intervals are still exact.
+        data = await FilterIdleMedia(db, data, tagService.GetIdleRules(), tagService.GetHiddenRules());
+
+        // Preserve every DB row but return a compact display projection. Equal
+        // media/status rows separated only by SystemSleep markers are one group;
+        // anomaly/source counts let the UI label damaged legacy data explicitly.
+        var merged = MergeConsecutive(data);
 
         if (merged.Count > take)
             merged = merged.GetRange(merged.Count - take, take);
 
-        return Results.Ok(merged.Select(m => new
-        {
-            m.Id,
-            m.StartTime,
-            m.EndTime,
-            m.AppName,
-            m.Title,
-            m.Artist,
-            m.PlaybackStatus
-        }));
+        return Results.Ok(merged);
     }
 
     /// <summary>
@@ -120,7 +117,7 @@ public static class MediaEndpoints
         if (needFocus)
         {
             var minStart = merged.Min(m => m.StartTime);
-            var maxEnd = merged.Max(m => m.EndTime ?? DateTime.UtcNow);
+            var maxEnd = merged.Max(EffectiveEnd);
 
             var focusRows = await db.FocusChanges.AsNoTracking()
                 .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
@@ -164,7 +161,7 @@ public static class MediaEndpoints
                 {
                     if (hideIds.Contains(m.Id)) continue;
                     var start = m.StartTime;
-                    var end = m.EndTime ?? DateTime.UtcNow;
+                    var end = EffectiveEnd(m);
                     if (globalHiddenIndex.Overlaps(start, end)) hideIds.Add(m.Id);
                 }
             }
@@ -174,7 +171,7 @@ public static class MediaEndpoints
             {
                 if (hideIds.Contains(m.Id)) continue;
                 var start = m.StartTime;
-                var end = m.EndTime ?? DateTime.UtcNow;
+                var end = EffectiveEnd(m);
                 var hasFocus = processIndexes.TryGetValue(m.AppName, out var processIndex)
                     && processIndex.Overlaps(start, end);
                 if (!hasFocus) hideIds.Add(m.Id);
@@ -184,40 +181,62 @@ public static class MediaEndpoints
         return merged.Where(m => !hideIds.Contains(m.Id)).ToList();
     }
 
-    private static List<MediaSessionRecord> MergeConsecutive(List<MediaSessionRecord> records)
+    internal static List<MediaHistoryGroup> MergeConsecutive(List<MediaSessionRecord> records)
     {
-        if (records.Count == 0) return records;
+        if (records.Count == 0) return [];
 
-        var result = new List<MediaSessionRecord>();
-        MediaSessionRecord? group = null;
+        var result = new List<MediaHistoryGroup>();
+        var pendingMarkers = new List<MediaSessionRecord>();
+        MediaHistoryGroup? group = null;
 
         foreach (var r in records)
         {
-            if (group != null
-                && group.AppName == r.AppName
-                && group.Title == r.Title
-                && group.Artist == r.Artist
-                && group.PlaybackStatus == r.PlaybackStatus)
+            if (IsSystemMarker(r))
             {
-                group.EndTime = r.EndTime;
+                pendingMarkers.Add(r);
+                continue;
+            }
+
+            if (group != null && group.Matches(r))
+            {
+                group.Add(r);
+                group.ConsumeMarkers(pendingMarkers);
+                pendingMarkers.Clear();
             }
             else
             {
-                group = new MediaSessionRecord
-                {
-                    Id = r.Id,
-                    StartTime = r.StartTime,
-                    EndTime = r.EndTime,
-                    AppName = r.AppName,
-                    Title = r.Title,
-                    Artist = r.Artist,
-                    PlaybackStatus = r.PlaybackStatus
-                };
-                result.Add(group);
+                if (group != null) result.Add(group);
+                AppendMarkers(result, pendingMarkers);
+                pendingMarkers.Clear();
+                group = MediaHistoryGroup.From(r);
             }
         }
 
+        if (group != null) result.Add(group);
+        AppendMarkers(result, pendingMarkers);
         return result;
+    }
+
+    private static void AppendMarkers(
+        List<MediaHistoryGroup> result, IEnumerable<MediaSessionRecord> markers)
+    {
+        foreach (var marker in markers)
+        {
+            if (result.Count > 0 && result[^1].Matches(marker))
+                result[^1].Add(marker);
+            else
+                result.Add(MediaHistoryGroup.From(marker));
+        }
+    }
+
+    private static bool IsSystemMarker(MediaSessionRecord record) =>
+        record.PlaybackStatus == SystemMarkers.SystemSleepStatus
+        || record.AppName == SystemMarkers.SystemSleepProcess;
+
+    private static DateTime EffectiveEnd(MediaSessionRecord record)
+    {
+        var end = record.EndTime ?? DateTime.UtcNow;
+        return end < record.StartTime ? record.StartTime : end;
     }
 
     private static async Task<IResult> GetProcessSnapshot(AppDbContext db, TagService tagService)
@@ -309,5 +328,84 @@ public static class MediaEndpoints
         }
 
         return Results.Ok(new { totalRows, modifiedRows });
+    }
+}
+
+internal sealed class MediaHistoryGroup
+{
+    public long Id { get; set; }
+    public DateTime StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
+    public string AppName { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Artist { get; set; } = string.Empty;
+    public string PlaybackStatus { get; set; } = string.Empty;
+    public int RecordCount { get; set; }
+    public int AnomalousRecordCount { get; set; }
+    public int SystemMarkerCount { get; set; }
+    public bool IsAnomalous => AnomalousRecordCount > 0;
+
+    [JsonIgnore]
+    public bool HasOpenRecord { get; set; }
+
+    public static MediaHistoryGroup From(MediaSessionRecord record)
+    {
+        var group = new MediaHistoryGroup
+        {
+            Id = record.Id,
+            StartTime = record.StartTime,
+            AppName = record.AppName,
+            Title = record.Title,
+            Artist = record.Artist,
+            PlaybackStatus = record.PlaybackStatus
+        };
+        group.Add(record);
+        return group;
+    }
+
+    public bool Matches(MediaSessionRecord record) =>
+        AppName == record.AppName
+        && Title == record.Title
+        && Artist == record.Artist
+        && PlaybackStatus == record.PlaybackStatus;
+
+    public void Add(MediaSessionRecord record)
+    {
+        if (RecordCount > 0 && record.StartTime < StartTime)
+            StartTime = record.StartTime;
+
+        RecordCount++;
+        if (record.EndTime.HasValue && record.EndTime.Value < record.StartTime)
+            AnomalousRecordCount++;
+
+        if (!record.EndTime.HasValue)
+        {
+            HasOpenRecord = true;
+            EndTime = null;
+            return;
+        }
+
+        if (!HasOpenRecord)
+        {
+            var safeEnd = record.EndTime.Value < record.StartTime
+                ? record.StartTime
+                : record.EndTime.Value;
+            if (!EndTime.HasValue || safeEnd > EndTime.Value)
+                EndTime = safeEnd;
+        }
+    }
+
+    public void ConsumeMarkers(IEnumerable<MediaSessionRecord> markers)
+    {
+        foreach (var marker in markers)
+        {
+            SystemMarkerCount++;
+            if (HasOpenRecord) continue;
+            var markerEnd = marker.EndTime.HasValue && marker.EndTime.Value > marker.StartTime
+                ? marker.EndTime.Value
+                : marker.StartTime;
+            if (!EndTime.HasValue || markerEnd > EndTime.Value)
+                EndTime = markerEnd;
+        }
     }
 }

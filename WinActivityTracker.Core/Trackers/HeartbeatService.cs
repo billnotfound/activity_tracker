@@ -12,20 +12,20 @@ namespace WinActivityTracker.Core.Trackers;
 public class HeartbeatService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly WriteQueue _writeQueue;
     private readonly ILogger<HeartbeatService> _logger;
     private readonly Action<TimeAnomaly>? _onAnomalyDetected;
     private readonly SettingsService _settings;
     private readonly DateTime _bootWallTime;
     private const int IntervalSec = 30;
-    private const int GapThresholdSec = 33;
+    // Leave two full heartbeat intervals of scheduling tolerance. A 33-second
+    // threshold classified routine DB/CPU stalls as system sleep.
+    private const int GapThresholdSec = IntervalSec * 3;
 
-    public HeartbeatService(IServiceScopeFactory scopeFactory, WriteQueue writeQueue,
+    public HeartbeatService(IServiceScopeFactory scopeFactory,
         ILogger<HeartbeatService> logger, SettingsService settings,
         Action<TimeAnomaly>? onAnomalyDetected = null)
     {
         _scopeFactory = scopeFactory;
-        _writeQueue = writeQueue;
         _logger = logger;
         _settings = settings;
         _onAnomalyDetected = onAnomalyDetected;
@@ -187,37 +187,33 @@ public class HeartbeatService : BackgroundService
         if (shutdown != null)
         {
             _logger.LogInformation("Shutdown detected: off for {Gap}s", gapSec);
-            // Route gap event writes through WriteQueue to avoid adding I/O
-            // pressure to the heartbeat's own SaveChangesAsync.
-            var sdId = shutdown.Id;
-            var sdDuration = (now - shutdown.Timestamp).TotalSeconds;
-            _writeQueue.TryWrite(wdb =>
+            // Keep the cursor update and its matching event changes in the same
+            // SaveChanges transaction. Previously these were queued separately:
+            // when the heartbeat update lost a DB lock race, the event survived
+            // but the cursor stayed stale, producing another pair every cycle.
+            shutdown.DurationSeconds = (now - shutdown.Timestamp).TotalSeconds;
+            db.SystemEvents.Add(new SystemEvent
             {
-                var s = wdb.SystemEvents.Find(sdId);
-                if (s != null) s.DurationSeconds = sdDuration;
-                wdb.SystemEvents.Add(new SystemEvent
-                {
-                    EventType = SystemEventTypes.Start,
-                    Timestamp = now
-                });
+                EventType = SystemEventTypes.Start,
+                Timestamp = now
             });
         }
         else
         {
             _logger.LogInformation("Sleep/wake: {Gap}s gap", gapSec);
-            _writeQueue.TryWrite(wdb =>
+            var alreadyRecorded = await db.SystemEvents.AsNoTracking().AnyAsync(e =>
+                e.EventType == SystemEventTypes.Sleep && e.Timestamp == lastHeartbeat);
+            if (alreadyRecorded) return;
+            db.SystemEvents.Add(new SystemEvent
             {
-                wdb.SystemEvents.Add(new SystemEvent
-                {
-                    EventType = SystemEventTypes.Sleep,
-                    Timestamp = lastHeartbeat,
-                    DurationSeconds = gapSec
-                });
-                wdb.SystemEvents.Add(new SystemEvent
-                {
-                    EventType = SystemEventTypes.Wake,
-                    Timestamp = now
-                });
+                EventType = SystemEventTypes.Sleep,
+                Timestamp = lastHeartbeat,
+                DurationSeconds = gapSec
+            });
+            db.SystemEvents.Add(new SystemEvent
+            {
+                EventType = SystemEventTypes.Wake,
+                Timestamp = now
             });
         }
     }

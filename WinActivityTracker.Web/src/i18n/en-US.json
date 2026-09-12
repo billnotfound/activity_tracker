@@ -77,6 +77,7 @@
   "dashboard.media.song": "Song",
   "dashboard.media.artist": "Artist",
   "dashboard.media.noData": "No data",
+  "dashboard.media.anomalousGroup": "Anomalous data · {count} records",
   "dashboard.chart.durationLabel": "Duration (min)",
   "dashboard.chart.durationAxis": "Minutes",
   "dashboard.chart.switchLabel": "Switch count",

@@ -203,6 +203,9 @@ internal static class ProgramStartup
 
     private static async Task EnsureMissingIndexes(AppDbContext db)
     {
+        var existingIndexes = db.Database.SqlQuery<string>($"""
+            SELECT name AS Value FROM sqlite_master WHERE type = 'index'
+        """).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var script = db.Database.GenerateCreateScript();
         var statements = script.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -213,9 +216,22 @@ internal static class ProgramStartup
                 && !sql.StartsWith("CREATE UNIQUE INDEX", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            try { await db.Database.ExecuteSqlRawAsync(sql); }
-            catch { }
+            var indexName = TryGetCreateIndexName(sql);
+            if (indexName != null && existingIndexes.Contains(indexName)) continue;
+
+            await db.Database.ExecuteSqlRawAsync(sql);
+            if (indexName != null) existingIndexes.Add(indexName);
         }
+    }
+
+    private static string? TryGetCreateIndexName(string sql)
+    {
+        const string marker = "INDEX \"";
+        var start = sql.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return null;
+        start += marker.Length;
+        var end = sql.IndexOf('"', start);
+        return end > start ? sql[start..end] : null;
     }
 
     private static string? TryGetCreateTableName(string sql)
@@ -231,7 +247,7 @@ internal static class ProgramStartup
     /// Migrates the MediaSessionRecords table from the old Timestamp column to
     /// the session-based StartTime/EndTime columns.
     /// </summary>
-    private static void MigrateMediaSessions(AppDbContext db)
+    internal static void MigrateMediaSessions(AppDbContext db)
     {
         var columns = db.Database.SqlQuery<ColumnInfo>($"""
             SELECT name FROM pragma_table_info('MediaSessionRecords')
@@ -247,12 +263,14 @@ internal static class ProgramStartup
         {
             db.Database.ExecuteSqlRaw(
                 "ALTER TABLE MediaSessionRecords ADD COLUMN EndTime TEXT NULL");
+            // Only legacy point records need an inferred end. Running this on
+            // every startup rewrote active sessions and zero-length SystemSleep
+            // markers into artificial multi-second media records.
+            db.Database.ExecuteSqlRaw(
+                "UPDATE MediaSessionRecords SET EndTime = COALESCE(" +
+                "(SELECT MIN(m2.StartTime) FROM MediaSessionRecords m2 WHERE m2.StartTime > MediaSessionRecords.StartTime), " +
+                "StartTime) WHERE EndTime IS NULL");
         }
-
-        db.Database.ExecuteSqlRaw(
-            "UPDATE MediaSessionRecords SET EndTime = COALESCE(" +
-            "(SELECT MIN(m2.StartTime) FROM MediaSessionRecords m2 WHERE m2.StartTime > MediaSessionRecords.StartTime), " +
-            "StartTime) WHERE EndTime IS NULL OR EndTime = StartTime");
     }
 
     /// <summary>
