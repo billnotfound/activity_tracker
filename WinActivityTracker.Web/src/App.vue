@@ -20,12 +20,6 @@
           <router-link class="nav-item" to="/history" :class="{ active: $route.path === '/history' }">
             {{ t('nav.history') }}
           </router-link>
-          <router-link class="nav-item" to="/tags" :class="{ active: $route.path === '/tags' }">
-            {{ t('nav.tags') }}
-          </router-link>
-          <router-link class="nav-item" to="/time" :class="{ active: $route.path === '/time' }">
-            {{ t('nav.time') }}
-          </router-link>
           <router-link class="nav-item" to="/settings" :class="{ active: $route.path === '/settings' }">
             {{ t('nav.settings') }}
           </router-link>
@@ -71,7 +65,7 @@ const route = useRoute()
 // Brand icon raw SVG content changes based on current route
 const brandIconRaw = computed(() => {
   const path = route.path
-  if (path === '/settings' || path === '/tags' || path === '/time') {
+  if (path === '/settings') {
     return settingsIconRaw
   }
   return timerIconRaw
@@ -79,7 +73,7 @@ const brandIconRaw = computed(() => {
 
 // Update favicon based on route and dark mode
 function updateFavicon(path) {
-  const isSettings = path === '/settings' || path === '/tags' || path === '/time'
+  const isSettings = path === '/settings'
   const svgRaw = isSettings ? settingsIconRaw : timerIconRaw
 
   const dark = document.documentElement.classList.contains('dark-mode')

@@ -15,7 +15,10 @@ public class HeartbeatService : BackgroundService
     private readonly ILogger<HeartbeatService> _logger;
     private readonly Action<TimeAnomaly>? _onAnomalyDetected;
     private readonly SettingsService _settings;
+    private readonly SystemPowerEventReader _powerEvents;
     private readonly DateTime _bootWallTime;
+    private DateTime? _pendingPowerLogSince;
+    private int _pendingPowerLogScans;
     private const int IntervalSec = 30;
     // Leave two full heartbeat intervals of scheduling tolerance. A 33-second
     // threshold classified routine DB/CPU stalls as system sleep.
@@ -23,11 +26,13 @@ public class HeartbeatService : BackgroundService
 
     public HeartbeatService(IServiceScopeFactory scopeFactory,
         ILogger<HeartbeatService> logger, SettingsService settings,
+        SystemPowerEventReader powerEvents,
         Action<TimeAnomaly>? onAnomalyDetected = null)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
         _settings = settings;
+        _powerEvents = powerEvents;
         _onAnomalyDetected = onAnomalyDetected;
         // 运行期内不变的 boot 墙钟起点：boot 时间 = 当前墙钟 − tick。
         _bootWallTime = DateTime.UtcNow - TimeSpan.FromMilliseconds(MonotonicClock.NowMs);
@@ -48,6 +53,9 @@ public class HeartbeatService : BackgroundService
                 var threshold = _settings.Settings.TimeAnomalyThresholdSeconds;
 
                 var hb = await db.Heartbeats.FindAsync(1);
+
+                if (_pendingPowerLogSince.HasValue)
+                    await RetryPendingPowerLogAsync(db, now);
 
                 if (hb == null)
                 {
@@ -178,6 +186,17 @@ public class HeartbeatService : BackgroundService
     {
         var gapSec = (now - lastHeartbeat).TotalSeconds;
 
+        // Windows logs the exact SleepTime/WakeTime (Power-Troubleshooter 1)
+        // and shutdown/start boundaries (Kernel-General 13 + EventLog 6005).
+        // If the log is readable, it is authoritative: an empty result means a
+        // delayed service iteration, not sleep. Keep a short retry window because
+        // the resume event can be published a few seconds after processes resume.
+        var scanFrom = lastHeartbeat.AddMinutes(-2);
+        var powerLog = _powerEvents.GetOffPeriods(scanFrom, now);
+        if (powerLog.Succeeded
+            && await ImportPowerPeriodsAsync(db, powerLog.Periods, lastHeartbeat, now))
+            return;
+
         var shutdown = await db.SystemEvents
             .Where(e => e.EventType == SystemEventTypes.Shutdown
                 && e.Timestamp > lastHeartbeat && e.Timestamp <= now)
@@ -197,24 +216,100 @@ public class HeartbeatService : BackgroundService
                 EventType = SystemEventTypes.Start,
                 Timestamp = now
             });
+            return;
         }
-        else
+
+        if (powerLog.Succeeded)
         {
-            _logger.LogInformation("Sleep/wake: {Gap}s gap", gapSec);
-            var alreadyRecorded = await db.SystemEvents.AsNoTracking().AnyAsync(e =>
-                e.EventType == SystemEventTypes.Sleep && e.Timestamp == lastHeartbeat);
-            if (alreadyRecorded) return;
-            db.SystemEvents.Add(new SystemEvent
-            {
-                EventType = SystemEventTypes.Sleep,
-                Timestamp = lastHeartbeat,
-                DurationSeconds = gapSec
-            });
-            db.SystemEvents.Add(new SystemEvent
-            {
-                EventType = SystemEventTypes.Wake,
-                Timestamp = now
-            });
+            _pendingPowerLogSince = scanFrom;
+            _pendingPowerLogScans = 0;
+            _logger.LogDebug("Long heartbeat interval had no power event; waiting for event-log reconciliation");
+            return;
         }
+
+        // Event log unavailable: preserve the prior monotonic-gap fallback.
+        _logger.LogInformation("Sleep/wake fallback: {Gap}s gap", gapSec);
+        var alreadyRecorded = await db.SystemEvents.AsNoTracking().AnyAsync(e =>
+            e.EventType == SystemEventTypes.Sleep && e.Timestamp == lastHeartbeat);
+        if (alreadyRecorded) return;
+        db.SystemEvents.Add(new SystemEvent
+        {
+            EventType = SystemEventTypes.Sleep,
+            Timestamp = lastHeartbeat,
+            DurationSeconds = gapSec
+        });
+        db.SystemEvents.Add(new SystemEvent
+        {
+            EventType = SystemEventTypes.Wake,
+            Timestamp = now
+        });
+    }
+
+    private async Task RetryPendingPowerLogAsync(AppDbContext db, DateTime now)
+    {
+        var since = _pendingPowerLogSince!.Value;
+        var result = _powerEvents.GetOffPeriods(since, now);
+        _pendingPowerLogScans++;
+        if (result.Succeeded && await ImportPowerPeriodsAsync(db, result.Periods, since, now))
+        {
+            _pendingPowerLogSince = null;
+            _pendingPowerLogScans = 0;
+        }
+        else if (_pendingPowerLogScans >= 4)
+        {
+            _logger.LogDebug("No system power event appeared after reconciliation window; treating interval as scheduler/DB delay");
+            _pendingPowerLogSince = null;
+            _pendingPowerLogScans = 0;
+        }
+    }
+
+    private static async Task<bool> ImportPowerPeriodsAsync(
+        AppDbContext db,
+        IReadOnlyList<SystemOffPeriod> periods,
+        DateTime rangeStart,
+        DateTime rangeEnd)
+    {
+        var matching = periods
+            .Where(period => period.End > rangeStart && period.Start < rangeEnd)
+            .ToList();
+        if (matching.Count == 0) return false;
+
+        foreach (var period in matching)
+        {
+            var endType = period.EventType == SystemEventTypes.Sleep
+                ? SystemEventTypes.Wake
+                : SystemEventTypes.Start;
+            var toleranceStart = period.Start.AddMinutes(-2);
+            var toleranceEnd = period.End.AddMinutes(2);
+            var nearby = await db.SystemEvents
+                .Where(e => (e.EventType == period.EventType || e.EventType == endType)
+                    && e.Timestamp >= toleranceStart && e.Timestamp <= toleranceEnd)
+                .ToListAsync();
+
+            var off = nearby
+                .Where(e => e.EventType == period.EventType)
+                .OrderBy(e => Math.Abs((e.Timestamp - period.Start).TotalSeconds))
+                .FirstOrDefault();
+            if (off == null)
+            {
+                off = new SystemEvent { EventType = period.EventType };
+                db.SystemEvents.Add(off);
+            }
+            off.Timestamp = period.Start;
+            off.DurationSeconds = (period.End - period.Start).TotalSeconds;
+
+            var end = nearby
+                .Where(e => e.EventType == endType)
+                .OrderBy(e => Math.Abs((e.Timestamp - period.End).TotalSeconds))
+                .FirstOrDefault();
+            if (end == null)
+            {
+                end = new SystemEvent { EventType = endType };
+                db.SystemEvents.Add(end);
+            }
+            end.Timestamp = period.End;
+            end.DurationSeconds = 0;
+        }
+        return true;
     }
 }

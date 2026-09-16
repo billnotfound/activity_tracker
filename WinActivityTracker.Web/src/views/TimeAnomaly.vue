@@ -6,8 +6,8 @@
   Suspicious/Drift can be ignored.
 -->
 <template>
-  <div class="time-anomaly-page">
-    <h2 class="page-title">{{ t('timeAnomaly.title') }}</h2>
+  <div class="time-anomaly-page" :class="{ embedded }">
+    <h2 v-if="!embedded" class="page-title">{{ t('timeAnomaly.title') }}</h2>
 
     <!-- Current status card -->
     <section class="memphis-box status-card">
@@ -38,10 +38,14 @@
     <!-- Anomaly list -->
     <section class="memphis-box list-card">
       <h3 class="section-title">{{ t('timeAnomaly.list.title') }}</h3>
-      <p v-if="!items.length" class="empty">{{ t('timeAnomaly.empty') }}</p>
+      <button v-if="!items.length" type="button" class="empty empty-action" @click="startManualCorrection">
+        <CircleCheck :size="28" />
+        <b>{{ t('timeAnomaly.empty') }}</b>
+        <span>{{ t('timeAnomaly.emptyAction') }}</span>
+      </button>
       <div v-for="a in items" :key="a.id" class="anomaly-row" :data-status="a.status">
         <span class="badge" :class="'badge-' + a.status">{{ t('timeAnomaly.status.' + a.status) }}</span>
-        <span class="source">{{ t('timeAnomaly.source') }}: {{ a.source }}</span>
+        <span class="source">{{ t('timeAnomaly.source') }}: {{ sourceLabel(a.source) }}</span>
         <span class="offset">{{ t('timeAnomaly.offset') }}: {{ a.offsetSeconds }}s</span>
         <span class="time">{{ formatTime(a.detectedAt) }}</span>
         <span v-if="a.note" class="note">{{ a.note }}</span>
@@ -64,6 +68,9 @@
             :label="t('timeAnomaly.ignore')" size="small" @click="ignore(a)" />
         </div>
       </div>
+      <button v-if="items.length" type="button" class="manual-correction-link" @click="startManualCorrection">
+        <MousePointer2 :size="16" /> {{ t('timeAnomaly.manualAction') }}
+      </button>
     </section>
 
     <!-- Preview confirmation dialog -->
@@ -80,13 +87,18 @@
 
 <script setup>
 import { ref, computed, inject, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from '../i18n/index.js'
 import { parseUtcTs } from '../utils/time.js'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
+import { CircleCheck, MousePointer2 } from '@lucide/vue'
+
+defineProps({ embedded: { type: Boolean, default: false } })
 
 const apiBase = inject('apiBase')
 const { t, locale } = useI18n()
+const router = useRouter()
 
 const items = ref([])
 const ntp = ref({})
@@ -157,6 +169,12 @@ function formatNtpTime(v) {
   const d = parseUtcTs(v)
   return d ? d.toLocaleString() : t('timeAnomaly.ntpNever')
 }
+function sourceLabel(source) {
+  return source === 'User' ? t('timeAnomaly.sourceUser') : source
+}
+function startManualCorrection() {
+  router.push({ path: '/history', query: { timeSelect: '1' } })
+}
 onMounted(load)
 </script>
 
@@ -164,6 +182,8 @@ onMounted(load)
 .time-anomaly-page {
   width: 100%;
 }
+
+.time-anomaly-page.embedded .status-card { margin-top: 0; }
 
 .page-title {
   font-size: 1.5rem;
@@ -292,6 +312,34 @@ onMounted(load)
   padding: 32px;
   color: var(--surface-400);
   font-style: italic;
+}
+
+.empty-action {
+  width: 100%;
+  border: 2px dashed var(--surface-300);
+  background: var(--surface-100);
+  cursor: pointer;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--success-color);
+
+  span { color: var(--text-color-secondary); font-style: normal; }
+  &:hover { border-color: var(--primary-color); }
+}
+
+.manual-correction-link {
+  min-height: 38px;
+  margin-top: 4px;
+  padding: 7px 10px;
+  border: 2px solid var(--primary-color);
+  background: transparent;
+  color: var(--text-color);
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 
 .preview-text {

@@ -67,6 +67,7 @@ const props = defineProps({
 const emit = defineEmits(['update:startDate', 'update:endDate', 'change'])
 
 const now = new Date()
+let syncingExternalRange = false
 
 const earliestYear = computed(() =>
   props.earliestDate ? props.earliestDate.getFullYear() : now.getFullYear() - 5
@@ -509,6 +510,7 @@ onMounted(() => {
 // ── Emit ──
 
 function emitChange() {
+  if (syncingExternalRange) return
   emit('update:startDate', startDateTime.value)
   emit('update:endDate', endDateTime.value)
   validate()
@@ -522,6 +524,37 @@ function emitChange() {
 
 watch([startYear, startMonth, startDay, startHour, startMinute], emitChange)
 watch([endYear, endMonth, endDay, endHour, endMinute], emitChange)
+
+// Keep the wheel controls in sync when the timeline changes the range through
+// its existing drag behavior. This preserves the original wheel interaction.
+function setRange(start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date)) return
+  syncingExternalRange = true
+  suppressDateSync = true
+  carryGuard = true
+
+  startYear.value = start.getFullYear()
+  startMonth.value = start.getMonth() + 1
+  startDay.value = start.getDate()
+  startHour.value = start.getHours()
+  startMinute.value = start.getMinutes()
+  endYear.value = end.getFullYear()
+  endMonth.value = end.getMonth() + 1
+  endDay.value = end.getDate()
+  endHour.value = end.getHours()
+  endMinute.value = end.getMinutes()
+  syncDurationFromDates()
+  validate()
+
+  nextTick(() => {
+    syncingExternalRange = false
+    suppressDateSync = false
+    carryGuard = false
+    updateArrowWidth()
+  })
+}
+
+defineExpose({ setRange })
 
 // ── Initialise duration wheels from props ──
 

@@ -32,8 +32,11 @@
 
     <!-- Charts row -->
     <div class="charts-row mb-3">
-      <MemphisCard class="chart-card">
-        <h3 class="card-title">{{ t('dashboard.card.focusDurationTop10') }}</h3>
+      <MemphisCard class="chart-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'focus' }">
+        <h3 class="card-title">
+          {{ t('dashboard.card.focusDurationTop10') }}
+          <small v-if="showActionHint" class="chart-action-hint">{{ t('processActions.chartHint') }}</small>
+        </h3>
         <MemphisSkeleton v-if="loading" :lines="5" />
         <div v-else ref="focusChartRef" class="chart-container"></div>
       </MemphisCard>
@@ -84,29 +87,56 @@
     </div>
 
     <!-- Pie overview: focus donut + media ring -->
-    <MemphisCard class="mb-3">
+    <MemphisCard class="mb-3 overview-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'pie' }">
       <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
       <MemphisSkeleton v-if="loading" :lines="4" />
       <div v-else class="pie-chart-wrapper">
         <div ref="pieChartRef" class="pie-chart-container"></div>
         <div class="water-ball" :style="{ '--fill': usagePercent }">
           <div class="water-body">
-            <svg class="wave-band" viewBox="0 0 480 24" preserveAspectRatio="none">
-              <path d="M0,12 C14.6,6 25.4,6 40,12 C54.6,18 65.4,18 80,12 C94.6,6 105.4,6 120,12 C134.6,18 145.4,18 160,12 C174.6,6 185.4,6 200,12 C214.6,18 225.4,18 240,12 C254.6,6 265.4,6 280,12 C294.6,18 305.4,18 320,12 C334.6,6 345.4,6 360,12 C374.6,18 385.4,18 400,12 C414.6,6 425.4,6 440,12 C454.6,18 465.4,18 480,12 L480,20 C465.4,26 454.6,26 440,20 C425.4,14 414.6,14 400,20 C385.4,26 374.6,26 360,20 C345.4,14 334.6,14 320,20 C305.4,26 294.6,26 280,20 C265.4,14 254.6,14 240,20 C225.4,26 214.6,26 200,20 C185.4,14 174.6,14 160,20 C145.4,26 134.6,26 120,20 C105.4,14 94.6,14 80,20 C65.4,26 54.6,26 40,20 C25.4,14 14.6,14 0,20 Z" fill="#3b9bc0" opacity="0.7"/>
-            </svg>
-            <svg class="wave-band wave-band-2" viewBox="0 0 480 20" preserveAspectRatio="none">
-              <path d="M0,12 C21.9,8 38.1,8 60,12 C81.9,16 98.1,16 120,12 C141.9,8 158.1,8 180,12 C201.9,16 218.1,16 240,12 C261.9,8 278.1,8 300,12 C321.9,16 338.1,16 360,12 C381.9,8 398.1,8 420,12 C441.9,16 458.1,16 480,12 L480,18 C458.1,22 441.9,22 420,18 C398.1,14 381.9,14 360,18 C338.1,22 321.9,22 300,18 C278.1,14 261.9,14 240,18 C218.1,22 201.9,22 180,18 C158.1,14 141.9,14 120,18 C98.1,22 81.9,22 60,18 C38.1,14 21.9,14 0,18 Z" fill="#3593b8" opacity="0.5"/>
+            <svg class="wave-band" viewBox="0 0 480 32" preserveAspectRatio="none">
+              <path :d="waterWavePath" fill="currentColor"/>
             </svg>
           </div>
           <span class="water-text">{{ usageFmt }}</span>
         </div>
+        <div v-if="usagePercent >= 100" class="usage-warning">{{ t('dashboard.usageWarning') }}</div>
       </div>
     </MemphisCard>
+
+    <ProcessActionDrawer
+      v-model:visible="actionDrawerVisible"
+      :process="selectedProcess"
+      :range-start="actionRange.start"
+      :range-end="actionRange.end"
+      :process-color="selectedProcessColor"
+      :icon="selectedProcessIcon"
+      :initial-view="drawerView"
+      :initial-tag-names="drawerTagNames"
+      return-to-popup
+      @select-time="openTimeSelection"
+      @changed="loadSummary"
+      @return-to-menu="reopenContextMenu"
+    />
+    <ProcessContextMenu
+      :visible="contextMenuVisible"
+      @update:visible="setContextMenuVisible"
+      page="dashboard"
+      :process-name="selectedProcess.processName || ''"
+      :window-title="selectedProcess.windowTitle || ''"
+      :x="contextPoint.x"
+      :y="contextPoint.y"
+      :replace-handler="replaceDashboardTitle"
+      @choose="chooseContextAction"
+      @create-tag="openNewTagDrawer"
+      @tags-saved="loadSummary"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { fmtShortDur, parseUtcTs, toLocalDateString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
@@ -115,11 +145,14 @@ import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
+import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
+import ProcessContextMenu from '../components/ProcessContextMenu.vue'
 import { Play, Pause, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
 const { isDark } = useTheme()
+const router = useRouter()
 
 // Cache icon data to avoid re-fetching every refresh (2s interval)
 const iconCache = new Map()
@@ -141,6 +174,91 @@ const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
 const loading = ref(true)
+const actionDrawerVisible = ref(false)
+const contextMenuVisible = ref(false)
+const drawerView = ref('replace')
+const drawerTagNames = ref([])
+const contextPoint = ref({ x: 0, y: 0 })
+const contextSource = ref('focus')
+let contextClosedAt = 0
+const selectedProcess = ref({})
+const selectedProcessColor = ref('var(--primary-color)')
+const selectedProcessIcon = ref('')
+const showActionHint = ref(localStorage.getItem('wta-process-actions-seen') !== '1')
+const actionRange = computed(() => {
+  const [from, to] = periodRange()
+  return { start: new Date(`${from}T00:00:00`), end: new Date(`${to}T23:59:59`) }
+})
+
+function openProcessActions(processName, color, nativeEvent = null, source = 'focus') {
+  if (contextMenuVisible.value) {
+    setContextMenuVisible(false)
+    return
+  }
+  if (performance.now() - contextClosedAt < 320) return
+  if (!processName || processName === t('dashboard.pie.other')) return
+  selectedProcess.value = { processName }
+  selectedProcessColor.value = color || 'var(--primary-color)'
+  const [fromDate, toDate] = periodRange()
+  const atTime = period.value === 'today' ? new Date().toISOString() : new Date(`${toDate}T23:59:59`).toISOString()
+  selectedProcessIcon.value = iconCache.get(`${processName}|${atTime}`)?.icon || ''
+  showActionHint.value = false
+  localStorage.setItem('wta-process-actions-seen', '1')
+  contextPoint.value = {
+    x: nativeEvent?.clientX ?? window.innerWidth / 2,
+    y: nativeEvent?.clientY ?? window.innerHeight / 2,
+  }
+  contextSource.value = source
+  contextMenuVisible.value = true
+}
+
+function setContextMenuVisible(value) {
+  if (!value && contextMenuVisible.value) contextClosedAt = performance.now()
+  contextMenuVisible.value = value
+}
+
+function chooseContextAction(action) {
+  drawerView.value = action
+  actionDrawerVisible.value = true
+}
+
+function openNewTagDrawer(selectedTags) {
+  drawerTagNames.value = [...selectedTags, '']
+  drawerView.value = 'tag'
+  actionDrawerVisible.value = true
+}
+
+function reopenContextMenu() {
+  requestAnimationFrame(() => { contextMenuVisible.value = true })
+}
+
+async function replaceDashboardTitle(replacement) {
+  const statusResponse = await fetch(`${apiBase}/api/tags/status`)
+  if (!statusResponse.ok) throw new Error(`API ${statusResponse.status}`)
+  const status = await statusResponse.json()
+  const processName = selectedProcess.value.processName
+  const kept = (status.titleRules?.rules || []).filter(rule =>
+    String(rule.process || '').toLocaleLowerCase() !== processName.toLocaleLowerCase())
+  kept.push({
+    process: processName,
+    title: replacement,
+    titleRegex: null,
+    titleReplacement: null,
+    applyOnWrite: false,
+  })
+  const response = await fetch(`${apiBase}/api/title-rules/save`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(kept),
+  })
+  if (!response.ok) throw new Error(`API ${response.status}`)
+  await loadSummary()
+}
+
+function openTimeSelection(item) {
+  const [from, to] = periodRange()
+  router.push({ path: '/history', query: { process: item.processName, timeSelect: '1', from: `${from}T00:00`, to: `${to}T23:59` } })
+}
 
 // ── Date wheels (replaces date input) ──
 
@@ -406,8 +524,47 @@ const usageTotalSec = computed(() => {
   return summary.value.reduce((s, i) => s + i.totalSeconds, 0)
 })
 
+const usageTargetSec = computed(() => {
+  const [from, to] = periodRange()
+  const dayCount = Math.max(1, Math.round((new Date(`${to}T00:00:00`) - new Date(`${from}T00:00:00`)) / 86400000) + 1)
+  return 86400 * (period.value === 'today' ? 0.7 : 0.5 * dayCount)
+})
+
 const usagePercent = computed(() => {
-  return Math.min(100, Math.round(usageTotalSec.value / 86400 * 100))
+  return Math.min(100, Math.round(usageTotalSec.value / usageTargetSec.value * 100))
+})
+
+const waterWavePath = computed(() => {
+  const seedText = `${period.value}:${pickDate.value}`
+  let seed = [...seedText].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 2166136261)
+  const random = () => {
+    seed = (1664525 * seed + 1013904223) >>> 0
+    return seed / 4294967296
+  }
+  const step = 40
+  const baseline = 13
+  const amplitude = 2.2
+  const points = Array.from({ length: 13 }, (_, index) => ({
+    x: index * step,
+    y: baseline + (random() * 2 - 1) * amplitude,
+  }))
+  // Periodic endpoints keep the drifting line seamless; Catmull–Rom control
+  // points are converted to cubic Béziers for a smooth, hand-bent boundary.
+  points[12].y = points[0].y
+  points[11].y = points[1].y
+  let path = `M${points[0].x},${points[0].y.toFixed(1)}`
+  for (let index = 0; index < 12; index++) {
+    const p0 = index === 0 ? { x: -step, y: points[11].y } : points[index - 1]
+    const p1 = points[index]
+    const p2 = points[index + 1]
+    const p3 = index === 11 ? { x: 520, y: points[1].y } : points[index + 2]
+    const c1x = p1.x + (p2.x - p0.x) / 6
+    const c1y = p1.y + (p2.y - p0.y) / 6
+    const c2x = p2.x - (p3.x - p1.x) / 6
+    const c2y = p2.y - (p3.y - p1.y) / 6
+    path += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x},${p2.y.toFixed(1)}`
+  }
+  return `${path} L480,32 L0,32 Z`
 })
 
 const usageFmt = computed(() => {
@@ -627,6 +784,22 @@ async function renderCharts(data) {
   // Focus duration chart
   if (!focusChart) {
     focusChart = echarts.init(focusChartRef.value)
+    focusChart.getZr().on('click', event => {
+      const meta = focusChart?._columnActions
+      if (!meta?.labels?.length) return
+      const point = [event.offsetX, event.offsetY]
+      if (!focusChart.containPixel({ gridIndex: 0 }, point)) return
+      const centers = meta.labels.map(label => focusChart.convertToPixel({ xAxisIndex: 0 }, label))
+      let nearest = 0
+      for (let index = 1; index < centers.length; index++) {
+        if (Math.abs(centers[index] - event.offsetX) < Math.abs(centers[nearest] - event.offsetX)) nearest = index
+      }
+      const rect = focusChartRef.value.getBoundingClientRect()
+      openProcessActions(meta.labels[nearest], meta.colors[nearest], {
+        clientX: event.event?.clientX ?? rect.left + event.offsetX,
+        clientY: event.event?.clientY ?? rect.top + event.offsetY,
+      }, 'focus')
+    })
   }
   focusChart.setOption({
     grid: { left: 60, right: 20, top: 20, bottom: 80 },
@@ -694,6 +867,7 @@ async function renderCharts(data) {
       },
     },
   })
+  focusChart._columnActions = { labels, colors }
 }
 async function renderPieChart(data) {
   if (!pieChartRef.value) return
@@ -764,6 +938,9 @@ async function renderPieChart(data) {
   if (!pieChart) {
     pieChart = echarts.init(pieChartRef.value)
     pieChart._firstRender = true
+    pieChart.on('click', params => {
+      if (params.data?._type === 'focus') openProcessActions(params.data.name, params.data.itemStyle?.color, params.event?.event, 'pie')
+    })
   }
 
   const animDur = pieChart._firstRender ? 800 : 300
@@ -810,18 +987,18 @@ async function renderPieChart(data) {
           scaleSize: 8,
         },
       },
-      {
+      ...(ringData.length ? [{
         name: 'media',
         type: 'pie',
         radius: ['58%', '72%'],
         center: ['50%', '50%'],
         data: ringData,
         label: { show: false },
-        silent: ringData.length === 0,
+        silent: false,
         emphasis: {
           scaleSize: 4,
         },
-      },
+      }] : []),
     ],
   }, true)
 }
@@ -1033,12 +1210,26 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   min-height: 350px;
 }
 
+.context-hover-locked {
+  border-color: var(--text-color) !important;
+  transform: translate(-2px, -2px) !important;
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent) !important;
+}
+
 .card-title {
   font-size: 1.1rem;
   font-weight: 600;
   letter-spacing: 0.5px;
   margin-bottom: 16px;
   color: var(--text-color);
+}
+
+.chart-action-hint {
+  margin-left: 10px;
+  color: var(--text-color-secondary);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
 .chart-container {
@@ -1062,8 +1253,8 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 130px;
-  height: 130px;
+  width: 98px;
+  height: 98px;
   border-radius: 50%;
   border: 2px solid var(--text-color);
   overflow: hidden;
@@ -1079,9 +1270,18 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   width: 100%;
   height: calc(var(--fill) * 1%);
   transition: height 1.2s cubic-bezier(0.4, 0, 0.2, 1);
-  background: #4caedb;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
-  mask-image: linear-gradient(to bottom, transparent 0%, black 12px, black 100%);
+  background: transparent;
+
+  &::after {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    top: 12px;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    background: #2aa9d6;
+  }
 }
 
 .wave-band {
@@ -1089,14 +1289,10 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   top: -12px;
   left: 0;
   width: 200%;
-  height: 24px;
+  height: 32px;
+  color: #2aa9d6;
+  z-index: 1;
   animation: wave-drift 3s linear infinite;
-}
-
-.wave-band-2 {
-  top: -10px;
-  height: 20px;
-  animation: wave-drift 4.5s linear infinite reverse;
 }
 
 .water-text {
@@ -1109,7 +1305,23 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   font-weight: 700;
   color: var(--text-color);
   z-index: 3;
-  text-shadow: 0 0 6px var(--surface-card);
+  -webkit-text-stroke: 2px var(--surface-card);
+  paint-order: stroke fill;
+  white-space: nowrap;
+}
+
+.usage-warning {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 4px 8px;
+  border: 1px solid var(--warning-color);
+  background: var(--surface-card);
+  color: var(--text-color);
+  font-size: .72rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 

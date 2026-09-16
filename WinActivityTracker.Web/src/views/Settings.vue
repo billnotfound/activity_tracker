@@ -12,10 +12,12 @@
     </div>
 
     <!-- Tabs -->
-    <Tabs value="appearance" class="memphis-tabs">
+    <Tabs v-model:value="activeTab" class="memphis-tabs">
       <TabList>
         <Tab value="appearance">{{ t('settings.tab.appearance') }}</Tab>
         <Tab value="tracking">{{ t('settings.tab.tracking') }}</Tab>
+        <Tab value="tags">{{ t('settings.tab.tags') }}</Tab>
+        <Tab value="time">{{ t('settings.tab.time') }}</Tab>
         <Tab value="database">{{ t('settings.tab.database') }}</Tab>
         <Tab value="licenses">{{ t('settings.tab.licenses') }}</Tab>
       </TabList>
@@ -221,55 +223,33 @@
             ></textarea>
           </div>
 
-          <div class="divider"></div>
+        </MemphisCard>
+      </TabPanel>
 
-          <!-- Time anomaly detection -->
+      <TabPanel value="tags">
+        <TagsView embedded />
+      </TabPanel>
+
+      <TabPanel value="time">
+        <MemphisCard class="mb-3">
           <h3 class="section-title">{{ t('settings.timeSection.title') }}</h3>
           <div class="toggle-row mb-3">
-            <button
-              class="icon-toggle"
-              :class="{ on: form.useNtp }"
-              @click="form.useNtp = !form.useNtp"
-              :aria-pressed="form.useNtp"
-              :title="form.useNtp ? t('common.enabled') : t('common.disabled')"
-            >
-              <Check v-if="form.useNtp" :size="18" />
-              <X v-else :size="18" />
+            <button class="icon-toggle" :class="{ on: form.useNtp }" @click="form.useNtp = !form.useNtp" :aria-pressed="form.useNtp" :title="form.useNtp ? t('common.enabled') : t('common.disabled')">
+              <Check v-if="form.useNtp" :size="18" /><X v-else :size="18" />
             </button>
-            <span class="toggle-label">
-              <strong>{{ t('settings.useNtp') }}</strong>
-            </span>
+            <span class="toggle-label"><strong>{{ t('settings.useNtp') }}</strong></span>
           </div>
-
           <div class="input-grid">
-            <div class="input-field">
-              <label>{{ t('settings.timeServer') }}</label>
-              <input v-model="form.timeServer" type="text" class="memphis-text-input" placeholder="pool.ntp.org" />
-            </div>
+            <div class="input-field"><label>{{ t('settings.timeServer') }}</label><input v-model="form.timeServer" type="text" class="memphis-text-input" placeholder="pool.ntp.org" /></div>
             <div class="input-field">
               <label>{{ t('settings.timeSourceMode') }}</label>
-              <select v-model="form.timeSourceMode" class="memphis-select">
-                <option v-for="m in timeSourceModes" :key="m.value" :value="m.value">
-                  {{ m.label }}
-                </option>
-              </select>
+              <select v-model="form.timeSourceMode" class="memphis-select"><option v-for="m in timeSourceModes" :key="m.value" :value="m.value">{{ m.label }}</option></select>
             </div>
-            <div class="input-field">
-              <label>
-                {{ t('settings.timeAnomalyThresholdSeconds') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" />
-              </label>
-              <InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" :suffix="t('time.seconds.suffix')" />
-            </div>
-            <div class="input-field">
-              <label>
-                {{ t('settings.ntpEpsilonSeconds') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" />
-              </label>
-              <InputNumber v-model="form.ntpEpsilonSeconds" :min="1" :suffix="t('time.seconds.suffix')" />
-            </div>
+            <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" /></label><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" :suffix="t('time.seconds.suffix')" /></div>
+            <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" /></label><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" :suffix="t('time.seconds.suffix')" /></div>
           </div>
         </MemphisCard>
+        <TimeAnomalyView embedded />
       </TabPanel>
 
       <!-- Database Tab -->
@@ -536,10 +516,13 @@ subject to the terms of the Common Public License version 1.0.</pre>
 </template>
 
 <script setup>
-import { ref, reactive, inject, onMounted, computed } from 'vue'
+import { ref, reactive, inject, onMounted, computed, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
 import MemphisCard from '../components/MemphisCard.vue'
+import TagsView from './Tags.vue'
+import TimeAnomalyView from './TimeAnomaly.vue'
 import Tabs from 'primevue/tabs'
 import TabList from 'primevue/tablist'
 import Tab from 'primevue/tab'
@@ -552,6 +535,15 @@ import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, CircleHelp } from
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
 const theme = useTheme()
+const route = useRoute()
+const router = useRouter()
+const validTabs = new Set(['appearance', 'tracking', 'tags', 'time', 'database', 'licenses'])
+const activeTab = ref(validTabs.has(String(route.query.section)) ? String(route.query.section) : 'appearance')
+
+watch(activeTab, value => {
+  const nextQuery = { ...route.query, section: value === 'appearance' ? undefined : value }
+  router.replace({ query: nextQuery })
+})
 
 // useTheme() exposes refs; unwrap for template binding (templates don't
 // unwrap refs nested inside plain objects).

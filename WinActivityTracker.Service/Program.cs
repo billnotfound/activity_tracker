@@ -99,6 +99,7 @@ builder.Services.AddHostedService<MediaSessionTracker>();
 // AddHostedService<T> 只注册 IHostedService→T 映射，不注册具体类型——必须先
 // AddSingleton，再用 GetRequiredService 注册 hosted，构造注入/工厂解析才能拿到同一实例。
 builder.Services.AddSingleton<SystemTimeChangeReader>();
+builder.Services.AddSingleton<SystemPowerEventReader>();
 builder.Services.AddSingleton<NtpSyncService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NtpSyncService>());
 // 通知出口。交互模式 → 常驻进程直接 ToastNotifier（点击经 -Embedding
@@ -117,7 +118,8 @@ builder.Services.AddHostedService(sp =>
     var anomaly = sp.GetRequiredService<TimeAnomalyService>();
     return new HeartbeatService(sp.GetRequiredService<IServiceScopeFactory>(),
         sp.GetRequiredService<ILogger<HeartbeatService>>(),
-        settings, a => anomaly.OnAnomalyDetected(a));
+        settings, sp.GetRequiredService<SystemPowerEventReader>(),
+        a => anomaly.OnAnomalyDetected(a));
 });
 builder.Services.AddSingleton<IconCacheService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<IconCacheService>());

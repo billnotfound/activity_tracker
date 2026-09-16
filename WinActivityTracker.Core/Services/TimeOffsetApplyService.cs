@@ -445,6 +445,121 @@ public class TimeOffsetApplyService
     }
 
     /// <summary>
+    /// Preview an explicit user-selected interval. Both ends are inclusive and
+    /// every timestamp column uses the same range, matching the normal repair
+    /// journal semantics without creating a database record during preview.
+    /// </summary>
+    public async Task<ApplyPreview?> PreviewManualRangeAsync(
+        DateTime from, DateTime to, double shiftSeconds)
+    {
+        if (to <= from || shiftSeconds == 0 || !double.IsFinite(shiftSeconds)) return null;
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var plan = new ShiftPlan(Scenario.EventLogPost, shiftSeconds, from, to, true, true);
+        var perTable = new Dictionary<string, HashSet<long>>();
+        foreach (var column in Plans)
+        {
+            var (ids, _) = await column.CollectAsync(db, plan);
+            if (ids.Count == 0) continue;
+            if (!perTable.TryGetValue(column.Table, out var set))
+                perTable[column.Table] = set = new HashSet<long>();
+            set.UnionWith(ids);
+        }
+        return new ApplyPreview
+        {
+            TableCounts = perTable.ToDictionary(pair => pair.Key, pair => pair.Value.Count)
+        };
+    }
+
+    /// <summary>
+    /// Apply an explicit user-selected interval and persist it as a normal
+    /// TimeAnomaly + TimeOffsetApplication pair. The journal makes the change
+    /// exactly reversible and Source=User makes its origin visible in history.
+    /// </summary>
+    public async Task<ApplyResult?> ApplyManualRangeAsync(
+        DateTime from, DateTime to, double shiftSeconds, string? note = null)
+    {
+        if (to <= from || shiftSeconds == 0 || !double.IsFinite(shiftSeconds)) return null;
+
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        await using var tx = await db.Database.BeginTransactionAsync();
+        await db.Database.ExecuteSqlRawAsync(
+            $"PRAGMA journal_size_limit={SqliteMaintenance.JournalSizeLimitBytes}");
+
+        var anomaly = new TimeAnomaly
+        {
+            DetectedAt = DateTime.UtcNow,
+            Source = TimeAnomalySources.User,
+            OffsetSeconds = -shiftSeconds,
+            Status = TimeAnomalyStatus.Applied,
+            Direction = "manual",
+            FromWall = from,
+            ToWall = to,
+            Note = string.IsNullOrWhiteSpace(note) ? "User-selected time correction" : note.Trim(),
+            LastAppliedAt = DateTime.UtcNow
+        };
+        db.TimeAnomalies.Add(anomaly);
+        await db.SaveChangesAsync();
+
+        var plan = new ShiftPlan(Scenario.EventLogPost, shiftSeconds, from, to, true, true);
+        var rowsJson = new Dictionary<string, List<long>>();
+        var perTable = new Dictionary<string, HashSet<long>>();
+        DateTime? maxTs = from;
+        foreach (var column in Plans)
+        {
+            var (ids, colMax) = await column.CollectAsync(db, plan);
+            if (ids.Count == 0) continue;
+            rowsJson[column.Key] = ids;
+            if (!perTable.TryGetValue(column.Table, out var set))
+                perTable[column.Table] = set = new HashSet<long>();
+            set.UnionWith(ids);
+            if (colMax != null && (maxTs == null || colMax > maxTs)) maxTs = colMax;
+        }
+
+        if (rowsJson.Count == 0)
+        {
+            await tx.RollbackAsync();
+            return null;
+        }
+
+        var compactRows = rowsJson.ToDictionary(
+            pair => pair.Key,
+            pair => TimeOffsetJournalCodec.CompressIds(pair.Value),
+            StringComparer.Ordinal);
+        db.TimeOffsetApplications.Add(new TimeOffsetApplication
+        {
+            AnomalyId = anomaly.Id,
+            AppliedAt = DateTime.UtcNow,
+            ShiftSeconds = shiftSeconds,
+            RowsJson = TimeOffsetJournalCodec.Encode(compactRows),
+            MaxRowTimestamp = (maxTs ?? to).AddSeconds(shiftSeconds)
+        });
+        await db.SaveChangesAsync();
+
+        foreach (var column in Plans)
+            if (compactRows.TryGetValue(column.Key, out var ranges))
+                await column.ShiftAsync(db, ranges, shiftSeconds);
+
+        await tx.CommitAsync();
+        await tx.DisposeAsync();
+
+        var walTruncated = false;
+        try { walTruncated = await SqliteMaintenance.TryTruncateWalAsync(db); }
+        catch { }
+        if (!walTruncated) ScheduleWalTruncate();
+
+        var tableCounts = perTable.ToDictionary(pair => pair.Key, pair => pair.Value.Count);
+        return new ApplyResult
+        {
+            AnomalyId = anomaly.Id,
+            ShiftSeconds = shiftSeconds,
+            TableCounts = tableCounts,
+            AppliedRowsTotal = tableCounts.Values.Sum()
+        };
+    }
+
+    /// <summary>
     /// 应用偏移。direction 为显式方向（面板选择，任意来源可用）；ntp 为新鲜参照，
     /// direction 缺省时用它判定方向。状态必须是 Confirmed/Pending/Reverted
     /// （Applied 拒绝重复应用）。

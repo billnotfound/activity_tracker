@@ -16,4 +16,5 @@ public static class TimeAnomalySources
     public const string Heartbeat = "Heartbeat";
     public const string EventLog = "EventLog";
     public const string Ntp = "Ntp";
+    public const string User = "User";
 }

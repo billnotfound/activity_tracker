@@ -61,6 +61,20 @@ public static class FocusEndpoints
                 DurationSeconds = f.DurationSeconds
             })
             .ToListAsync();
+        var preceding = await db.FocusChanges.AsNoTracking()
+            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess && f.Timestamp < start)
+            .OrderByDescending(f => f.Timestamp)
+            .Select(f => new SummaryFocusRow
+            {
+                Timestamp = f.Timestamp,
+                ProcessName = f.ProcessName,
+                WindowTitle = f.WindowTitle,
+                DurationSeconds = f.DurationSeconds
+            })
+            .FirstOrDefaultAsync();
+        if (preceding != null
+            && IntervalMath.SafeAddSeconds(preceding.Timestamp, preceding.DurationSeconds) > start)
+            rows.Insert(0, preceding);
 
         // The previous query shape ran three FocusChanges scans, each with a
         // correlated SystemEvents NOT EXISTS. A day with only a few thousand
@@ -71,34 +85,33 @@ public static class FocusEndpoints
         var idleRules = tagService.GetIdleRules().Where(rule => rule.Weight >= 10).ToList();
         var buckets = new Dictionary<string, SummaryBucket>(StringComparer.OrdinalIgnoreCase);
         var previousProcess = (string?)null;
-        var offIndex = 0;
         double totalIdleSec = 0;
         foreach (var row in rows)
         {
-            while (offIndex < offPeriods.Count && offPeriods[offIndex].End <= row.Timestamp)
-                offIndex++;
-            if (offIndex < offPeriods.Count
-                && offPeriods[offIndex].Start <= row.Timestamp
-                && row.Timestamp < offPeriods[offIndex].End)
-                continue;
+            var rowStart = row.Timestamp < start ? start : row.Timestamp;
+            var rawEnd = IntervalMath.SafeAddSeconds(row.Timestamp, row.DurationSeconds);
+            var rowEnd = rawEnd > end ? end : rawEnd;
+            var effectiveSeconds = IntervalMath.Subtract(rowStart, rowEnd, offPeriods)
+                .Sum(segment => segment.DurationSeconds);
+            if (effectiveSeconds <= 0) continue;
             if (TagService.MatchesHidden(hiddenRules, row.ProcessName, row.WindowTitle))
                 continue;
             if (TagService.MatchesIdle(idleRules, row.ProcessName, row.WindowTitle))
             {
-                totalIdleSec += row.DurationSeconds;
+                totalIdleSec += effectiveSeconds;
                 continue;
             }
 
             if (!buckets.TryGetValue(row.ProcessName, out var bucket))
                 buckets[row.ProcessName] = bucket = new SummaryBucket(row.ProcessName);
-            bucket.TotalSeconds += row.DurationSeconds;
+            bucket.TotalSeconds += effectiveSeconds;
             bucket.SwitchCount++;
             if (!string.Equals(previousProcess, row.ProcessName, StringComparison.OrdinalIgnoreCase))
                 bucket.AdjustedSwitchCount++;
             previousProcess = row.ProcessName;
         }
 
-        var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
+        var totalSleepSec = offPeriods.Sum(period => period.DurationSeconds);
         var data = buckets.Values.OrderByDescending(x => x.TotalSeconds).ToList();
 
         return Results.Ok(new
@@ -116,7 +129,7 @@ public static class FocusEndpoints
         });
     }
 
-    private static async Task<List<(DateTime Start, DateTime End, double DurationSeconds)>> GetOffPeriods(
+    internal static async Task<List<TimeInterval>> GetOffPeriods(
         AppDbContext db, DateTime start, DateTime end)
     {
         var events = await db.SystemEvents
@@ -133,18 +146,15 @@ public static class FocusEndpoints
             if (preceding != null) events.Add(preceding);
         }
 
-        return events
+        return IntervalMath.Merge(events
             .Select(e =>
             {
                 var clippedStart = e.Timestamp < start ? start : e.Timestamp;
-                var eventEnd = e.Timestamp.AddSeconds(e.DurationSeconds);
+                var eventEnd = IntervalMath.SafeAddSeconds(e.Timestamp, e.DurationSeconds);
                 var clippedEnd = eventEnd > end ? end : eventEnd;
-                return (Start: clippedStart, End: clippedEnd,
-                    DurationSeconds: (clippedEnd - clippedStart).TotalSeconds);
+                return new TimeInterval(clippedStart, clippedEnd);
             })
-            .Where(e => e.DurationSeconds > 0)
-            .OrderBy(e => e.Start)
-            .ToList();
+            .Where(interval => interval.End > interval.Start), start, end);
     }
 }
 

@@ -18,8 +18,8 @@ export default createRouter({
   routes: [
     { path: '/', component: () => import('./views/Dashboard.vue') },
     { path: '/history', component: () => import('./views/History.vue') },
-    { path: '/tags', component: () => import('./views/Tags.vue') },
-    { path: '/time', component: () => import('./views/TimeAnomaly.vue') },
+    { path: '/tags', redirect: { path: '/settings', query: { section: 'tags' } } },
+    { path: '/time', redirect: { path: '/settings', query: { section: 'time' } } },
     { path: '/settings', component: () => import('./views/Settings.vue') },
   ]
 })

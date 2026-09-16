@@ -2,8 +2,8 @@
   Tags view — tag rules editor with inline editing
 -->
 <template>
-  <div class="tags-page">
-    <h2 class="page-title">{{ t('tags.pageTitle') }}</h2>
+  <div class="tags-page" :class="{ embedded }">
+    <h2 v-if="!embedded" class="page-title">{{ t('tags.pageTitle') }}</h2>
 
     <!-- Alerts -->
     <div v-if="tagError" class="alert-banner error mb-3">
@@ -89,17 +89,11 @@
             />
           </template>
         </Column>
-        <Column field="mode" :header="t('tags.column.mode')" style="width: 120px">
+        <Column field="mode" :header="t('tags.column.mode')" style="width: 170px">
           <template #body="{ data }">
-            <select
-              v-model="data.mode"
-              class="memphis-select compact"
-              @change="markDirty(data)"
-            >
-              <option v-for="m in modes" :key="m.v" :value="m.v">
-                {{ m.label }}
-              </option>
-            </select>
+            <span class="table-mode-toggle" role="radiogroup">
+              <button v-for="m in modes" :key="m.v" type="button" :class="{ active: data.mode === m.v }" @click="data.mode = m.v; markDirty(data)">{{ m.label }}</button>
+            </span>
           </template>
         </Column>
         <Column style="width: 60px">
@@ -253,6 +247,8 @@ import MemphisCard from '../components/MemphisCard.vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import { Plus, Save, Trash2, History, Check, X } from '@lucide/vue'
+
+defineProps({ embedded: { type: Boolean, default: false } })
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
@@ -603,6 +599,17 @@ async function normalizeDb() {
     outline: none;
     border-color: var(--primary-color);
   }
+}
+
+.table-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 34px;
+  border: 2px solid var(--surface-200);
+
+  button { border: 0; background: transparent; color: var(--text-color); font-size: .78rem; font-weight: 600; cursor: pointer; }
+  button + button { border-left: 1px solid var(--surface-200); }
+  button.active { background: var(--primary-color); color: white; }
 }
 
 .empty-state {

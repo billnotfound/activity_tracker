@@ -18,6 +18,7 @@ public static class TimeAnomalyEndpoints
         app.MapPost("/api/time-anomalies/{id:long}/restore", Restore);
         app.MapPost("/api/time-anomalies/{id:long}/ignore", Ignore);
         app.MapPost("/api/time-anomalies/ntp-check", NtpCheck);
+        app.MapPost("/api/time-anomalies/manual", ApplyManual);
     }
 
     private static IResult GetList(TimeAnomalyService svc, NtpSyncService ntp, SettingsService settings, int limit = 50)
@@ -80,4 +81,37 @@ public static class TimeAnomalyEndpoints
         var r = await svc.CheckNtpNow();
         return Results.Ok(r);
     }
+
+    private static async Task<IResult> ApplyManual(
+        TimeOffsetApplyService apply, ManualTimeCorrection request, bool preview = false)
+    {
+        var from = NormalizeToUtc(request.From);
+        var to = NormalizeToUtc(request.To);
+        if (to <= from || request.ShiftSeconds == 0 || !double.IsFinite(request.ShiftSeconds)
+            || Math.Abs(request.ShiftSeconds) > TimeSpan.FromDays(365).TotalSeconds)
+            return Results.BadRequest(new { error = "invalid manual time correction" });
+
+        if (preview)
+        {
+            var result = await apply.PreviewManualRangeAsync(from, to, request.ShiftSeconds);
+            return result == null
+                ? Results.BadRequest(new { error = "invalid manual time correction" })
+                : Results.Ok(new { tableCounts = result.TableCounts });
+        }
+
+        var applied = await apply.ApplyManualRangeAsync(from, to, request.ShiftSeconds, request.Note);
+        return applied == null
+            ? Results.NotFound(new { error = "no rows in selected range" })
+            : Results.Ok(applied);
+    }
+
+    private static DateTime NormalizeToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime()
+    };
 }
+
+public sealed record ManualTimeCorrection(
+    DateTime From, DateTime To, double ShiftSeconds, string? Note);
