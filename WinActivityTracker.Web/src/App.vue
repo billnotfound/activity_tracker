@@ -38,11 +38,13 @@
       </div>
     </nav>
 
+    <div class="page-color-wash" aria-hidden="true"></div>
+
     <main class="main-content memphis-background">
       <div class="page-container">
-        <PageTransition>
-          <router-view :key="$route.path" />
-        </PageTransition>
+        <router-view v-slot="{ Component, route: viewRoute }">
+          <PageTransition v-if="Component" :component="Component" :route-key="viewRoute.path" />
+        </router-view>
       </div>
     </main>
   </div>
@@ -389,6 +391,16 @@ watch(() => route.path, () => {
   }
 }
 
+.page-color-wash {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+  background: var(--primary-color);
+  opacity: 0.03;
+  transition: background-color 0.3s ease;
+}
+
 .page-container {
   position: relative;
   width: 100%;
@@ -400,7 +412,7 @@ watch(() => route.path, () => {
   .nav-item:hover,
   .theme-toggle:hover,
   .brand-link:hover {
-    box-shadow: 0 0 8px rgba(255, 20, 147, 0.3);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--primary-color) 30%, transparent);
   }
 }
 </style>

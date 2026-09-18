@@ -21,21 +21,21 @@ export const memphis80s = {
   'primary-color': '#F4A261',        // Warm orange
   'secondary-color': '#E76F51',      // Coral red
   'accent-color': '#2A9D8F',         // Teal
-  'success-color': '#06D6A0',        // Mint green
-  'warning-color': '#9B5DE5',        // Purple
-  'danger-color': '#F15BB5',         // Pink
+  'success-color': '#2A9D8F',
+  'warning-color': '#F4A261',
+  'danger-color': '#E76F51',
 
   // Surfaces
-  'surface-ground': '#FEFEFE',
-  'surface-card': '#F8F9FA',
-  'surface-100': '#F0F0F0',
-  'surface-200': '#E0E0E0',
-  'surface-300': '#D0D0D0',
-  'surface-400': '#999999',
+  'surface-ground': '#FFFFFF',
+  'surface-card': '#FFFFFF',
+  'surface-100': '#F5F5F5',
+  'surface-200': '#E5E5E5',
+  'surface-300': '#CCCCCC',
+  'surface-400': '#777777',
 
   // Text & borders
-  'text-color': '#2B2D42',           // Dark blue-gray (softer than black)
-  'border-color': '#2B2D42',
+  'text-color': '#000000',
+  'border-color': '#000000',
 }
 
 // Modern Memphis — cooler tones, softer contrast
@@ -43,39 +43,121 @@ export const memphisModern = {
   'primary-color': '#6B7FD7',        // Soft blue
   'secondary-color': '#DD7596',      // Rose pink
   'accent-color': '#4ECDC4',         // Turquoise
-  'success-color': '#95E1D3',
-  'warning-color': '#F38181',
-  'danger-color': '#AA4465',
+  'success-color': '#4ECDC4',
+  'warning-color': '#6B7FD7',
+  'danger-color': '#DD7596',
 
   'surface-ground': '#FFFFFF',
-  'surface-card': '#F5F5F5',
-  'surface-100': '#ECECEC',
-  'surface-200': '#D8D8D8',
-  'surface-300': '#C4C4C4',
-  'surface-400': '#888888',
+  'surface-card': '#FFFFFF',
+  'surface-100': '#F5F5F5',
+  'surface-200': '#E5E5E5',
+  'surface-300': '#CCCCCC',
+  'surface-400': '#777777',
 
-  'text-color': '#2C3E50',
-  'border-color': '#34495E',
+  'text-color': '#000000',
+  'border-color': '#000000',
 }
 
-// Dark Memphis — reduced neon intensity, navy base
+// Prism — the three-color combination shown by the circular preview, promoted
+// to a full theme. Accent and warning intentionally share the warm quarter so
+// the interface uses the same blue / rose / amber relationship as the orb.
+export const prismLight = {
+  'primary-color': '#6B7FD7',
+  'secondary-color': '#DD7596',
+  'accent-color': '#F4A261',
+  'success-color': '#6B7FD7',
+  'warning-color': '#F4A261',
+  'danger-color': '#DD7596',
+
+  'surface-ground': '#FFFFFF',
+  'surface-card': '#FFFFFF',
+  'surface-100': '#F5F5F5',
+  'surface-200': '#E5E5E5',
+  'surface-300': '#CCCCCC',
+  'surface-400': '#777777',
+
+  'text-color': '#000000',
+  'border-color': '#000000',
+}
+
+// Garden Mist — airy blue with leaf green and muted coral
+export const gardenMist = {
+  'primary-color': '#C87773',
+  'secondary-color': '#77A67B',
+  'accent-color': '#B7E6F0',
+  'success-color': '#77A67B',
+  'warning-color': '#B7E6F0',
+  'danger-color': '#C87773',
+
+  'surface-ground': '#FFFFFF',
+  'surface-card': '#FFFFFF',
+  'surface-100': '#F5F5F5',
+  'surface-200': '#E5E5E5',
+  'surface-300': '#CCCCCC',
+  'surface-400': '#777777',
+
+  'text-color': '#000000',
+  'border-color': '#000000',
+}
+
+// Graphite — muted charcoal, slate blue and restrained red
 export const memphisDark = {
-  'primary-color': '#FF6B9D',        // Softer pink
-  'secondary-color': '#4ECDC4',      // Teal
-  'accent-color': '#FCA311',         // Orange
-  'success-color': '#06D6A0',
-  'warning-color': '#E76F51',
-  'danger-color': '#EF476F',
+  'primary-color': '#7895B2',
+  'secondary-color': '#9AA4AE',
+  'accent-color': '#657D96',
+  'success-color': '#657D96',
+  'warning-color': '#7895B2',
+  'danger-color': '#9AA4AE',
 
-  'surface-ground': '#14213D',       // Navy blue
-  'surface-card': '#1A2332',
-  'surface-100': '#243447',
-  'surface-200': '#2E3E52',
-  'surface-300': '#38495D',
-  'surface-400': '#6B7A8F',
+  'surface-ground': '#000000',
+  'surface-card': '#101010',
+  'surface-100': '#181818',
+  'surface-200': '#2B2B2B',
+  'surface-300': '#424242',
+  'surface-400': '#A0A0A0',
 
-  'text-color': '#E5E5E5',
-  'border-color': '#4ECDC4',
+  'text-color': '#FFFFFF',
+  'border-color': '#666666',
+}
+
+// GitHub Dark — familiar neutral surfaces with calm blue and red accents
+export const githubDark = {
+  'primary-color': '#58A6FF',
+  'secondary-color': '#8B949E',
+  'accent-color': '#79C0FF',
+  'success-color': '#79C0FF',
+  'warning-color': '#58A6FF',
+  'danger-color': '#8B949E',
+
+  'surface-ground': '#000000',
+  'surface-card': '#101010',
+  'surface-100': '#181818',
+  'surface-200': '#2B2B2B',
+  'surface-300': '#424242',
+  'surface-400': '#A0A0A0',
+
+  'text-color': '#FFFFFF',
+  'border-color': '#666666',
+}
+
+// Kaf — deep aubergine, powder pink and dusky periwinkle
+export const kafDark = {
+  'primary-color': '#FEB4C1',
+  'secondary-color': '#5A6CBC',
+  'accent-color': '#3B1E3D',
+  'success-color': '#5A6CBC',
+  'warning-color': '#FEB4C1',
+  'danger-color': '#3B1E3D',
+
+  'surface-ground': '#000000',
+  'surface-card': '#101010',
+  'surface-100': '#181818',
+  'surface-200': '#2B2B2B',
+  'surface-300': '#424242',
+  'surface-400': '#A0A0A0',
+
+  'text-color': '#FFFFFF',
+  'border-color': '#666666',
 }
 
 // All built-in themes, keyed by id.
@@ -95,12 +177,40 @@ export const THEMES = {
     isDark: false,
     colors: memphisModern,
   },
+  'prism-light': {
+    id: 'prism-light',
+    name: 'Prism',
+    description: 'The blue, rose and amber preview palette',
+    isDark: false,
+    colors: prismLight,
+  },
+  'garden-mist': {
+    id: 'garden-mist',
+    name: 'Garden Mist',
+    description: 'Airy blue, leaf green and muted coral',
+    isDark: false,
+    colors: gardenMist,
+  },
   'memphis-dark': {
     id: 'memphis-dark',
-    name: 'Dark Memphis',
-    description: 'Navy base with neon accents',
+    name: 'Graphite',
+    description: 'Muted charcoal, slate blue and soft red',
     isDark: true,
     colors: memphisDark,
+  },
+  'github-dark': {
+    id: 'github-dark',
+    name: 'GitHub Dark',
+    description: 'Neutral charcoal with familiar blue accents',
+    isDark: true,
+    colors: githubDark,
+  },
+  'kaf-dark': {
+    id: 'kaf-dark',
+    name: 'Kaf',
+    description: 'Aubergine, powder pink and periwinkle',
+    isDark: true,
+    colors: kafDark,
   },
 }
 

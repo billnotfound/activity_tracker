@@ -61,13 +61,8 @@ public static class MediaEndpoints
             .ToListAsync();
         data.Reverse();
 
-        // Idle/hidden-tagged processes hide their media records too. Matched
-        // in-memory while source ids and intervals are still exact.
         data = await FilterIdleMedia(db, data, tagService.GetIdleRules(), tagService.GetHiddenRules());
 
-        // Preserve every DB row but return a compact display projection. Equal
-        // media/status rows separated only by SystemSleep markers are one group;
-        // anomaly/source counts let the UI label damaged legacy data explicitly.
         var merged = MergeConsecutive(data);
 
         if (merged.Count > take)
@@ -76,18 +71,6 @@ public static class MediaEndpoints
         return Results.Ok(merged);
     }
 
-    /// <summary>
-    /// Hides media records under idle/hidden tags:
-    /// - a record whose own process/title matches a __hidden rule is always
-    ///   hidden (the SQL layer above already does this for raw rows)
-    /// - a record matching a strong idle rule (weight >= 10) is hidden
-    /// - a record matching a weak idle rule (weight &lt; 10) is hidden unless the
-    ///   process has foreground focus during the record's span (weak rules are
-    ///   overridden by foreground activity, e.g. actively playing music)
-    /// - any focus record inside the record's span that is hidden or strong-idle
-    ///   hides the record too (lock screen, screensaver, ... hide all media of
-    ///   that period regardless of producing process)
-    /// </summary>
     private static async Task<List<MediaSessionRecord>> FilterIdleMedia(
         AppDbContext db,
         List<MediaSessionRecord> merged,
@@ -98,7 +81,8 @@ public static class MediaEndpoints
 
         var strongIdle = idleRules.Where(r => r.Weight >= 10).ToList();
         var weakIdle = idleRules.Where(r => r.Weight < 10).ToList();
-        if (strongIdle.Count == 0 && weakIdle.Count == 0) return merged;
+        if (strongIdle.Count == 0 && weakIdle.Count == 0 && hiddenRules.Count == 0)
+            return merged;
 
         var hideIds = new HashSet<long>();
         var weakCandidates = new List<MediaSessionRecord>();
@@ -137,7 +121,7 @@ public static class MediaEndpoints
             foreach (var f in focusRows)
             {
                 var interval = (f.Timestamp,
-                    f.Timestamp.AddSeconds(Math.Max(0, f.DurationSeconds)));
+                    IntervalMath.SafeAddSeconds(f.Timestamp, Math.Max(0, f.DurationSeconds)));
                 if (!focusByProcess.TryGetValue(f.ProcessName, out var processIntervals))
                 {
                     processIntervals = [];
@@ -154,7 +138,6 @@ public static class MediaEndpoints
             var processIndexes = focusByProcess.ToDictionary(
                 x => x.Key, x => new IntervalOverlapIndex(x.Value), StringComparer.OrdinalIgnoreCase);
 
-            // Focus span that is hidden or strong-idle hides the media record.
             if (strongIdle.Count > 0 || hiddenRules.Count > 0)
             {
                 foreach (var m in merged)
@@ -166,7 +149,6 @@ public static class MediaEndpoints
                 }
             }
 
-            // Weak idle rules are overridden by foreground focus on the process.
             foreach (var m in weakCandidates)
             {
                 if (hideIds.Contains(m.Id)) continue;

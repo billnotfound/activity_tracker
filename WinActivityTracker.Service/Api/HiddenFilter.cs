@@ -5,19 +5,27 @@ using WinActivityTracker.Core.Services;
 
 namespace WinActivityTracker.Service.Api;
 
-/// <summary>
-/// Applies "__hidden" tag rules (see TagService.HiddenTag) as SQL WHERE clauses.
-/// A rule hides by process name, by window/media title pattern, or both.
-/// Hidden records are excluded globally (every endpoint and the status window)
-/// and never count toward totals. Semantics mirror TagService.MatchesHidden.
-/// </summary>
 public static class HiddenFilter
 {
-    // Tag rules use '*' wildcards; translate to SQLite LIKE, escaping the
-    // LIKE metacharacters (% _ \) so user patterns stay literal. Internal so
-    // IdleFilter can share the exact same translation.
     internal static string ToLikePattern(string pattern) =>
         Regex.Replace(pattern, @"[\\%_]", "\\$&").Replace("*", "%");
+
+    internal static bool IsRegexPattern(string pattern) =>
+        pattern.StartsWith("regex:", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool TryGetRegexPattern(string pattern, out string regex)
+    {
+        regex = pattern[6..];
+        try
+        {
+            _ = new Regex(regex, RegexOptions.None, TimeSpan.FromSeconds(1));
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 
     public static IQueryable<FocusChange> ExcludeHidden(
         IQueryable<FocusChange> query, IReadOnlyList<TagService.TagRule> rules)
@@ -27,20 +35,37 @@ public static class HiddenFilter
             var r = rule;
             if (string.IsNullOrEmpty(r.Process))
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(f => f.WindowTitle == "" || !EF.Functions.Like(f.WindowTitle, pat, "\\"));
+                var titlePattern = r.TitlePattern!;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(f => f.WindowTitle == "" || !Regex.IsMatch(f.WindowTitle, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(f => f.WindowTitle == "" || !EF.Functions.Like(f.WindowTitle, like, "\\"));
+                }
             }
             else if (string.IsNullOrEmpty(r.TitlePattern))
             {
-                // NOCASE collation: case-insensitive compare (StringComparison
-                // overloads are not translatable)
                 query = query.Where(f => EF.Functions.Collate(f.ProcessName, "NOCASE") != r.Process);
             }
             else
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(f => EF.Functions.Collate(f.ProcessName, "NOCASE") != r.Process
-                    || f.WindowTitle == "" || !EF.Functions.Like(f.WindowTitle, pat, "\\"));
+                var titlePattern = r.TitlePattern;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(f => EF.Functions.Collate(f.ProcessName, "NOCASE") != r.Process
+                        || f.WindowTitle == "" || !Regex.IsMatch(f.WindowTitle, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(f => EF.Functions.Collate(f.ProcessName, "NOCASE") != r.Process
+                        || f.WindowTitle == "" || !EF.Functions.Like(f.WindowTitle, like, "\\"));
+                }
             }
         }
         return query;
@@ -54,8 +79,17 @@ public static class HiddenFilter
             var r = rule;
             if (string.IsNullOrEmpty(r.Process))
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(w => w.WindowTitle == "" || !EF.Functions.Like(w.WindowTitle, pat, "\\"));
+                var titlePattern = r.TitlePattern!;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(w => w.WindowTitle == "" || !Regex.IsMatch(w.WindowTitle, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(w => w.WindowTitle == "" || !EF.Functions.Like(w.WindowTitle, like, "\\"));
+                }
             }
             else if (string.IsNullOrEmpty(r.TitlePattern))
             {
@@ -63,9 +97,19 @@ public static class HiddenFilter
             }
             else
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(w => EF.Functions.Collate(w.ProcessName, "NOCASE") != r.Process
-                    || w.WindowTitle == "" || !EF.Functions.Like(w.WindowTitle, pat, "\\"));
+                var titlePattern = r.TitlePattern;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(w => EF.Functions.Collate(w.ProcessName, "NOCASE") != r.Process
+                        || w.WindowTitle == "" || !Regex.IsMatch(w.WindowTitle, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(w => EF.Functions.Collate(w.ProcessName, "NOCASE") != r.Process
+                        || w.WindowTitle == "" || !EF.Functions.Like(w.WindowTitle, like, "\\"));
+                }
             }
         }
         return query;
@@ -79,8 +123,17 @@ public static class HiddenFilter
             var r = rule;
             if (string.IsNullOrEmpty(r.Process))
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(m => m.Title == "" || !EF.Functions.Like(m.Title, pat, "\\"));
+                var titlePattern = r.TitlePattern!;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(m => m.Title == "" || !Regex.IsMatch(m.Title, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(m => m.Title == "" || !EF.Functions.Like(m.Title, like, "\\"));
+                }
             }
             else if (string.IsNullOrEmpty(r.TitlePattern))
             {
@@ -88,15 +141,24 @@ public static class HiddenFilter
             }
             else
             {
-                var pat = ToLikePattern(r.TitlePattern!);
-                query = query.Where(m => EF.Functions.Collate(m.AppName, "NOCASE") != r.Process
-                    || m.Title == "" || !EF.Functions.Like(m.Title, pat, "\\"));
+                var titlePattern = r.TitlePattern;
+                if (IsRegexPattern(titlePattern))
+                {
+                    if (!TryGetRegexPattern(titlePattern, out var regex)) continue;
+                    query = query.Where(m => EF.Functions.Collate(m.AppName, "NOCASE") != r.Process
+                        || m.Title == "" || !Regex.IsMatch(m.Title, regex));
+                }
+                else
+                {
+                    var like = ToLikePattern(titlePattern);
+                    query = query.Where(m => EF.Functions.Collate(m.AppName, "NOCASE") != r.Process
+                        || m.Title == "" || !EF.Functions.Like(m.Title, like, "\\"));
+                }
             }
         }
         return query;
     }
 
-    // ProcessSessions have no title column; only process-name rules apply.
     public static IQueryable<ProcessSession> ExcludeHidden(
         IQueryable<ProcessSession> query, IReadOnlyList<TagService.TagRule> rules)
     {

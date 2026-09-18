@@ -52,7 +52,7 @@ public class SettingsService
         },
         ["DataRetentionDays"] = new[] {
             "// ===== 数据库 =====",
-            "// 数据库的默认保留天数。最小 1。"
+            "// 数据库的默认保留天数。最小 1，默认 365。"
         },
         ["ApiPort"] = new[] {
             "// ===== 服务器 =====",
@@ -190,19 +190,11 @@ public class SettingsService
 
     private static HashSet<string> ExtractJsonKeys(string json)
     {
-        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var lines = json.Split('\n');
-        foreach (var line in lines)
-        {
-            var trimmed = line.TrimStart();
-            if (trimmed.Length > 2 && trimmed[0] == '"')
-            {
-                var endQuote = trimmed.IndexOf('"', 1);
-                if (endQuote > 1)
-                    keys.Add(trimmed.Substring(1, endQuote - 1));
-            }
-        }
-        return keys;
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement
+            .EnumerateObject()
+            .Select(property => property.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     public void Save(string? headerBanner = null)

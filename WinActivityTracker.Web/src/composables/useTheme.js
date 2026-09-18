@@ -23,6 +23,7 @@ const autoColor = ref(false)
 const pageTransition = ref('slide')          // 'slide' | 'geometric'
 // User overrides keyed by CSS variable name, e.g. { 'primary-color': '#abcdef' }
 const overrides = ref({})
+const customThemes = ref({ light: null, dark: null })
 
 // ---------- load persisted settings ----------
 if (typeof window !== 'undefined') {
@@ -36,6 +37,11 @@ if (typeof window !== 'undefined') {
       autoColor.value = s.autoColor ?? false
       pageTransition.value = s.pageTransition ?? 'slide'
       overrides.value = s.overrides ?? {}
+      customThemes.value = normalizeCustomThemes(s.customThemes)
+      const legacyPalette = normalizePalette(s.customPalette)
+      if (!customThemes.value.light && legacyPalette) {
+        customThemes.value = { ...customThemes.value, light: { name: 'Custom', colors: legacyPalette } }
+      }
     } catch (e) {
       console.warn('Failed to parse theme settings:', e)
     }
@@ -47,8 +53,15 @@ const activeThemeId = computed(() =>
   isDark.value ? darkTheme.value : lightTheme.value
 )
 
+const availableThemes = computed(() => {
+  const result = { ...THEMES }
+  if (customThemes.value.light) result['custom-light'] = customThemeDefinition('light', customThemes.value.light)
+  if (customThemes.value.dark) result['custom-dark'] = customThemeDefinition('dark', customThemes.value.dark)
+  return result
+})
+
 const activeTheme = computed(() =>
-  THEMES[activeThemeId.value] ?? THEMES[DEFAULT_LIGHT_THEME]
+  availableThemes.value[activeThemeId.value] ?? THEMES[DEFAULT_LIGHT_THEME]
 )
 
 // ---------- core: write CSS vars to :root ----------
@@ -88,28 +101,125 @@ function saveSettings() {
     autoColor: autoColor.value,
     pageTransition: pageTransition.value,
     overrides: overrides.value,
+    customThemes: customThemes.value,
   }))
 }
 
 // Re-apply whenever any input changes.
 // No deep: true — overrides.value is replaced (not mutated) on every
 // setOverride, so a shallow watch catches the change.
-watch([isDark, lightTheme, darkTheme, overrides], () => {
+watch([isDark, lightTheme, darkTheme, overrides, customThemes], () => {
   applyTheme()
   saveSettings()
 })
 
 watch([autoColor, pageTransition], saveSettings)
 
+function normalizePalette(colors) {
+  if (!Array.isArray(colors) || colors.length !== 3) return null
+  const normalized = colors.map(color => String(color || '').trim().toUpperCase())
+  return normalized.every(color => /^#[0-9A-F]{6}$/.test(color)) ? normalized : null
+}
+
+function paletteOverrides(colors) {
+  return {
+    'primary-color': colors[0],
+    'secondary-color': colors[1],
+    'accent-color': colors[2],
+    'success-color': colors[0],
+    'warning-color': colors[2],
+    'danger-color': colors[1],
+  }
+}
+
+function normalizeCustomTheme(value) {
+  const name = String(value?.name || '').trim().slice(0, 40)
+  const colors = normalizePalette(value?.colors)
+  return name && colors ? { name, colors } : null
+}
+
+function normalizeCustomThemes(value) {
+  return {
+    light: normalizeCustomTheme(value?.light),
+    dark: normalizeCustomTheme(value?.dark),
+  }
+}
+
+function customThemeDefinition(mode, saved) {
+  const isDarkTheme = mode === 'dark'
+  const neutral = isDarkTheme
+    ? {
+        'surface-ground': '#000000', 'surface-card': '#101010',
+        'surface-100': '#181818', 'surface-200': '#2B2B2B',
+        'surface-300': '#424242', 'surface-400': '#A0A0A0',
+        'text-color': '#FFFFFF', 'border-color': '#666666',
+      }
+    : {
+        'surface-ground': '#FFFFFF', 'surface-card': '#FFFFFF',
+        'surface-100': '#F5F5F5', 'surface-200': '#E5E5E5',
+        'surface-300': '#CCCCCC', 'surface-400': '#777777',
+        'text-color': '#000000', 'border-color': '#000000',
+      }
+  return {
+    id: `custom-${mode}`,
+    name: saved.name,
+    description: '',
+    isDark: isDarkTheme,
+    colors: { ...paletteOverrides(saved.colors), ...neutral },
+  }
+}
+
+function colorMetrics(value) {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(value || '').trim())
+  if (!match) return null
+  const number = Number.parseInt(match[1], 16)
+  const r = ((number >> 16) & 255) / 255
+  const g = ((number >> 8) & 255) / 255
+  const b = (number & 255) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const delta = max - min
+  let hue = 0
+  if (delta) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6)
+    else if (max === g) hue = 60 * ((b - r) / delta + 2)
+    else hue = 60 * ((r - g) / delta + 4)
+  }
+  if (hue < 0) hue += 360
+  const lightness = (max + min) / 2
+  const saturation = delta ? delta / (1 - Math.abs(2 * lightness - 1)) : 0
+  return { r: r * 255, g: g * 255, b: b * 255, hue, saturation, lightness }
+}
+
+function hasDistinctColors(colors) {
+  const metrics = colors.map(colorMetrics)
+  if (metrics.some(value => !value)) return false
+  for (let left = 0; left < metrics.length; left++) {
+    for (let right = left + 1; right < metrics.length; right++) {
+      const a = metrics[left]
+      const b = metrics[right]
+      const rgbDistance = Math.hypot(a.r - b.r, a.g - b.g, a.b - b.b)
+      const hueDistance = Math.min(Math.abs(a.hue - b.hue), 360 - Math.abs(a.hue - b.hue))
+      const lightnessDistance = Math.abs(a.lightness - b.lightness)
+      if (rgbDistance < 72) return false
+      if (a.saturation > 0.14 && b.saturation > 0.14 && hueDistance < 22 && lightnessDistance < 0.2) return false
+      if (a.saturation <= 0.14 && b.saturation <= 0.14 && lightnessDistance < 0.22) return false
+    }
+  }
+  return true
+}
+
 export function useTheme() {
   const toggleDark = () => { isDark.value = !isDark.value }
 
   const setLightTheme = (id) => {
-    if (THEMES[id] && !THEMES[id].isDark) lightTheme.value = id
+    const selected = availableThemes.value[id]
+    if (selected && !selected.isDark) lightTheme.value = id
   }
 
   const setDarkTheme = (id) => {
-    if (THEMES[id] && THEMES[id].isDark) darkTheme.value = id
+    const selected = availableThemes.value[id]
+    if (selected?.isDark) darkTheme.value = id
   }
 
   // Back-compat with old API (single colorScheme that maps to light theme)
@@ -119,7 +229,10 @@ export function useTheme() {
   })
   const setColorScheme = setLightTheme
 
-  const setAutoColor = (v) => { autoColor.value = v }
+  const setAutoColor = (v) => {
+    autoColor.value = v
+    if (!v) overrides.value = {}
+  }
   const setPageTransition = (v) => { pageTransition.value = v }
 
   // Override a single CSS variable (used by color picker / auto-color)
@@ -134,21 +247,50 @@ export function useTheme() {
 
   const clearOverrides = () => { overrides.value = {} }
 
-  // Apply auto color from a process icon's extracted palette
-  const applyAutoColor = async (topProcess) => {
-    if (!autoColor.value || !topProcess) return
-    try {
-      const res = await fetch(`/api/icons/${topProcess}`)
-      if (!res.ok) return
-      const icon = await res.json()
-      const next = { ...overrides.value }
-      if (icon.colorPrimary) next['primary-color'] = icon.colorPrimary
-      if (icon.colorSecondary) next['secondary-color'] = icon.colorSecondary
-      if (icon.colorAccent) next['accent-color'] = icon.colorAccent
-      overrides.value = next
-    } catch (e) {
-      console.warn('Auto color failed:', e)
+  const saveCustomTheme = (mode, name, colors) => {
+    if (mode !== 'light' && mode !== 'dark') return false
+    const normalized = normalizeCustomTheme({ name, colors })
+    if (!normalized) return false
+    autoColor.value = false
+    overrides.value = {}
+    customThemes.value = { ...customThemes.value, [mode]: normalized }
+    if (mode === 'dark') {
+      darkTheme.value = 'custom-dark'
+      isDark.value = true
+    } else {
+      lightTheme.value = 'custom-light'
+      isDark.value = false
     }
+    return true
+  }
+
+  // Pick the first distinct three-color palette from at most the five most-used
+  // processes. Near-identical hues or RGB positions are skipped; if none of the
+  // first five works, remove overrides and return to the selected theme.
+  const applyAutoColor = async (candidates) => {
+    if (!autoColor.value) return false
+    let palettes = Array.isArray(candidates) ? candidates : []
+
+    // Backwards compatibility for callers that pass one process name.
+    if (!palettes.length && typeof candidates === 'string' && candidates) {
+      try {
+        const response = await fetch(`/api/icons/${encodeURIComponent(candidates)}`)
+        if (response.ok) palettes = [await response.json()]
+      } catch (error) {
+        console.warn('Auto color failed:', error)
+      }
+    }
+
+    for (const palette of palettes.slice(0, 5)) {
+      const colors = [palette.colorPrimary, palette.colorSecondary, palette.colorAccent]
+      if (!hasDistinctColors(colors)) continue
+      const next = paletteOverrides(colors)
+      if (JSON.stringify(next) !== JSON.stringify(overrides.value)) overrides.value = next
+      return true
+    }
+
+    if (Object.keys(overrides.value).length) overrides.value = {}
+    return false
   }
 
   return {
@@ -162,7 +304,8 @@ export function useTheme() {
     autoColor,
     pageTransition,
     overrides,
-    themes: THEMES,
+    customThemes,
+    themes: availableThemes,
 
     // actions
     toggleDark,
@@ -173,6 +316,7 @@ export function useTheme() {
     setPageTransition,
     setOverride,
     clearOverrides,
+    saveCustomTheme,
     applyAutoColor,
     applyTheme,
   }

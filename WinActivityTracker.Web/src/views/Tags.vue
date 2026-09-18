@@ -621,7 +621,7 @@ async function normalizeDb() {
 
 :deep(.memphis-datatable) {
   .unsaved-row {
-    background: rgba(155, 93, 229, 0.1);
+    background: color-mix(in srgb, var(--warning-color) 10%, transparent);
     border-left: 4px solid var(--warning-color);
   }
 }

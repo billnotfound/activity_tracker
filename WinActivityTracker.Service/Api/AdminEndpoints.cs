@@ -139,16 +139,12 @@ public static class AdminEndpoints
             deletedProcSessions, deletedMedia, deletedSystemEvents;
         try
         {
-            deletedFocus = await db.FocusChanges.Where(f => f.Timestamp < cutoff).ExecuteDeleteAsync();
+            (deletedFocus, deletedSystemEvents) =
+                await DeleteExpiredIntervalsAsync(db, cutoff);
             deletedWindows = await db.WindowSnapshots.Where(w => w.Timestamp < cutoff).ExecuteDeleteAsync();
-            // 会话类表只删"已结束且完全早于 cutoff"的行:仍在进行(CloseTime/EndTime
-            // 为空)或跨越 cutoff 的行保留,避免活跃会话被静默删除。
             (deletedSessions, deletedProcSessions, deletedMedia) =
                 await DeleteExpiredActivityAsync(db, cutoff);
             deletedProcesses = await db.ProcessSnapshots.Where(p => p.Timestamp < cutoff).ExecuteDeleteAsync();
-            deletedSystemEvents = await db.SystemEvents.Where(e => e.Timestamp < cutoff).ExecuteDeleteAsync();
-            // 活跃恢复日志与异常记录成对保留。只有异常时间和日志引用行都过期时，
-            // 才先删日志再删异常；已恢复的旧日志可独立清理。
             await db.TimeOffsetApplications
                 .Where(j => j.MaxRowTimestamp < cutoff
                     && (j.RevertedAt != null
@@ -166,8 +162,6 @@ public static class AdminEndpoints
             await tx.RollbackAsync();
             throw;
         }
-
-        // ProcessIcons is a cache table, intentionally retained by cleanup.
 
         await db.Database.ExecuteSqlRawAsync("PRAGMA optimize");
 
@@ -195,10 +189,20 @@ public static class AdminEndpoints
         });
     }
 
-    /// <summary>
-    /// 保留期清理核心:只删除"已结束且完全早于 cutoff"的窗口/进程/媒体会话行。
-    /// 仍在进行(CloseTime/EndTime 为空)或跨越 cutoff 的行保留。
-    /// </summary>
+    public static async Task<(int FocusChanges, int SystemEvents)> DeleteExpiredIntervalsAsync(
+        AppDbContext db, DateTime cutoff)
+    {
+        var focusChanges = await db.FocusChanges
+            .Where(f => f.Timestamp < cutoff
+                && (f.DurationSeconds <= 0 || f.Timestamp.AddSeconds(f.DurationSeconds) < cutoff))
+            .ExecuteDeleteAsync();
+        var systemEvents = await db.SystemEvents
+            .Where(e => e.Timestamp < cutoff
+                && (e.DurationSeconds <= 0 || e.Timestamp.AddSeconds(e.DurationSeconds) < cutoff))
+            .ExecuteDeleteAsync();
+        return (focusChanges, systemEvents);
+    }
+
     public static async Task<(int Sessions, int ProcSessions, int Media)> DeleteExpiredActivityAsync(
         AppDbContext db, DateTime cutoff)
     {

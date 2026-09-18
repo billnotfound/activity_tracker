@@ -65,13 +65,13 @@
 @keyframes glitch {
   0%, 100% {
     text-shadow: 
-      1px 1px 0 rgba(255, 107, 157, 0.5),
-      -1px -1px 0 rgba(78, 205, 196, 0.5);
+      1px 1px 0 color-mix(in srgb, var(--primary-color) 50%, transparent),
+      -1px -1px 0 color-mix(in srgb, var(--secondary-color) 50%, transparent);
   }
   50% {
     text-shadow: 
-      -1px 1px 0 rgba(255, 107, 157, 0.5),
-      1px -1px 0 rgba(78, 205, 196, 0.5);
+      -1px 1px 0 color-mix(in srgb, var(--primary-color) 50%, transparent),
+      1px -1px 0 color-mix(in srgb, var(--secondary-color) 50%, transparent);
   }
 }
 

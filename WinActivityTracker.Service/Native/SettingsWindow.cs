@@ -125,7 +125,7 @@ public partial class SettingsWindow : Form
         {
             var g = MakeGroup(I18nService._("common.database"), 78);
             var pan = g.Controls[0] as Panel;
-            AddRow(pan!, 0, I18nService._("settingsWindow.retentionLabel"), out _retentionDays, 1, 3650, 90);
+            AddRow(pan!, 0, I18nService._("settingsWindow.retentionLabel"), out _retentionDays, 1, 3650, 365);
         }
 
         // --- Server (1 row → height ~58) ---

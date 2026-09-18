@@ -151,7 +151,7 @@ import { Play, Pause, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
-const { isDark } = useTheme()
+const { isDark, applyAutoColor } = useTheme()
 const router = useRouter()
 
 // Cache icon data to avoid re-fetching every refresh (2s interval)
@@ -751,7 +751,8 @@ async function renderCharts(data) {
             : null,
           colorPrimary: iconData.colorPrimary || '#6B7FD7',
           colorSecondary: iconData.colorSecondary || '#DD7596',
-          colorAccent: iconData.colorAccent || '#06D6A0'
+          colorAccent: iconData.colorAccent || '#06D6A0',
+          hasExtractedPalette: Boolean(iconData.colorPrimary && iconData.colorSecondary && iconData.colorAccent),
         }
         iconCache.set(cacheKey, result)
         return result
@@ -763,13 +764,15 @@ async function renderCharts(data) {
       icon: null,
       colorPrimary: '#6B7FD7',
       colorSecondary: '#DD7596',
-      colorAccent: '#06D6A0'
+      colorAccent: '#06D6A0',
+      hasExtractedPalette: false,
     }
     iconCache.set(cacheKey, fallback)
     return fallback
   })
 
   const iconDataList = await Promise.all(iconPromises)
+  await applyAutoColor(iconDataList.map(item => item.hasExtractedPalette ? item : {}))
   const icons = iconDataList.map(d => d.icon)
   const colors = iconDataList.map(d => d.colorPrimary)
 
@@ -1280,7 +1283,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
     right: 0;
     bottom: 0;
     left: 0;
-    background: #2aa9d6;
+    background: var(--primary-color);
   }
 }
 
@@ -1290,7 +1293,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   left: 0;
   width: 200%;
   height: 32px;
-  color: #2aa9d6;
+  color: var(--primary-color);
   z-index: 1;
   animation: wave-drift 3s linear infinite;
 }

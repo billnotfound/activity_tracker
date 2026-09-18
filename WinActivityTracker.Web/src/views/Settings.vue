@@ -12,7 +12,14 @@
     </div>
 
     <!-- Tabs -->
-    <Tabs v-model:value="activeTab" class="memphis-tabs">
+    <div
+      ref="settingsTabsRef"
+      class="settings-tabs-nav"
+      @mousemove="onSettingsTabMouseMove"
+      @mouseleave="onSettingsTabMouseLeave"
+    >
+      <div class="settings-tab-frame" :class="{ moving: settingsTabMoving }" :style="settingsTabFrameStyle"></div>
+      <Tabs v-model:value="activeTab" class="memphis-tabs">
       <TabList>
         <Tab value="appearance">{{ t('settings.tab.appearance') }}</Tab>
         <Tab value="tracking">{{ t('settings.tab.tracking') }}</Tab>
@@ -26,37 +33,87 @@
       <TabPanel value="appearance">
         <MemphisCard>
           <h3 class="section-title">{{ t('settings.card.language') }}</h3>
-          <div class="language-selector">
-            <button
-              v-for="lang in languages"
-              :key="lang.code"
-              class="option-button"
-              :class="{ active: locale === lang.code }"
-              @click="setLocale(lang.code)"
-            >
-              <span>{{ lang.name }}</span>
-            </button>
-          </div>
+          <select :value="locale" class="memphis-select language-select" @change="setLocale($event.target.value)">
+            <option v-for="lang in languages" :key="lang.code" :value="lang.code">{{ lang.name }}</option>
+          </select>
 
           <div class="divider"></div>
 
           <h3 class="section-title">{{ t('settings.appearance.themeColors') }}</h3>
-          <div class="theme-selector">
-            <button
-              v-for="th in lightThemes"
-              :key="th.id"
-              class="theme-option"
-              :class="{ active: !isDark && lightTheme === th.id }"
-              @click="theme.setLightTheme(th.id)"
-            >
-              <div class="theme-preview">
-                <div class="preview-bar" :style="{ background: th.colors['primary-color'] }"></div>
-                <div class="preview-bar" :style="{ background: th.colors['secondary-color'] }"></div>
-                <div class="preview-bar" :style="{ background: th.colors['accent-color'] }"></div>
+          <div class="theme-groups">
+            <div class="theme-group">
+              <span class="theme-group-label">{{ t('settings.appearance.light') }}</span>
+              <div class="theme-selector">
+                <button
+                  v-for="th in lightThemes"
+                  :key="th.id"
+                  class="theme-option"
+                  :class="{ active: !isDark && lightTheme === th.id }"
+                  @click="selectTheme(th)"
+                >
+                  <span class="theme-orb" :style="{ background: themePreview(th) }" aria-hidden="true"></span>
+                  <span class="theme-name">{{ th.name }}</span>
+                </button>
               </div>
-              <div class="theme-name">{{ th.name }}</div>
-              <div class="theme-desc">{{ th.description }}</div>
-            </button>
+            </div>
+            <div class="theme-group">
+              <span class="theme-group-label">{{ t('settings.appearance.dark') }}</span>
+              <div class="theme-selector">
+                <button
+                  v-for="th in darkThemes"
+                  :key="th.id"
+                  class="theme-option"
+                  :class="{ active: isDark && darkTheme === th.id }"
+                  @click="selectTheme(th)"
+                >
+                  <span class="theme-orb" :style="{ background: themePreview(th) }" aria-hidden="true"></span>
+                  <span class="theme-name">{{ th.name }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="custom-palette">
+            <div class="custom-palette-head">
+              <span>{{ t('settings.appearance.customPalette') }}</span>
+              <button
+                class="custom-palette-toggle"
+                :aria-expanded="showCustomPalette"
+                :title="t('settings.appearance.customPalette')"
+                @click="showCustomPalette = !showCustomPalette"
+              >
+                <X v-if="showCustomPalette" :size="17" />
+                <Plus v-else :size="17" />
+              </button>
+            </div>
+            <Transition name="custom-expand">
+              <div v-if="showCustomPalette" class="custom-theme-grid">
+                <section v-for="mode in customModes" :key="mode" class="custom-theme-editor">
+                  <div class="custom-theme-editor-head">
+                    <strong>{{ t(`settings.appearance.custom.${mode}Scheme`) }}</strong>
+                    <span class="theme-orb custom-orb" :style="{ background: customPreview(mode) }" aria-hidden="true"></span>
+                  </div>
+                  <input
+                    v-model.trim="customDrafts[mode].name"
+                    type="text"
+                    class="custom-theme-name"
+                    maxlength="40"
+                    :placeholder="t('settings.appearance.custom.schemeName')"
+                  />
+                  <div class="custom-color-list">
+                    <label v-for="(key, index) in customColorKeys" :key="key" class="custom-color-field">
+                      <span>{{ t(`settings.appearance.custom.${key}`) }}</span>
+                      <input v-model="customDrafts[mode].colors[index]" type="color" class="color-dot" :aria-label="t(`settings.appearance.custom.${key}`)" />
+                      <input v-model.trim="customDrafts[mode].colors[index]" type="text" class="custom-hex-input" maxlength="7" spellcheck="false" />
+                    </label>
+                  </div>
+                  <button class="custom-palette-save" :disabled="!customDraftValid(mode)" @click="saveCustomScheme(mode)">
+                    <Check :size="16" />
+                    <span>{{ customSaved[mode] ? t('settings.appearance.paletteSaved') : t('settings.appearance.savePalette') }}</span>
+                  </button>
+                </section>
+              </div>
+            </Transition>
           </div>
 
           <div class="divider"></div>
@@ -147,21 +204,21 @@
                 {{ t('settings.windowPollLabel') }}
                 <CircleHelp :size="14" class="help-icon" :title="t('settings.windowPollHelp')" />
               </label>
-              <InputNumber v-model="form.windowPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.windowPollPlaceholder')" />
+              <div class="unit-control"><InputNumber v-model="form.windowPollSeconds" :min="1" :placeholder="t('settings.windowPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
             <div class="input-field">
               <label>
                 {{ t('settings.processPollLabel') }}
                 <CircleHelp :size="14" class="help-icon" :title="t('settings.processPollHelp')" />
               </label>
-              <InputNumber v-model="form.processPollSeconds" :min="5" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.processPollPlaceholder')" />
+              <div class="unit-control"><InputNumber v-model="form.processPollSeconds" :min="5" :placeholder="t('settings.processPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
             <div class="input-field">
               <label>
                 {{ t('settings.mediaPollLabel') }}
                 <CircleHelp :size="14" class="help-icon" :title="t('settings.mediaPollHelp')" />
               </label>
-              <InputNumber v-model="form.mediaPollSeconds" :min="1" :suffix="t('time.seconds.suffix')" :placeholder="t('settings.mediaPollPlaceholder')" />
+              <div class="unit-control"><InputNumber v-model="form.mediaPollSeconds" :min="1" :placeholder="t('settings.mediaPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
           </div>
 
@@ -173,7 +230,7 @@
               {{ t('settings.idleThresholdLabel') }}
               <CircleHelp :size="14" class="help-icon" :title="t('settings.idleThresholdHelp')" />
             </label>
-            <InputNumber v-model="form.idleThresholdMinutes" :min="1" :suffix="t('time.minutes.suffix')" :placeholder="t('settings.idleThresholdPlaceholder')" />
+            <div class="unit-control"><InputNumber v-model="form.idleThresholdMinutes" :min="1" :placeholder="t('settings.idleThresholdPlaceholder')" /><span>{{ t('time.minutes.suffix') }}</span></div>
           </div>
 
           <div class="checkbox-list">
@@ -245,8 +302,8 @@
               <label>{{ t('settings.timeSourceMode') }}</label>
               <select v-model="form.timeSourceMode" class="memphis-select"><option v-for="m in timeSourceModes" :key="m.value" :value="m.value">{{ m.label }}</option></select>
             </div>
-            <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" /></label><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" :suffix="t('time.seconds.suffix')" /></div>
-            <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" /></label><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" :suffix="t('time.seconds.suffix')" /></div>
+            <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" /></label><div class="unit-control"><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
+            <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" /></label><div class="unit-control"><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
           </div>
         </MemphisCard>
         <TimeAnomalyView embedded />
@@ -261,7 +318,7 @@
               {{ t('settings.retentionLabel') }}
               <CircleHelp :size="14" class="help-icon" :title="t('settings.retentionHelp')" />
             </label>
-            <InputNumber v-model="form.dataRetentionDays" :min="1" :suffix="t('common.day.suffix')" :placeholder="t('settings.retentionPlaceholder')" />
+            <div class="unit-control"><InputNumber v-model="form.dataRetentionDays" :min="1" :placeholder="t('settings.retentionPlaceholder')" /><span>{{ t('common.day.suffix') }}</span></div>
           </div>
 
           <div class="divider"></div>
@@ -344,162 +401,25 @@
           <h3 class="section-title">{{ t('licenses.pageTitle') }}</h3>
           <p class="license-intro">{{ t('licenses.description') }}</p>
 
-          <!-- Ubuntu Font -->
-          <div class="license-section">
-            <h4 class="license-title">Ubuntu Font Family</h4>
-            <div class="license-info">
-              <div class="info-row">
-                <span class="label">{{ t('licenses.version') }}:</span>
-                <span class="value">Ubuntu Font Licence 1.0</span>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.copyright') }}:</span>
-                <span class="value">© 2010-2015 Canonical Ltd.</span>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.website') }}:</span>
-                <a href="https://design.ubuntu.com/font" target="_blank" class="link">design.ubuntu.com/font</a>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.usage') }}:</span>
-                <span class="value">{{ t('licenses.fontUsage') }}</span>
-              </div>
-            </div>
-
-            <details class="license-details">
-              <summary>{{ t('licenses.viewLicense') }}</summary>
-              <pre class="license-text">-------------------------------
-UBUNTU FONT LICENCE Version 1.0
--------------------------------
-
-PREAMBLE
-This licence allows the licensed fonts to be used, studied, modified and
-redistributed freely. The fonts, including any derivative works, can be
-bundled, embedded, and redistributed provided the terms of this licence
-are met. The fonts and derivatives, however, cannot be released under
-any other licence.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of the Font Software, to propagate the Font Software, subject to
-the conditions specified in the full licence text.
-
-For the complete licence text, see:
-https://ubuntu.com/legal/font-licence</pre>
-            </details>
+          <div class="resource-grid">
+            <a
+              v-for="resource in thirdPartyResources"
+              :key="resource.name"
+              :href="resource.url"
+              target="_blank"
+              rel="noreferrer"
+              class="resource-card"
+            >
+              <span class="resource-name">{{ resource.name }}</span>
+              <span class="resource-license">{{ resource.license }}</span>
+            </a>
           </div>
 
-          <!-- Nullsoft Install System -->
-          <div class="license-section">
-            <h4 class="license-title">Nullsoft Scriptable Install System (NSIS)</h4>
-            <div class="license-info">
-              <div class="info-row">
-                <span class="label">{{ t('licenses.version') }}:</span>
-                <span class="value">zlib/libpng License</span>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.copyright') }}:</span>
-                <span class="value">© 1999-2026 Contributors</span>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.website') }}:</span>
-                <a href="https://nsis.sourceforge.io/" target="_blank" class="link">nsis.sourceforge.io</a>
-              </div>
-              <div class="info-row">
-                <span class="label">{{ t('licenses.usage') }}:</span>
-                <span class="value">{{ t('licenses.nsisUsage') }}</span>
-              </div>
-            </div>
-
-            <!-- zlib/libpng License -->
-            <details class="license-details">
-              <summary>{{ t('licenses.nsisZlib') }}</summary>
-              <pre class="license-text">Copyright (C) 1999-2026 Contributors
-
-All NSIS source code, plug-ins, documentation, examples, header files
-and graphics, with the exception of the compression modules and where
-otherwise noted, are licensed under the zlib/libpng license.
-
-The zlib compression module for NSIS is also licensed under this license.
-
-This software is provided 'as-is', without any express or implied
-warranty. In no event will the authors be held liable for any damages
-arising from the use of this software.
-
-Permission is granted to anyone to use this software for any purpose,
-including commercial applications, and to alter it and redistribute it
-freely, subject to the following restrictions:
-
-1. The origin of this software must not be misrepresented; you must not
-   claim that you wrote the original software. If you use this software
-   in a product, an acknowledgment in the product documentation would be
-   appreciated but is not required.
-2. Altered source versions must be plainly marked as such, and must not
-   be misrepresented as being the original software.
-3. This notice may not be removed or altered from any source
-   distribution.</pre>
-            </details>
-
-            <!-- bzip2 License -->
-            <details class="license-details">
-              <summary>{{ t('licenses.nsisBzip2') }}</summary>
-              <pre class="license-text">The bzip2 compression module for NSIS is licensed under the bzip2 license:
-
-This program, "bzip2" and associated library "libbzip2", are copyright
-(C) 1996-2000 Julian R Seward. All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions
-are met:
-
-1. Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-2. The origin of this software must not be misrepresented; you must
-   not claim that you wrote the original software. If you use this
-   software in a product, an acknowledgment in the product documentation
-   would be appreciated but is not required.
-3. Altered source versions must be plainly marked as such, and must
-   not be misrepresented as being the original software.
-4. The name of the author may not be used to endorse or promote
-   products derived from this software without specific prior written
-   permission.
-
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR "AS IS" AND ANY EXPRESS OR
-IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT,
-INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES.</pre>
-            </details>
-
-            <!-- Common Public License 1.0 (LZMA) -->
-            <details class="license-details">
-              <summary>{{ t('licenses.nsisLzma') }}</summary>
-              <pre class="license-text">The LZMA compression module for NSIS is licensed under the
-Common Public License version 1.0.
-
-THE ACCOMPANYING PROGRAM IS PROVIDED UNDER THE TERMS OF THIS COMMON
-PUBLIC LICENSE ("AGREEMENT"). ANY USE, REPRODUCTION OR DISTRIBUTION OF
-THE PROGRAM CONSTITUTES RECIPIENT'S ACCEPTANCE OF THIS AGREEMENT.
-
-For the complete license text, see:
-https://opensource.org/licenses/CPL-1.0</pre>
-            </details>
-
-            <!-- LZMA Special Exception -->
-            <details class="license-details">
-              <summary>{{ t('licenses.nsisLzmaException') }}</summary>
-              <pre class="license-text">Igor Pavlov and Amir Szekely, the authors of the LZMA compression
-module for NSIS, expressly permit you to statically or dynamically link
-your code (or bind by name) to the files from the LZMA compression
-module for NSIS without subjecting your linked code to the terms of
-the Common Public License version 1.0. Any modifications or additions
-to files from the LZMA compression module for NSIS, however, are
-subject to the terms of the Common Public License version 1.0.</pre>
-            </details>
-          </div>
         </MemphisCard>
       </TabPanel>
       </TabPanels>
-    </Tabs>
+      </Tabs>
+    </div>
 
     <!-- Save Button -->
     <div class="save-section">
@@ -516,7 +436,7 @@ subject to the terms of the Common Public License version 1.0.</pre>
 </template>
 
 <script setup>
-import { ref, reactive, inject, onMounted, computed, watch } from 'vue'
+import { ref, reactive, inject, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -530,7 +450,7 @@ import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
 import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
-import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, CircleHelp } from '@lucide/vue'
+import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, CircleHelp, Plus } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
@@ -539,18 +459,92 @@ const route = useRoute()
 const router = useRouter()
 const validTabs = new Set(['appearance', 'tracking', 'tags', 'time', 'database', 'licenses'])
 const activeTab = ref(validTabs.has(String(route.query.section)) ? String(route.query.section) : 'appearance')
+const settingsTabsRef = ref(null)
+const settingsTabFrameStyle = ref({ opacity: 0 })
+const settingsTabMoving = ref(false)
+let settingsTabTarget = null
+let settingsTabTimer = null
 
 watch(activeTab, value => {
   const nextQuery = { ...route.query, section: value === 'appearance' ? undefined : value }
   router.replace({ query: nextQuery })
+  nextTick(() => moveSettingsTabFrame(activeSettingsTab()))
 })
+
+function settingsTabItems() {
+  return Array.from(settingsTabsRef.value?.querySelectorAll('.p-tab') || [])
+}
+
+function activeSettingsTab() {
+  return settingsTabsRef.value?.querySelector('.p-tab[aria-selected="true"]') || settingsTabItems()[0]
+}
+
+function moveSettingsTabFrame(element) {
+  const host = settingsTabsRef.value
+  if (!host || !element) return
+  settingsTabTarget = element
+  const hostRect = host.getBoundingClientRect()
+  const itemRect = element.getBoundingClientRect()
+  settingsTabMoving.value = true
+  settingsTabFrameStyle.value = {
+    opacity: 1,
+    left: `${itemRect.left - hostRect.left}px`,
+    top: `${itemRect.top - hostRect.top}px`,
+    width: `${itemRect.width}px`,
+    height: `${itemRect.height}px`,
+  }
+  clearTimeout(settingsTabTimer)
+  settingsTabTimer = setTimeout(() => { settingsTabMoving.value = false }, 320)
+}
+
+function onSettingsTabMouseMove(event) {
+  const tabList = settingsTabsRef.value?.querySelector('.p-tablist')
+  if (!tabList?.contains(event.target)) {
+    const active = activeSettingsTab()
+    if (active && active !== settingsTabTarget) moveSettingsTabFrame(active)
+    return
+  }
+  const items = settingsTabItems()
+  if (!items.length) return
+  let nearest = items[0]
+  let distance = Infinity
+  for (const item of items) {
+    const rect = item.getBoundingClientRect()
+    const nextDistance = Math.abs(event.clientX - (rect.left + rect.width / 2))
+    if (nextDistance < distance) {
+      nearest = item
+      distance = nextDistance
+    }
+  }
+  if (nearest !== settingsTabTarget) moveSettingsTabFrame(nearest)
+}
+
+function onSettingsTabMouseLeave() {
+  moveSettingsTabFrame(activeSettingsTab())
+}
 
 // useTheme() exposes refs; unwrap for template binding (templates don't
 // unwrap refs nested inside plain objects).
 const isDark = computed(() => theme.isDark.value)
 const autoColor = computed(() => theme.autoColor.value)
 const lightTheme = computed(() => theme.lightTheme.value)
+const darkTheme = computed(() => theme.darkTheme.value)
 const pageTransition = computed(() => theme.pageTransition.value)
+const customColorKeys = ['primary', 'secondary', 'accent']
+const customModes = ['light', 'dark']
+const showCustomPalette = ref(false)
+const customDrafts = reactive({
+  light: {
+    name: theme.customThemes.value.light?.name || '',
+    colors: [...(theme.customThemes.value.light?.colors || ['#C87773', '#77A67B', '#B7E6F0'])],
+  },
+  dark: {
+    name: theme.customThemes.value.dark?.name || '',
+    colors: [...(theme.customThemes.value.dark?.colors || ['#FEB4C1', '#5A6CBC', '#3B1E3D'])],
+  },
+})
+const customSaved = reactive({ light: false, dark: false })
+const customPaletteTimers = { light: null, dark: null }
 
 const languages = [
   { code: 'zh-CN', name: '中文' },
@@ -558,8 +552,76 @@ const languages = [
 ]
 
 const lightThemes = computed(() =>
-  Object.values(theme.themes).filter(t => !t.isDark)
+  Object.values(theme.themes.value).filter(t => !t.isDark)
 )
+const darkThemes = computed(() =>
+  Object.values(theme.themes.value).filter(t => t.isDark)
+)
+
+function selectTheme(selected) {
+  theme.setAutoColor(false)
+  theme.clearOverrides()
+  if (selected.isDark) {
+    theme.setDarkTheme(selected.id)
+    if (!isDark.value) theme.toggleDark()
+  } else {
+    theme.setLightTheme(selected.id)
+    if (isDark.value) theme.toggleDark()
+  }
+}
+
+function themePreview(selected) {
+  const active = selected.id === (isDark.value ? darkTheme.value : lightTheme.value)
+  const colors = active
+    ? { ...selected.colors, ...theme.overrides.value }
+    : selected.colors
+  return `conic-gradient(${colors['primary-color']} 0 50%, ${colors['secondary-color']} 50% 75%, ${colors['accent-color']} 75% 100%)`
+}
+
+function customDraftValid(mode) {
+  const draft = customDrafts[mode]
+  return Boolean(draft.name.trim())
+    && draft.colors.length === 3
+    && draft.colors.every(color => /^#[0-9a-f]{6}$/i.test(color))
+}
+
+function customPreview(mode) {
+  const colors = customDrafts[mode].colors
+  const safe = colors.every(color => /^#[0-9a-f]{6}$/i.test(color))
+    ? colors
+    : (mode === 'dark' ? ['#FEB4C1', '#5A6CBC', '#3B1E3D'] : ['#C87773', '#77A67B', '#B7E6F0'])
+  return `conic-gradient(${safe[0]} 0 50%, ${safe[1]} 50% 75%, ${safe[2]} 75% 100%)`
+}
+
+function saveCustomScheme(mode) {
+  if (!customDraftValid(mode)) return
+  const draft = customDrafts[mode]
+  const colors = draft.colors.map(color => color.toUpperCase())
+  if (!theme.saveCustomTheme(mode, draft.name, colors)) return
+  draft.colors = colors
+  customSaved[mode] = true
+  clearTimeout(customPaletteTimers[mode])
+  customPaletteTimers[mode] = setTimeout(() => { customSaved[mode] = false }, 1400)
+}
+
+const thirdPartyResources = [
+  { name: 'Vue.js', license: 'MIT', url: 'https://vuejs.org/' },
+  { name: 'Vue Router', license: 'MIT', url: 'https://router.vuejs.org/' },
+  { name: 'Vite', license: 'MIT', url: 'https://vite.dev/' },
+  { name: 'PrimeVue', license: 'MIT', url: 'https://primevue.org/' },
+  { name: 'PrimeIcons', license: 'MIT', url: 'https://primevue.org/icons/' },
+  { name: 'Apache ECharts', license: 'Apache-2.0', url: 'https://echarts.apache.org/' },
+  { name: 'Lucide', license: 'ISC', url: 'https://lucide.dev/' },
+  { name: 'Sass', license: 'MIT', url: 'https://sass-lang.com/' },
+  { name: '.NET / ASP.NET Core', license: 'MIT', url: 'https://dotnet.microsoft.com/' },
+  { name: 'Entity Framework Core', license: 'MIT', url: 'https://learn.microsoft.com/ef/core/' },
+  { name: 'Windows Services Hosting', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.Extensions.Hosting.WindowsServices' },
+  { name: 'SQLite', license: 'Public Domain', url: 'https://sqlite.org/' },
+  { name: 'SQLitePCLRaw', license: 'MIT', url: 'https://github.com/ericsink/SQLitePCL.raw' },
+  { name: 'CommunityToolkit Notifications', license: 'MIT', url: 'https://github.com/CommunityToolkit/Labs-Windows' },
+  { name: 'Ubuntu Font Family', license: 'Ubuntu Font Licence 1.0', url: 'https://design.ubuntu.com/font' },
+  { name: 'NSIS', license: 'zlib/libpng', url: 'https://nsis.sourceforge.io/' },
+]
 
 const form = reactive({
   trackingEnabled: true,
@@ -569,7 +631,7 @@ const form = reactive({
   processPollSeconds: 30,
   mediaPollSeconds: 5,
   idleThresholdMinutes: 2,
-  dataRetentionDays: 90,
+  dataRetentionDays: 365,
   apiPort: 32579,
   useNtp: true,
   timeServer: 'pool.ntp.org',
@@ -602,8 +664,16 @@ const statusText = computed(() =>
 )
 
 onMounted(async () => {
+  await nextTick()
+  moveSettingsTabFrame(activeSettingsTab())
   await loadSettings()
   await loadDbStats()
+})
+
+onBeforeUnmount(() => {
+  clearTimeout(settingsTabTimer)
+  clearTimeout(customPaletteTimers.light)
+  clearTimeout(customPaletteTimers.dark)
 })
 
 async function loadSettings() {
@@ -739,6 +809,79 @@ async function runReset() {
   color: var(--text-color);
 }
 
+.settings-tabs-nav {
+  position: relative;
+}
+
+.memphis-tabs {
+  position: relative;
+  z-index: 1;
+}
+
+.settings-tab-frame {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent);
+  transition:
+    left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    top 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    height 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.12s ease-out,
+    box-shadow 0.15s ease-out,
+    opacity 0.15s ease;
+
+  &.moving {
+    box-shadow: none !important;
+  }
+}
+
+.settings-tabs-nav:has(.p-tablist:hover) .settings-tab-frame:not(.moving) {
+  border-color: var(--text-color);
+  transform: translateY(-2px);
+  box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
+}
+
+:deep(.p-tablist),
+:deep(.p-tablist-tab-list) {
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+:deep(.p-tablist-tab-list) {
+  gap: 18px;
+  flex-wrap: wrap;
+  padding: 0 !important;
+}
+
+:deep(.p-tab) {
+  position: relative;
+  z-index: 3;
+  border: 2px solid transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-color) !important;
+}
+
+:deep(.p-tab:hover),
+:deep(.p-tab-active) {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+:global(.settings-tabs-nav .p-tab),
+:global(.settings-tabs-nav .p-tab:hover),
+:global(.settings-tabs-nav .p-tab[data-p-active="true"]),
+:global(.settings-tabs-nav .p-tab[aria-selected="true"]) {
+  border-color: transparent !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-color) !important;
+}
+
 .status-banner {
   padding: 12px 16px;
   border: 2px solid var(--border-color);
@@ -773,59 +916,241 @@ async function runReset() {
 }
 
 .theme-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.theme-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 16px;
+  gap: 18px;
+}
+
+.theme-group {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+}
+
+.theme-group-label {
+  color: var(--surface-400);
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .theme-option {
-  padding: 16px;
+  min-width: 148px;
+  padding: 10px 14px;
   border: 2px solid var(--surface-200);
   background: var(--surface-card);
   cursor: pointer;
-  transition: all 0.2s ease;
-  text-align: left;
-  width: 100%;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  color: var(--text-color);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 
   &:hover {
     border-color: var(--primary-color);
     transform: translateY(-2px);
-    box-shadow: 0 4px 0 var(--primary-color);
+    box-shadow: 0 3px 0 var(--primary-color);
   }
 
   &:active {
-    transform: translateY(0);
-    box-shadow: none;
+    transform: translateY(1px) scale(0.98);
+    box-shadow: 0 1px 0 var(--primary-color);
   }
 
   &.active {
     border-color: var(--primary-color);
-    border-width: 3px;
-    box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
+    background: color-mix(in srgb, var(--primary-color) 10%, var(--surface-card));
   }
 }
 
-.theme-preview {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.preview-bar {
-  flex: 1;
-  height: 40px;
-  border: 2px solid var(--border-color);
+.theme-orb {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 50%;
+  clip-path: circle(50% at 50% 50%);
+  overflow: hidden;
+  background-clip: padding-box;
+  border: 2px solid color-mix(in srgb, var(--border-color) 55%, transparent);
 }
 
 .theme-name {
   font-weight: 600;
-  margin-bottom: 4px;
   color: var(--text-color);
 }
 
-.theme-desc {
-  font-size: 0.85rem;
-  color: var(--text-color-secondary);
+.custom-palette {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--surface-200);
+}
+
+.custom-palette-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-color);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.custom-palette-toggle {
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  border: 2px solid var(--primary-color);
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.16s ease, background-color 0.16s ease;
+
+  &:hover {
+    background: color-mix(in srgb, var(--primary-color) 16%, transparent);
+    transform: translateY(-1px);
+  }
+
+  &:active { transform: translateY(1px) scale(0.94); }
+}
+
+.custom-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.custom-theme-editor {
+  min-width: 0;
+  padding: 14px;
+  border: 2px solid var(--surface-200);
+  background: var(--surface-card);
+  display: grid;
+  gap: 12px;
+}
+
+.custom-theme-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-color);
+}
+
+.custom-theme-name {
+  width: min(100%, 280px);
+  height: 34px;
+  padding: 6px 9px;
+  border: 2px solid var(--surface-200);
+  background: var(--settings-input-bg);
+  color: var(--settings-input-text);
+  caret-color: var(--settings-input-text);
+
+  &::placeholder { color: var(--settings-input-placeholder); opacity: 1; }
+  &:focus { outline: none; border-color: var(--primary-color); }
+}
+
+.custom-orb {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+
+.custom-color-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 9px;
+}
+
+.custom-color-field {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+
+  > span {
+    grid-column: 1 / -1;
+    color: var(--surface-400);
+    font-size: 0.76rem;
+    font-weight: 700;
+  }
+}
+
+.color-dot {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 2px solid var(--border-color);
+  border-radius: 50%;
+  clip-path: circle(50% at 50% 50%);
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+
+  &::-webkit-color-swatch-wrapper { padding: 0; }
+  &::-webkit-color-swatch { border: 0; border-radius: 50%; }
+  &::-moz-color-swatch { border: 0; border-radius: 50%; }
+}
+
+.custom-hex-input {
+  width: 100%;
+  height: 32px;
+  padding: 6px 9px;
+  border: 2px solid var(--surface-200);
+  background: var(--settings-input-bg);
+  color: var(--settings-input-text);
+  caret-color: var(--settings-input-text);
+  font-family: 'Ubuntu Mono', 'Consolas', monospace;
+  text-transform: uppercase;
+
+  &:focus {
+    outline: none;
+    border-color: var(--primary-color);
+  }
+}
+
+.custom-palette-save {
+  justify-self: start;
+  min-height: 32px;
+  padding: 6px 12px;
+  border: 2px solid var(--primary-color);
+  background: transparent;
+  color: var(--text-color);
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition: transform 0.16s ease, background-color 0.16s ease;
+
+  &:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--primary-color) 18%, transparent);
+    transform: translateY(-1px);
+  }
+
+  &:active:not(:disabled) { transform: translateY(1px) scale(0.98); }
+  &:disabled { opacity: 0.45; cursor: not-allowed; }
+}
+
+.custom-expand-enter-active,
+.custom-expand-leave-active {
+  transition: opacity 0.18s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform-origin: top;
+}
+
+.custom-expand-enter-from,
+.custom-expand-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scaleY(0.97);
 }
 
 .toggle-row {
@@ -844,14 +1169,9 @@ async function runReset() {
   gap: 12px;
 }
 
-.language-selector {
-  display: flex;
-  gap: 12px;
-}
-
 .option-button {
-  flex: 1;
-  padding: 16px;
+  min-width: 148px;
+  padding: 12px 16px;
   border: 2px solid var(--surface-200);
   background: transparent;
   display: flex;
@@ -871,21 +1191,22 @@ async function runReset() {
   }
 
   &:active {
-    transform: translateY(0);
-    box-shadow: none;
+    transform: translateY(1px) scale(0.98);
+    box-shadow: 0 1px 0 var(--primary-color);
   }
 
   &.active {
     border-color: var(--primary-color);
     background: var(--primary-color);
-    color: var(--surface-card);
+    color: var(--text-color);
     box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
   }
 }
 
 .input-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 280px));
+  justify-content: start;
   gap: 16px;
 }
 
@@ -893,6 +1214,7 @@ async function runReset() {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: min(100%, 320px);
 
   label {
     font-weight: 600;
@@ -903,6 +1225,30 @@ async function runReset() {
   small {
     font-size: 0.85rem;
     color: var(--surface-400);
+  }
+}
+
+.unit-control {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) auto;
+  align-items: center;
+  gap: 10px;
+
+  :deep(.p-inputnumber),
+  :deep(.p-inputtext) {
+    width: 100%;
+    background: var(--settings-input-bg) !important;
+    color: var(--settings-input-text) !important;
+    caret-color: var(--settings-input-text);
+  }
+
+  :deep(.p-inputtext::placeholder) { color: var(--settings-input-placeholder) !important; opacity: 1; }
+
+  > span {
+    color: var(--surface-400);
+    font-size: 0.85rem;
+    font-weight: 600;
+    white-space: nowrap;
   }
 }
 
@@ -929,11 +1275,12 @@ async function runReset() {
 }
 
 .exclude-input {
-  width: 100%;
+  width: min(620px, 100%);
   padding: 8px 12px;
   border: 2px solid var(--surface-200);
-  background: var(--surface-card);
-  color: var(--text-color);
+  background: var(--settings-input-bg);
+  color: var(--settings-input-text);
+  caret-color: var(--settings-input-text);
   font-family: inherit;
   font-size: 0.9rem;
   resize: vertical;
@@ -942,15 +1289,19 @@ async function runReset() {
     outline: none;
     border-color: var(--primary-color);
   }
+
+
+  &::placeholder { color: var(--settings-input-placeholder); opacity: 1; }
 }
 
 .memphis-text-input,
 .memphis-select {
-  width: 100%;
+  width: min(360px, 100%);
   padding: 8px 12px;
   border: 2px solid var(--surface-200);
-  background: var(--surface-card);
-  color: var(--text-color);
+  background: var(--settings-input-bg);
+  color: var(--settings-input-text);
+  caret-color: var(--settings-input-text);
   font-family: inherit;
   font-size: 0.9rem;
   transition: border-color 0.2s ease;
@@ -959,6 +1310,10 @@ async function runReset() {
     outline: none;
     border-color: var(--primary-color);
   }
+}
+
+.language-select {
+  width: min(220px, 100%);
 }
 
 .memphis-select {
@@ -1038,88 +1393,69 @@ async function runReset() {
   line-height: 1.6;
 }
 
-.license-section {
-  padding: 20px;
-  background: var(--surface-100);
+.resource-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.resource-card {
+  min-width: 0;
+  min-height: 68px;
+  padding: 12px 14px;
   border: 2px solid var(--surface-200);
-  margin-bottom: 20px;
-
-  &:last-child {
-    margin-bottom: 0;
-  }
-}
-
-.license-title {
-  font-size: 1.3rem;
-  font-weight: 700;
-  margin-bottom: 16px;
-  color: var(--primary-color);
-}
-
-.license-info {
-  margin-bottom: 16px;
-}
-
-.info-row {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 8px;
-  align-items: baseline;
-
-  .label {
-    font-weight: 600;
-    color: var(--text-color);
-    min-width: 80px;
-  }
-
-  .value {
-    color: var(--text-color-secondary);
-  }
-
-  .link {
-    color: var(--primary-color);
-    text-decoration: none;
-    font-weight: 600;
-
-    &:hover {
-      text-decoration: underline;
-    }
-  }
-}
-
-.license-details {
-  margin-top: 16px;
-  border: 2px solid var(--surface-200);
-  background: var(--surface-card);
-
-  summary {
-    padding: 12px 16px;
-    font-weight: 600;
-    cursor: pointer;
-    color: var(--primary-color);
-    user-select: none;
-    transition: background 0.2s;
-
-    &:hover {
-      background: var(--surface-100);
-    }
-
-    &::marker {
-      color: var(--primary-color);
-    }
-  }
-}
-
-.license-text {
-  padding: 20px;
-  margin: 0;
   background: var(--surface-card);
   color: var(--text-color);
-  font-family: 'Ubuntu Mono', 'Consolas', monospace;
-  font-size: 0.85rem;
-  line-height: 1.6;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  overflow: hidden;
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+
+  &:hover {
+    border-color: var(--primary-color);
+    transform: translateY(-2px);
+    box-shadow: 0 3px 0 var(--primary-color);
+  }
+
+  &:active {
+    transform: translateY(1px) scale(0.99);
+    box-shadow: 0 1px 0 var(--primary-color);
+  }
+}
+
+.resource-name {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.resource-license {
+  color: var(--surface-400);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .theme-group {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .theme-option {
+    min-width: 138px;
+  }
+
+  .button-group {
+    flex-wrap: wrap;
+  }
+
+  .custom-theme-grid,
+  .custom-color-list {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

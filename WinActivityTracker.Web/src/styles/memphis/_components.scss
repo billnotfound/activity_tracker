@@ -180,11 +180,11 @@
 .dark-mode {
   .memphis-card:hover {
     box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent),
-                0 0 12px rgba(255, 107, 157, 0.2);
+                0 0 12px color-mix(in srgb, var(--primary-color) 20%, transparent);
   }
 
   .memphis-button:hover {
     box-shadow: 0 4px 0 var(--primary-color, $memphis-fallback-primary),
-                0 0 12px rgba(255, 107, 157, 0.2);
+                0 0 12px color-mix(in srgb, var(--primary-color) 20%, transparent);
   }
 }

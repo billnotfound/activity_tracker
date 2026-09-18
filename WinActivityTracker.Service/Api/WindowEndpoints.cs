@@ -49,20 +49,15 @@ public static class WindowEndpoints
         var start = from.HasValue ? NormalizeToUtc(from.Value) : DateTime.UtcNow.AddHours(-1);
         var end = to.HasValue ? NormalizeToUtc(to.Value) : DateTime.UtcNow;
 
-        var take = Math.Clamp(limit ?? 2000, 1, 50000); // 50k max supports longer ranges
+        var take = Math.Clamp(limit ?? 2000, 1, 50000);
         var skip = Math.Max(0, offset ?? 0);
 
         var baseQuery = HiddenFilter.ExcludeHidden(
             db.FocusChanges.AsNoTracking().Where(f => f.Timestamp >= start && f.Timestamp <= end),
             tagService.GetHiddenRules());
 
-        // Idle rows are dropped so the frontend's gap detection renders
-        // those spans as idle areas instead of activity.
         baseQuery = IdleFilter.ExcludeIdle(baseQuery, tagService.GetIdleRules());
 
-        // Context-panel queries use an exact process-name match. NOCASE keeps
-        // the behavior aligned with TagService/TitleNormalizer without turning
-        // the parameter into a substring search.
         if (!string.IsNullOrWhiteSpace(process))
         {
             var exactProcess = process.Trim();
@@ -72,29 +67,18 @@ public static class WindowEndpoints
 
         var total = await baseQuery.CountAsync();
 
-        // Wide-range sampling: keep the work and allocation bounded in SQLite.
-        // The former implementation materialized every matching row and then
-        // discarded most of them in memory, making week-sized ranges regress as
-        // the database grew. Activity ids are monotonic and dense, so modulo-id
-        // sampling gives stable coverage; per-day anchors keep sparse dates
-        // visible and the final anchor preserves the selected range's end.
         const int maxPoints = 8000;
         var sampled = false;
         List<TimelineRow> rows;
         if (total > maxPoints && skip == 0)
         {
-            // Reserve one anchor for every active day (plus the final row).
-            // Pure modulo-id sampling can skip a sparse day completely when a
-            // neighboring day is dense, making that day disappear at wide
-            // ranges even though it reappears after zooming in.
-            var activeDays = await baseQuery
-                .Select(f => f.Timestamp.Date)
-                .Distinct()
-                .OrderBy(day => day)
+            var dayAnchorIds = await baseQuery
+                .GroupBy(f => f.Timestamp.Date)
+                .Select(group => group.Min(f => f.Id))
                 .ToListAsync();
-            var canAnchorEveryDay = activeDays.Count <= maxPoints - 2;
+            var canAnchorEveryDay = dayAnchorIds.Count <= maxPoints - 2;
             var sampleBudget = canAnchorEveryDay
-                ? Math.Max(1, maxPoints - activeDays.Count - 1)
+                ? Math.Max(1, maxPoints - dayAnchorIds.Count - 1)
                 : maxPoints - 2;
             var step = (total + sampleBudget - 1) / sampleBudget;
             rows = await baseQuery
@@ -113,22 +97,19 @@ public static class WindowEndpoints
 
             if (canAnchorEveryDay)
             {
-                var coveredDays = rows.Select(row => row.Timestamp.Date).ToHashSet();
-                foreach (var day in activeDays)
-                {
-                    if (coveredDays.Contains(day)) continue;
-                    var nextDay = day.AddDays(1);
-                    var anchor = await baseQuery
-                        .Where(f => f.Timestamp >= day && f.Timestamp < nextDay)
-                        .OrderBy(f => f.Timestamp)
-                        .Select(f => new TimelineRow
-                        {
-                            Id = f.Id, Timestamp = f.Timestamp, ProcessName = f.ProcessName,
-                            WindowTitle = f.WindowTitle, DurationSeconds = f.DurationSeconds
-                        })
-                        .FirstAsync();
-                    rows.Add(anchor);
-                }
+                var anchors = await baseQuery
+                    .Where(f => dayAnchorIds.Contains(f.Id))
+                    .Select(f => new TimelineRow
+                    {
+                        Id = f.Id,
+                        Timestamp = f.Timestamp,
+                        ProcessName = f.ProcessName,
+                        WindowTitle = f.WindowTitle,
+                        DurationSeconds = f.DurationSeconds
+                    })
+                    .ToListAsync();
+                var sampledIds = rows.Select(row => row.Id).ToHashSet();
+                rows.AddRange(anchors.Where(anchor => sampledIds.Add(anchor.Id)));
             }
             else
             {
@@ -326,16 +307,14 @@ public static class WindowEndpoints
             tagService.GetIdleRules());
 
         var take = Math.Clamp(limit ?? 50000, 1, 50000);
-        var rows = await query.OrderBy(session => session.StartTime)
-            .Take(take)
-            .Select(session => new
+        var rows = query.OrderBy(session => session.StartTime)
+            .Select(session => new ProcessSessionRow
             {
-                session.ProcessName,
-                session.ProcessId,
-                session.StartTime,
-                session.EndTime
-            })
-            .ToListAsync();
+                ProcessName = session.ProcessName,
+                ProcessId = session.ProcessId,
+                StartTime = session.StartTime,
+                EndTime = session.EndTime
+            });
 
         Regex? matcher = null;
         if (!string.IsNullOrWhiteSpace(process))
@@ -347,18 +326,33 @@ public static class WindowEndpoints
             }
         }
 
-        var result = rows
-            .Where(row => matcher == null || matcher.IsMatch(row.ProcessName))
-            .Select(row => new
+        var result = new List<ProcessSessionResponse>(take);
+        await foreach (var row in rows.AsAsyncEnumerable())
+        {
+            if (matcher != null)
             {
-                row.ProcessName,
-                row.ProcessId,
-                row.StartTime,
-                row.EndTime,
-                Tags = tagService.ResolveTags(row.ProcessName, null)
-            })
-            .Where(row => !tagged || row.Tags.Count > 0)
-            .ToList();
+                try
+                {
+                    if (!matcher.IsMatch(row.ProcessName)) continue;
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    continue;
+                }
+            }
+
+            var tags = tagService.ResolveTags(row.ProcessName, null);
+            if (tagged && tags.Count == 0) continue;
+            result.Add(new ProcessSessionResponse
+            {
+                ProcessName = row.ProcessName,
+                ProcessId = row.ProcessId,
+                StartTime = row.StartTime,
+                EndTime = row.EndTime,
+                Tags = tags
+            });
+            if (result.Count == take) break;
+        }
         return Results.Ok(result);
     }
 
@@ -385,5 +379,18 @@ internal sealed class WindowSessionRow
     public string WindowTitle { get; set; } = string.Empty;
     public DateTime OpenTime { get; set; }
     public DateTime? CloseTime { get; set; }
+    public List<string> Tags { get; set; } = [];
+}
+
+internal class ProcessSessionRow
+{
+    public string ProcessName { get; set; } = string.Empty;
+    public int ProcessId { get; set; }
+    public DateTime StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
+}
+
+internal sealed class ProcessSessionResponse : ProcessSessionRow
+{
     public List<string> Tags { get; set; } = [];
 }

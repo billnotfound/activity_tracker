@@ -32,6 +32,19 @@ code, pre, .code, .mono {
   min-height: 100vh;
 }
 
+:root {
+  --settings-input-bg: #FFFFFF;
+  --settings-input-text: #000000;
+  --settings-input-placeholder: #626262;
+}
+
+html.dark-mode {
+  color-scheme: dark;
+  --settings-input-bg: #181818;
+  --settings-input-text: #FFFFFF;
+  --settings-input-placeholder: #A0A0A0;
+}
+
 // Override PrimeVue default styles to match Memphis
 .p-component {
   font-family: inherit;
@@ -51,8 +64,8 @@ code, pre, .code, .mono {
   }
   
   &:active {
-    transform: translateY(0);
-    box-shadow: none !important;
+    transform: translateY(1px) scale(0.98);
+    box-shadow: 0 1px 0 var(--primary-color) !important;
   }
 }
 
@@ -121,14 +134,15 @@ code, pre, .code, .mono {
     border: none !important;
     background: transparent !important;
     display: flex;
-    gap: 12px;
+    gap: 18px;
+    flex-wrap: wrap;
     padding: 0 !important;
     margin-bottom: 24px;
 
     .p-tab {
       border-radius: 0 !important;
-      border: 2px solid var(--surface-200) !important;
-      background: var(--surface-card) !important;
+      border: 2px solid transparent !important;
+      background: transparent !important;
       font-weight: 600 !important;
       letter-spacing: 0.5px;
       font-size: 0.9rem;
@@ -137,23 +151,23 @@ code, pre, .code, .mono {
       color: var(--text-color) !important;
 
       &:hover {
-        background: var(--surface-100) !important;
-        border-color: var(--primary-color) !important;
+        background: transparent !important;
+        border-color: transparent !important;
         transform: translateY(-2px);
-        box-shadow: 0 4px 0 var(--primary-color);
+        box-shadow: none;
       }
 
       &:active {
-        transform: translateY(0);
-        box-shadow: none;
+        transform: translateY(1px) scale(0.98);
+        box-shadow: 0 1px 0 var(--primary-color);
       }
     }
 
     .p-tab-active {
-      background: var(--primary-color) !important;
-      color: white !important;
-      border-color: var(--primary-color) !important;
-      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.2);
+      background: transparent !important;
+      color: var(--text-color) !important;
+      border-color: transparent !important;
+      box-shadow: none;
     }
   }
 
@@ -184,6 +198,11 @@ code, pre, .code, .mono {
     color: var(--surface-card);
     transform: translateY(-2px);
     box-shadow: 0 4px 0 var(--primary-color);
+  }
+
+  &:active:not(:disabled) {
+    transform: translateY(1px) scale(0.94);
+    box-shadow: 0 1px 0 currentColor !important;
   }
 
   &:disabled {
@@ -241,12 +260,12 @@ code, pre, .code, .mono {
   justify-content: center;
   transition: all 0.2s ease;
 
-  // Gradient fills the tile when on — fades in smoothly.
+  // Solid fill keeps the state legible in every theme.
   &::before {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    background: var(--primary-color);
     opacity: 0;
     transition: opacity 0.2s ease;
   }
@@ -258,6 +277,11 @@ code, pre, .code, .mono {
 
   &:hover {
     border-color: var(--border-color);
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(1px) scale(0.94);
   }
 
   &:focus-visible {
@@ -419,8 +443,8 @@ code, pre, .code, .mono {
   color: var(--text-color);
 
   &.alert-danger {
-    background-color: rgba(239, 68, 68, 0.1);
-    border-color: rgb(239, 68, 68);
+    background-color: color-mix(in srgb, var(--danger-color) 10%, transparent);
+    border-color: var(--danger-color);
     color: var(--text-color);
   }
 }

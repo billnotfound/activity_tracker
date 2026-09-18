@@ -44,10 +44,23 @@
         <span>{{ t('timeAnomaly.emptyAction') }}</span>
       </button>
       <div v-for="a in items" :key="a.id" class="anomaly-row" :data-status="a.status">
-        <span class="badge" :class="'badge-' + a.status">{{ t('timeAnomaly.status.' + a.status) }}</span>
-        <span class="source">{{ t('timeAnomaly.source') }}: {{ sourceLabel(a.source) }}</span>
-        <span class="offset">{{ t('timeAnomaly.offset') }}: {{ a.offsetSeconds }}s</span>
-        <span class="time">{{ formatTime(a.detectedAt) }}</span>
+        <div class="anomaly-meta">
+          <span class="badge" :class="'badge-' + a.status">{{ t('timeAnomaly.status.' + a.status) }}</span>
+          <span>{{ sourceLabel(a.source) }}</span>
+          <span>{{ formatOffset(a.offsetSeconds) }}</span>
+          <span>{{ formatTime(a.detectedAt) }}</span>
+        </div>
+        <div class="time-change">
+          <div class="time-point before">
+            <span>{{ t('timeAnomaly.beforeChange') }}</span>
+            <b>{{ timeChange(a).before }}</b>
+          </div>
+          <ArrowRight :size="20" class="time-arrow" />
+          <div class="time-point after">
+            <span>{{ t('timeAnomaly.afterChange') }}</span>
+            <b>{{ timeChange(a).after }}</b>
+          </div>
+        </div>
         <span v-if="a.note" class="note">{{ a.note }}</span>
         <div class="actions">
           <!-- Pending → direction choice (pre/post) -->
@@ -92,7 +105,7 @@ import { useI18n } from '../i18n/index.js'
 import { parseUtcTs } from '../utils/time.js'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import { CircleCheck, MousePointer2 } from '@lucide/vue'
+import { ArrowRight, CircleCheck, MousePointer2 } from '@lucide/vue'
 
 defineProps({ embedded: { type: Boolean, default: false } })
 
@@ -162,12 +175,44 @@ async function ignore(a) {
   await load()
 }
 function formatTime(v) {
-  const d = parseUtcTs(v)
+  const d = v instanceof Date ? v : parseUtcTs(v)
   return d ? d.toLocaleString() : '—'
 }
 function formatNtpTime(v) {
   const d = parseUtcTs(v)
   return d ? d.toLocaleString() : t('timeAnomaly.ntpNever')
+}
+function formatOffset(value) {
+  const seconds = Number(value || 0)
+  return `${seconds > 0 ? '+' : ''}${seconds.toLocaleString()}s`
+}
+function shiftTime(value, seconds) {
+  const date = value instanceof Date ? value : parseUtcTs(value)
+  if (!date) return null
+  return new Date(date.getTime() + seconds * 1000)
+}
+function formatRange(from, to) {
+  const fromDate = from instanceof Date ? from : parseUtcTs(from)
+  const toDate = to instanceof Date ? to : parseUtcTs(to)
+  if (!fromDate && !toDate) return '—'
+  if (!toDate || fromDate?.getTime() === toDate.getTime()) return fromDate?.toLocaleString() || toDate.toLocaleString()
+  return `${fromDate?.toLocaleString() || '—'} — ${toDate.toLocaleString()}`
+}
+function timeChange(anomaly) {
+  if (anomaly.oldTime || anomaly.newTime) {
+    return {
+      before: formatTime(anomaly.oldTime),
+      after: formatTime(anomaly.newTime),
+    }
+  }
+
+  const correction = -Number(anomaly.offsetSeconds || 0)
+  const shiftedFrom = shiftTime(anomaly.fromWall, correction)
+  const shiftedTo = shiftTime(anomaly.toWall, correction)
+  return {
+    before: formatRange(anomaly.fromWall, anomaly.toWall),
+    after: formatRange(shiftedFrom, shiftedTo),
+  }
 }
 function sourceLabel(source) {
   return source === 'User' ? t('timeAnomaly.sourceUser') : source
@@ -250,18 +295,17 @@ onMounted(load)
 }
 
 .anomaly-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 12px 16px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
   border: 2px solid var(--surface-200);
   margin-bottom: 12px;
   background: var(--surface-card);
-  transition: border-color 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease;
 
   &:hover {
     border-color: var(--primary-color);
+    transform: translateY(-1px);
   }
 
   .badge {
@@ -281,30 +325,64 @@ onMounted(load)
     &.badge-Ignored { border-color: var(--surface-400); color: var(--surface-400); }
   }
 
-  .source,
-  .offset {
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--text-color);
-  }
-
-  .time {
-    font-size: 0.85rem;
-    color: var(--text-color-secondary);
-  }
-
   .note {
     font-size: 0.85rem;
     color: var(--surface-400);
-    flex-basis: 100%;
   }
 
   .actions {
-    margin-left: auto;
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
+    justify-content: flex-end;
   }
+}
+
+.anomaly-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--surface-400);
+  font-size: 0.82rem;
+}
+
+.time-change {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+}
+
+.time-point {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 2px solid var(--surface-200);
+  background: var(--surface-100);
+  display: grid;
+  gap: 5px;
+
+  span {
+    color: var(--surface-400);
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  b {
+    color: var(--text-color);
+    font-size: 0.92rem;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+  }
+
+  &.after {
+    border-color: color-mix(in srgb, var(--primary-color) 55%, var(--surface-200));
+  }
+}
+
+.time-arrow {
+  align-self: center;
+  color: var(--primary-color);
 }
 
 .empty {
@@ -352,5 +430,16 @@ onMounted(load)
   display: flex;
   gap: 12px;
   justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .time-change {
+    grid-template-columns: 1fr;
+  }
+
+  .time-arrow {
+    transform: rotate(90deg);
+    justify-self: center;
+  }
 }
 </style>

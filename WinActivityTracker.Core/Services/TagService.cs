@@ -13,19 +13,8 @@ internal static class LocaleHelper
 
 public class TagService
 {
-    /// <summary>
-    /// Special internal tag: rules tagged with this hide matching records
-    /// globally (all endpoints + status window) and exclude them from totals.
-    /// Allowed through the "_"-prefix filter; never returned by ResolveTags.
-    /// </summary>
     public const string HiddenTag = "__hidden";
 
-    /// <summary>
-    /// Special internal tag: rules tagged with this mark matching records as
-    /// idle time. Idle records stay visible but are flagged as idle and are
-    /// excluded from activity totals (summary reports them as totalIdleSeconds).
-    /// Allowed through the "_"-prefix filter; never returned by ResolveTags.
-    /// </summary>
     public const string IdleTag = "__idle";
 
     private readonly string _filePath;
@@ -63,10 +52,6 @@ public class TagService
         _lastWriteTime = File.GetLastWriteTimeUtc(_filePath);
     }
 
-    /// <summary>
-    /// Resolves all tags for a given process/window, applying weight and mode rules.
-    /// Returns an empty list if nothing matches.
-    /// </summary>
     public List<string> ResolveTags(string processName, string? windowTitle)
     {
         ReloadIfChanged();
@@ -76,20 +61,12 @@ public class TagService
         return ResolveByWeight(allMatches);
     }
 
-    /// <summary>
-    /// Rules tagged with <see cref="HiddenTag"/>: matches hide the record
-    /// globally and exclude it from totals.
-    /// </summary>
     public List<TagRule> GetHiddenRules()
     {
         ReloadIfChanged();
         return _rules.Where(r => r.Tag == HiddenTag).ToList();
     }
 
-    /// <summary>
-    /// Returns true if any hidden rule matches the given process/window.
-    /// Static so callers that already fetched rules can reuse them.
-    /// </summary>
     public static bool MatchesHidden(
         IReadOnlyList<TagRule> hiddenRules, string processName, string? windowTitle)
     {
@@ -112,19 +89,12 @@ public class TagService
         return false;
     }
 
-    /// <summary>
-    /// Rules tagged with <see cref="IdleTag"/>: matches are marked as idle time.
-    /// </summary>
     public List<TagRule> GetIdleRules()
     {
         ReloadIfChanged();
         return _rules.Where(r => r.Tag == IdleTag).ToList();
     }
 
-    /// <summary>
-    /// Returns true if any idle rule matches the given process/window.
-    /// Static so callers that already fetched rules can reuse them.
-    /// </summary>
     public static bool MatchesIdle(
         IReadOnlyList<TagRule> idleRules, string processName, string? windowTitle)
     {
@@ -147,21 +117,12 @@ public class TagService
         return false;
     }
 
-    /// <summary>
-    /// Convenience: reloads rules and checks whether the record is idle.
-    /// </summary>
     public bool IsIdle(string processName, string? windowTitle)
         => MatchesIdle(GetIdleRules(), processName, windowTitle);
 
-    /// <summary>
-    /// Convenience: reloads rules and checks whether the record is hidden.
-    /// </summary>
     public bool IsHidden(string processName, string? windowTitle)
         => MatchesHidden(GetHiddenRules(), processName, windowTitle);
 
-    /// <summary>
-    /// Convenience: returns the first resolved tag, or null.
-    /// </summary>
     public string? ResolveTag(string processName, string? windowTitle)
     {
         var tags = ResolveTags(processName, windowTitle);
@@ -213,15 +174,10 @@ public class TagService
             .ToList();
     }
 
-    /// <summary>
-    /// Finds all rules that match the given process/window, with title-based
-    /// matches taking priority over process-only matches.
-    /// </summary>
     private List<TagRule> FindAllMatches(string processName, string? windowTitle)
     {
         var matches = new List<TagRule>();
 
-        // Pass 1: rules with titlePattern matching
         foreach (var rule in _rules)
         {
             if (string.IsNullOrEmpty(rule.TitlePattern)) continue;
@@ -237,7 +193,6 @@ public class TagService
 
         if (matches.Count > 0) return matches;
 
-        // Pass 2: process-only rules
         foreach (var rule in _rules)
         {
             if (!string.IsNullOrEmpty(rule.TitlePattern)) continue;
@@ -251,14 +206,6 @@ public class TagService
         return matches;
     }
 
-    /// <summary>
-    /// Applies weight-based resolution:
-    ///   1. Split matches into coexist and overwrite groups
-    ///   2. Find max weight in each group
-    ///   3. Higher-weight group wins; on tie, coexist wins
-    ///   4. If coexist wins: return all coexist tags at max weight
-    ///   5. If overwrite wins: return the single highest-weight overwrite tag
-    /// </summary>
     internal static List<string> ResolveByWeight(List<TagRule> matches)
     {
         if (matches.Count == 0) return [];
@@ -289,9 +236,6 @@ public class TagService
 
     private static bool WildcardMatch(string pattern, string input)
     {
-        // The guided rule builder stores explicit regular expressions with a
-        // prefix so existing wildcard-based configurations keep their original
-        // meaning. Inline (?i) is supported by .NET and generated by the UI.
         if (pattern.StartsWith("regex:", StringComparison.OrdinalIgnoreCase))
         {
             try
@@ -299,12 +243,19 @@ public class TagService
                 return Regex.IsMatch(input, pattern[6..], RegexOptions.None,
                     TimeSpan.FromSeconds(1));
             }
-            catch (ArgumentException)
+            catch (Exception ex) when (ex is ArgumentException or RegexMatchTimeoutException)
             {
                 return false;
             }
         }
         var regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*") + "$";
-        return Regex.IsMatch(input, regex, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        try
+        {
+            return Regex.IsMatch(input, regex, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return false;
+        }
     }
 }
