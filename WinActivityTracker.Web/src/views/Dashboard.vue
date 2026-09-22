@@ -2,7 +2,7 @@
   Dashboard view — Memphis style, ECharts charts, auto-refresh every 2s
 -->
 <template>
-  <div class="dashboard">
+  <div class="dashboard" :data-page-ready="initialRenderReady">
     <!-- Period selector -->
     <div class="period-selector mb-3">
       <div class="period-buttons" ref="periodButtonsRef">
@@ -113,6 +113,7 @@
       :icon="selectedProcessIcon"
       :initial-view="drawerView"
       :initial-tag-names="drawerTagNames"
+      tag-scope="process"
       return-to-popup
       @select-time="openTimeSelection"
       @changed="loadSummary"
@@ -124,6 +125,7 @@
       page="dashboard"
       :process-name="selectedProcess.processName || ''"
       :window-title="selectedProcess.windowTitle || ''"
+      :raw-window-title="selectedProcess.rawWindowTitle || selectedProcess.windowTitle || ''"
       :x="contextPoint.x"
       :y="contextPoint.y"
       :replace-handler="replaceDashboardTitle"
@@ -174,6 +176,7 @@ const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
 const loading = ref(true)
+const initialRenderReady = ref(false)
 const actionDrawerVisible = ref(false)
 const contextMenuVisible = ref(false)
 const drawerView = ref('replace')
@@ -190,14 +193,14 @@ const actionRange = computed(() => {
   return { start: new Date(`${from}T00:00:00`), end: new Date(`${to}T23:59:59`) }
 })
 
-function openProcessActions(processName, color, nativeEvent = null, source = 'focus') {
+function openProcessActions(processName, color, nativeEvent = null, source = 'focus', displayName = '') {
   if (contextMenuVisible.value) {
     setContextMenuVisible(false)
     return
   }
   if (performance.now() - contextClosedAt < 320) return
   if (!processName || processName === t('dashboard.pie.other')) return
-  selectedProcess.value = { processName }
+  selectedProcess.value = { processName, displayName: displayName || processName }
   selectedProcessColor.value = color || 'var(--primary-color)'
   const [fromDate, toDate] = periodRange()
   const atTime = period.value === 'today' ? new Date().toISOString() : new Date(`${toDate}T23:59:59`).toISOString()
@@ -665,7 +668,8 @@ function handleResize() {
 async function loadSummary() {
   const myLoadId = ++loadId
   await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
-  if (summary.value) renderPieChart(summary.value)
+  if (summary.value) await renderPieChart(summary.value)
+  if (myLoadId === loadId) initialRenderReady.value = true
 }
 
 async function fetchSummary(myLoadId) {
@@ -699,7 +703,7 @@ async function fetchSummary(myLoadId) {
     loading.value = false
     await nextTick()
     if (myLoadId !== loadId) return  // stale
-    renderCharts(summary.value)
+    await renderCharts(summary.value)
   } catch (e) {
     if (myLoadId !== loadId) return
     console.error(e)
@@ -728,6 +732,7 @@ async function renderCharts(data) {
 
   const top = data.slice(0, 10)
   const labels = top.map(d => d.processName)
+  const displayNames = top.map(d => d.displayName || d.processName)
   const focusData = top.map(d => +(d.totalSeconds / 60).toFixed(1))
 
   // Compute reference time for time-aware icon queries
@@ -801,7 +806,7 @@ async function renderCharts(data) {
       openProcessActions(meta.labels[nearest], meta.colors[nearest], {
         clientX: event.event?.clientX ?? rect.left + event.offsetX,
         clientY: event.event?.clientY ?? rect.top + event.offsetY,
-      }, 'focus')
+      }, 'focus', meta.displayNames[nearest])
     })
   }
   focusChart.setOption({
@@ -866,11 +871,11 @@ async function renderCharts(data) {
       formatter: params => {
         const p = params[0]
         const totalSec = Math.round(p.value * 60)
-        return `<strong style="font-family:'Ubuntu Mono'">${p.name}</strong><br/>${fmtShortDur(totalSec)}`
+        return `<strong style="font-family:'Ubuntu Mono'">${displayNames[p.dataIndex] || p.name}</strong><br/>${fmtShortDur(totalSec)}`
       },
     },
   })
-  focusChart._columnActions = { labels, colors }
+  focusChart._columnActions = { labels, colors, displayNames }
 }
 async function renderPieChart(data) {
   if (!pieChartRef.value) return
@@ -912,13 +917,14 @@ async function renderPieChart(data) {
 
   const focusData = top5.map((item, i) => ({
     value: item.totalSeconds,
-    name: item.processName,
+    name: item.displayName || item.processName,
     itemStyle: {
       color: icons[i].colorPrimary,
       borderColor: textColor,
       borderWidth: 2,
     },
     _icon: icons[i].icon,
+    _processName: item.processName,
     _type: 'focus',
   }))
 
@@ -942,7 +948,9 @@ async function renderPieChart(data) {
     pieChart = echarts.init(pieChartRef.value)
     pieChart._firstRender = true
     pieChart.on('click', params => {
-      if (params.data?._type === 'focus') openProcessActions(params.data.name, params.data.itemStyle?.color, params.event?.event, 'pie')
+      if (params.data?._type === 'focus') {
+        openProcessActions(params.data._processName, params.data.itemStyle?.color, params.event?.event, 'pie', params.data.name)
+      }
     })
   }
 
@@ -1244,20 +1252,21 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   position: relative;
   width: 100%;
   height: 360px;
+  display: grid;
+  place-items: center;
 }
 
 .pie-chart-container {
+  grid-area: 1 / 1;
   width: 100%;
   height: 100%;
 }
 
 .water-ball {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 98px;
-  height: 98px;
+  grid-area: 1 / 1;
+  position: relative;
+  width: 101px;
+  height: 101px;
   border-radius: 50%;
   border: 2px solid var(--text-color);
   overflow: hidden;

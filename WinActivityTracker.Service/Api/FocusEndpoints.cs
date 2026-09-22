@@ -13,7 +13,8 @@ public static class FocusEndpoints
         app.MapGet("/api/summary/range", GetRangeSummary);
     }
 
-    private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db, TagService tagService)
+    private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db, TagService tagService,
+        TitleNormalizer normalizer)
     {
         if (date != null && !DateOnly.TryParse(date, out _))
             return Results.BadRequest(new { error = "Invalid date format, use yyyy-MM-dd" });
@@ -27,15 +28,16 @@ public static class FocusEndpoints
         var start = localStart.ToUniversalTime();
         var end = localEnd.ToUniversalTime();
 
-        return await BuildSummary(db, start, end, tagService);
+        return await BuildSummary(db, start, end, tagService, normalizer);
     }
 
-    private static async Task<IResult> GetRangeSummary(DateTime from, DateTime to, AppDbContext db, TagService tagService)
+    private static async Task<IResult> GetRangeSummary(DateTime from, DateTime to, AppDbContext db,
+        TagService tagService, TitleNormalizer normalizer)
     {
         var start = NormalizeToUtc(from);
         var end = NormalizeToUtc(to);
 
-        return await BuildSummary(db, start, end, tagService);
+        return await BuildSummary(db, start, end, tagService, normalizer);
     }
 
     private static DateTime NormalizeToUtc(DateTime dt) => dt.Kind switch
@@ -45,7 +47,8 @@ public static class FocusEndpoints
         _ => DateTime.SpecifyKind(dt, DateTimeKind.Local).ToUniversalTime()
     };
 
-    private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end, TagService tagService)
+    private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end,
+        TagService tagService, TitleNormalizer normalizer)
     {
         var offPeriods = await GetOffPeriods(db, start, end);
         var rows = await db.FocusChanges
@@ -84,6 +87,7 @@ public static class FocusEndpoints
         var hiddenRules = tagService.GetHiddenRules();
         var idleRules = tagService.GetIdleRules().Where(rule => rule.Weight >= 10).ToList();
         var buckets = new Dictionary<string, SummaryBucket>(StringComparer.OrdinalIgnoreCase);
+        var titleSnapshot = normalizer.CreateSnapshot();
         var previousProcess = (string?)null;
         double totalIdleSec = 0;
         foreach (var row in rows)
@@ -104,6 +108,9 @@ public static class FocusEndpoints
 
             if (!buckets.TryGetValue(row.ProcessName, out var bucket))
                 buckets[row.ProcessName] = bucket = new SummaryBucket(row.ProcessName);
+            var displayName = titleSnapshot.DisplayName(row.ProcessName, row.WindowTitle);
+            if (!string.Equals(displayName, row.ProcessName, StringComparison.OrdinalIgnoreCase))
+                bucket.DisplayName = displayName;
             bucket.TotalSeconds += effectiveSeconds;
             bucket.SwitchCount++;
             if (!string.Equals(previousProcess, row.ProcessName, StringComparison.OrdinalIgnoreCase))
@@ -119,6 +126,7 @@ public static class FocusEndpoints
             items = data.Select(d => new
             {
                 d.ProcessName,
+                DisplayName = d.DisplayName ?? d.ProcessName,
                 d.TotalSeconds,
                 SwitchCount = d.SwitchCount,
                 d.AdjustedSwitchCount,
@@ -172,4 +180,5 @@ internal sealed class SummaryBucket(string processName)
     public double TotalSeconds { get; set; }
     public int SwitchCount { get; set; }
     public int AdjustedSwitchCount { get; set; }
+    public string? DisplayName { get; set; }
 }

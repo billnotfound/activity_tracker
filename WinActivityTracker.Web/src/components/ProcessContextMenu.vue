@@ -32,7 +32,7 @@
               </div>
               <div class="tag-picker-actions">
                 <button type="button" class="new-tag-button" :aria-label="t('tags.addRule')" @click="startNewTag"><Plus :size="18" /></button>
-                <button type="button" class="apply-tags-button" :disabled="!selectedTags.length || tagState === 'saving'" :aria-label="t('common.save')" @click="submitQuickTags">
+                <button type="button" class="apply-tags-button" :disabled="(!selectedTags.length && !existingExactTags.length) || tagState === 'saving'" :aria-label="t('common.save')" @click="submitQuickTags">
                   <Transition name="icon-swap" mode="out-in">
                     <Check v-if="tagState === 'saved'" key="saved" :size="18" />
                     <LoaderCircle v-else-if="tagState === 'saving'" key="saving" :size="18" class="spin" />
@@ -67,12 +67,14 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ArrowRight, CaseUpper, Check, Clock3, EyeOff, Focus, ListTree, LoaderCircle, Plus, Tags, Type } from '@lucide/vue'
 import { useI18n } from '../i18n/index.js'
+import { exactTagTitlePattern, isExactTagTarget } from '../utils/tagRules.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
   page: { type: String, default: 'history' },
   processName: { type: String, default: '' },
   windowTitle: { type: String, default: '' },
+  rawWindowTitle: { type: String, default: '' },
   x: { type: Number, default: 0 },
   y: { type: Number, default: 0 },
   replaceHandler: { type: Function, default: null },
@@ -90,6 +92,7 @@ const tagState = ref('idle')
 const tagLoading = ref(false)
 const tagRules = ref([])
 const processHasTagRule = ref(false)
+const existingExactTags = ref([])
 
 const items = computed(() => props.page === 'dashboard'
   ? [
@@ -124,6 +127,11 @@ function choose(action) {
     return
   }
   if (action === 'tag') {
+    if (props.page === 'history' && !props.rawWindowTitle && !props.windowTitle) {
+      emit('create-tag', [''])
+      close()
+      return
+    }
     openTagPicker()
     return
   }
@@ -133,6 +141,9 @@ function choose(action) {
 async function openTagPicker() {
   inlineAction.value = 'tags'
   selectedTags.value = []
+  existingExactTags.value = []
+  availableTags.value = []
+  tagRules.value = []
   tagState.value = 'idle'
   tagLoading.value = true
   try {
@@ -143,6 +154,9 @@ async function openTagPicker() {
     availableTags.value = [...new Set(tagRules.value
       .map(rule => rule.tag)
       .filter(tag => tag && !tag.startsWith('_')))].sort((a, b) => a.localeCompare(b))
+    existingExactTags.value = availableTags.value.filter(tag => tagRules.value.some(rule =>
+      rule.tag === tag && isExactTargetRule(rule)))
+    selectedTags.value = [...existingExactTags.value]
     processHasTagRule.value = tagRules.value.some(rule =>
       String(rule.process || '').toLocaleLowerCase() === props.processName.toLocaleLowerCase()
       && rule.tag && !rule.tag.startsWith('_'))
@@ -155,27 +169,34 @@ function toggleTag(tag) {
     ? selectedTags.value.filter(value => value !== tag)
     : [...selectedTags.value, tag]
 }
-function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+function targetTitlePattern() {
+  return exactTagTitlePattern(props.page, props.rawWindowTitle, props.windowTitle)
+}
+function isExactTargetRule(rule) {
+  return isExactTagTarget(rule, props.processName, targetTitlePattern())
+}
 async function submitQuickTags() {
-  if (!selectedTags.value.length) return
+  if (!selectedTags.value.length && !existingExactTags.value.length) return
   tagState.value = 'saving'
   try {
-    const coexist = selectedTags.value.length > 1 || processHasTagRule.value
-    const selectedSet = new Set(selectedTags.value)
+    const stillSelected = new Set(selectedTags.value)
+    const previouslySelected = new Set(existingExactTags.value)
     const rules = tagRules.value.filter(rule => !(
-      selectedSet.has(rule.tag)
-      && String(rule.process || '').toLocaleLowerCase() === props.processName.toLocaleLowerCase()))
+      previouslySelected.has(rule.tag)
+      && !stillSelected.has(rule.tag)
+      && isExactTargetRule(rule)))
+    const titlePattern = targetTitlePattern()
     for (const tag of selectedTags.value) {
+      if (previouslySelected.has(tag)) continue
       const tagDefaults = tagRules.value.filter(rule => rule.tag === tag)
       const weight = tagDefaults.length ? Math.max(...tagDefaults.map(rule => Number(rule.weight) || 0)) : 5
       rules.push({
         tag,
         process: props.processName,
-        titlePattern: coexist ? null : (props.windowTitle
-          ? `regex:(?i)^${escapeRegex(props.windowTitle)}$`
-          : '*'),
+        titlePattern,
         weight,
-        mode: coexist ? 'Coexist' : 'Overwrite',
+        mode: props.page === 'history' && selectedTags.value.length === 1 && !processHasTagRule.value
+          ? 'Overwrite' : 'Coexist',
       })
     }
     const response = await fetch('/api/tags/save', {
@@ -225,6 +246,7 @@ watch(() => props.visible, visible => {
   inlineAction.value = ''
   replaceState.value = 'idle'
   selectedTags.value = []
+  existingExactTags.value = []
   tagState.value = 'idle'
 })
 onMounted(() => window.addEventListener('keydown', onKeydown))

@@ -69,6 +69,16 @@ public class TitleNormalizer
             if (!_rules.TryGetValue(process, out var rule)) return title;
             return rule.Apply(title) ?? title;
         }
+
+        public string DisplayName(string process, string title)
+        {
+            if (!_rules.TryGetValue(process, out var rule)) return process;
+            if (!string.IsNullOrWhiteSpace(rule.Title)) return rule.Title;
+            var normalized = rule.Apply(title);
+            return !string.IsNullOrWhiteSpace(normalized)
+                && !string.Equals(normalized, title, StringComparison.Ordinal)
+                ? normalized : process;
+        }
     }
 
     public class TitleRule

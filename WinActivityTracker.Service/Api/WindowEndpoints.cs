@@ -162,8 +162,10 @@ public static class WindowEndpoints
                 r.Timestamp,
                 r.ProcessName,
                 WindowTitle = title,
+                RawWindowTitle = r.WindowTitle,
+                DisplayName = raw ? r.ProcessName : snap.DisplayName(r.ProcessName, r.WindowTitle),
                 r.DurationSeconds,
-                Tags = tagService.ResolveTags(r.ProcessName, title)
+                Tags = tagService.ResolveTags(r.ProcessName, r.WindowTitle)
             };
         }).ToList();
 
@@ -199,8 +201,10 @@ public static class WindowEndpoints
         var snap = normalizer.CreateSnapshot();
         foreach (var s in sessions)
         {
+            s.RawWindowTitle = s.WindowTitle;
             if (!raw) s.WindowTitle = snap.Apply(s.ProcessName, s.WindowTitle);
-            s.Tags = tagService.ResolveTags(s.ProcessName, s.WindowTitle);
+            s.DisplayName = raw ? s.ProcessName : snap.DisplayName(s.ProcessName, s.RawWindowTitle);
+            s.Tags = tagService.ResolveTags(s.ProcessName, s.RawWindowTitle);
         }
 
         return Results.Ok(sessions);
@@ -377,6 +381,8 @@ internal sealed class WindowSessionRow
 {
     public string ProcessName { get; set; } = string.Empty;
     public string WindowTitle { get; set; } = string.Empty;
+    public string RawWindowTitle { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
     public DateTime OpenTime { get; set; }
     public DateTime? CloseTime { get; set; }
     public List<string> Tags { get; set; } = [];

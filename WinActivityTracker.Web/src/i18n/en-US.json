@@ -215,6 +215,7 @@
   "settings.appearance.geometric": "Shape",
   "settings.appearance.autoColor": "Auto color",
   "settings.appearance.autoColorHelp": "Choose a three-color palette from the most-used apps",
+  "settings.appearance.autoColorEnabled": "Auto color is enabled",
   "settings.appearance.customPalette": "Custom palette",
   "settings.appearance.custom.primary": "Primary",
   "settings.appearance.custom.secondary": "Secondary",

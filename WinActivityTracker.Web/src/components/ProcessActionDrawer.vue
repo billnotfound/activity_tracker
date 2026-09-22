@@ -10,7 +10,8 @@
               <span v-else>{{ processInitial }}</span>
             </div>
             <div class="drawer-heading">
-              <h2>{{ processName }}</h2>
+              <h2>{{ displayName }}</h2>
+              <small v-if="displayName !== processName">{{ processName }}</small>
             </div>
             <button class="drawer-close" type="button" :aria-label="t('common.close')" @click="close">
               <X :size="20" />
@@ -215,6 +216,7 @@ import {
 import RegexBuilder from './RegexBuilder.vue'
 import { useI18n } from '../i18n/index.js'
 import { fmtShortDur, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
+import { escapeRegex } from '../utils/tagRules.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -225,6 +227,7 @@ const props = defineProps({
   initialView: { type: String, default: 'menu' },
   returnToPopup: { type: Boolean, default: false },
   initialTagNames: { type: Array, default: () => [] },
+  tagScope: { type: String, default: 'process' },
   processColor: { type: String, default: 'var(--primary-color)' },
   icon: { type: String, default: '' },
 })
@@ -249,12 +252,15 @@ const saving = ref(false)
 const fetchedIcon = ref('')
 
 const processName = computed(() => props.process?.processName || props.process?.name || '')
+const displayName = computed(() => props.process?.displayName || processName.value)
 const windowTitle = computed(() => props.process?.windowTitle || props.process?.title || '')
+const rawWindowTitle = computed(() => props.process?.rawWindowTitle || windowTitle.value)
 const processInitial = computed(() => (processName.value[0] || '?').toUpperCase())
 const displayIcon = computed(() => props.icon || fetchedIcon.value)
 const validTagDrafts = computed(() => {
   const active = tagDrafts.value.filter(draft => draft.name.trim())
-  return active.length > 0 && active.every(draft => draft.mode !== 'Overwrite' || !!draft.titleRegex)
+  return active.length > 0 && active.every(draft =>
+    (props.tagScope !== 'process-title' && draft.mode !== 'Overwrite') || !!draft.titleRegex.trim())
 })
 const hasAnomalies = computed(() => anomalyItems.value.some(item => !['Ignored', 'Reverted'].includes(item.status)))
 const visibleParents = computed(() => (relations.value.parents || (relations.value.parent ? [relations.value.parent] : []))
@@ -294,7 +300,16 @@ function onKeydown(event) {
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 function createTagDraft(name = '') {
-  return { id: ++tagDraftId, name, weight: 5, mode: 'Coexist', useTitle: false, titleRegex: '', seedTitle: windowTitle.value || '' }
+  const useTitle = props.tagScope === 'process-title'
+  return {
+    id: ++tagDraftId,
+    name,
+    weight: 5,
+    mode: 'Coexist',
+    useTitle,
+    titleRegex: useTitle && rawWindowTitle.value ? `(?i)^${escapeRegex(rawWindowTitle.value)}$` : '',
+    seedTitle: rawWindowTitle.value || '',
+  }
 }
 function addTagRow() { tagDrafts.value.push(createTagDraft('')) }
 function removeTagRow(index) { tagDrafts.value.splice(index, 1) }
@@ -452,20 +467,19 @@ async function saveTags() {
   try {
     const status = await getConfig()
     const drafts = tagDrafts.value.filter(draft => draft.name.trim())
-    const names = new Set(drafts.map(draft => draft.name.trim()))
-    const rules = (status.tags?.rules || []).filter(rule => !(
-      names.has(rule.tag)
-      && String(rule.process || '').toLocaleLowerCase() === processName.value.toLocaleLowerCase()))
-    for (const draft of drafts) {
-      rules.push({
+    const nextRules = drafts.map(draft => ({
         tag: draft.name.trim(),
         process: processName.value,
         titlePattern: (draft.mode === 'Overwrite' || draft.useTitle) && draft.titleRegex
           ? `regex:${draft.titleRegex}` : null,
         weight: Number(draft.weight) || 0,
         mode: draft.mode,
-      })
-    }
+      }))
+    const rules = (status.tags?.rules || []).filter(rule => !nextRules.some(next =>
+      next.tag === rule.tag
+      && String(rule.process || '').toLocaleLowerCase() === processName.value.toLocaleLowerCase()
+      && String(rule.titlePattern || '') === String(next.titlePattern || '')))
+    rules.push(...nextRules)
     const r = await fetch(`${apiBase}/api/tags/save`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules),
     })
@@ -561,6 +575,7 @@ async function hideProcess() {
 .drawer-heading {
   min-width: 0;
   h2 { margin: 2px 0; color: var(--text-color); font: 700 1.15rem 'Ubuntu Mono', monospace; overflow-wrap: anywhere; -webkit-text-stroke: .35px var(--surface-card); paint-order: stroke fill; }
+  small { display: block; margin-top: 2px; color: var(--surface-400); font: 600 .72rem 'Ubuntu Mono', monospace; overflow-wrap: anywhere; }
 }
 
 .drawer-close,

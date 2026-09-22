@@ -2,7 +2,7 @@
   Settings page — backend config + theme settings + language switcher
 -->
 <template>
-  <div class="settings-page">
+  <div class="settings-page" :data-page-ready="initialRenderReady">
     <h2 class="page-title">{{ t('settings.pageTitle') }}</h2>
 
     <!-- Connection status -->
@@ -40,7 +40,9 @@
           <div class="divider"></div>
 
           <h3 class="section-title">{{ t('settings.appearance.themeColors') }}</h3>
-          <div class="theme-groups">
+          <div class="palette-controls">
+          <div class="palette-controls-content" :class="{ blurred: autoColor }">
+            <div class="theme-groups">
             <div class="theme-group">
               <span class="theme-group-label">{{ t('settings.appearance.light') }}</span>
               <div class="theme-selector">
@@ -51,7 +53,7 @@
                   :class="{ active: !isDark && lightTheme === th.id }"
                   @click="selectTheme(th)"
                 >
-                  <span class="theme-orb" :style="{ background: themePreview(th) }" aria-hidden="true"></span>
+                  <ThemeOrb :colors="themePreviewColors(th)" />
                   <span class="theme-name">{{ th.name }}</span>
                 </button>
               </div>
@@ -66,32 +68,29 @@
                   :class="{ active: isDark && darkTheme === th.id }"
                   @click="selectTheme(th)"
                 >
-                  <span class="theme-orb" :style="{ background: themePreview(th) }" aria-hidden="true"></span>
+                  <ThemeOrb :colors="themePreviewColors(th)" />
                   <span class="theme-name">{{ th.name }}</span>
+                </button>
+                <button
+                  class="custom-palette-toggle"
+                  :aria-expanded="showCustomPalette"
+                  :title="t('settings.appearance.customPalette')"
+                  @click="showCustomPalette = !showCustomPalette"
+                >
+                  <X v-if="showCustomPalette" :size="18" />
+                  <Plus v-else :size="18" />
                 </button>
               </div>
             </div>
-          </div>
-
-          <div class="custom-palette">
-            <div class="custom-palette-head">
-              <span>{{ t('settings.appearance.customPalette') }}</span>
-              <button
-                class="custom-palette-toggle"
-                :aria-expanded="showCustomPalette"
-                :title="t('settings.appearance.customPalette')"
-                @click="showCustomPalette = !showCustomPalette"
-              >
-                <X v-if="showCustomPalette" :size="17" />
-                <Plus v-else :size="17" />
-              </button>
             </div>
+
+            <div class="custom-palette">
             <Transition name="custom-expand">
               <div v-if="showCustomPalette" class="custom-theme-grid">
                 <section v-for="mode in customModes" :key="mode" class="custom-theme-editor">
                   <div class="custom-theme-editor-head">
                     <strong>{{ t(`settings.appearance.custom.${mode}Scheme`) }}</strong>
-                    <span class="theme-orb custom-orb" :style="{ background: customPreview(mode) }" aria-hidden="true"></span>
+                    <ThemeOrb :colors="customPreview(mode)" class="custom-orb" />
                   </div>
                   <input
                     v-model.trim="customDrafts[mode].name"
@@ -114,6 +113,11 @@
                 </section>
               </div>
             </Transition>
+            </div>
+          </div>
+          <div v-if="autoColor" class="auto-palette-lock">
+            <span>{{ t('settings.appearance.autoColorEnabled') }}</span>
+          </div>
           </div>
 
           <div class="divider"></div>
@@ -160,6 +164,7 @@
           <h3 class="section-title">{{ t('settings.appearance.autoColor') }}</h3>
           <div class="toggle-row">
             <button
+              data-testid="auto-color-toggle"
               class="icon-toggle"
               :class="{ on: autoColor }"
               @click="theme.setAutoColor(!autoColor)"
@@ -443,6 +448,7 @@ import { useTheme } from '../composables/useTheme.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import TagsView from './Tags.vue'
 import TimeAnomalyView from './TimeAnomaly.vue'
+import ThemeOrb from '../components/ThemeOrb.vue'
 import Tabs from 'primevue/tabs'
 import TabList from 'primevue/tablist'
 import Tab from 'primevue/tab'
@@ -570,12 +576,12 @@ function selectTheme(selected) {
   }
 }
 
-function themePreview(selected) {
+function themePreviewColors(selected) {
   const active = selected.id === (isDark.value ? darkTheme.value : lightTheme.value)
   const colors = active
     ? { ...selected.colors, ...theme.overrides.value }
     : selected.colors
-  return `conic-gradient(${colors['primary-color']} 0 50%, ${colors['secondary-color']} 50% 75%, ${colors['accent-color']} 75% 100%)`
+  return [colors['primary-color'], colors['secondary-color'], colors['accent-color']]
 }
 
 function customDraftValid(mode) {
@@ -590,7 +596,7 @@ function customPreview(mode) {
   const safe = colors.every(color => /^#[0-9a-f]{6}$/i.test(color))
     ? colors
     : (mode === 'dark' ? ['#FEB4C1', '#5A6CBC', '#3B1E3D'] : ['#C87773', '#77A67B', '#B7E6F0'])
-  return `conic-gradient(${safe[0]} 0 50%, ${safe[1]} 50% 75%, ${safe[2]} 75% 100%)`
+  return safe
 }
 
 function saveCustomScheme(mode) {
@@ -657,6 +663,7 @@ const resetting = ref(false)
 const resetResult = ref(null)
 const tagStatus = ref({})
 const statusOk = ref(false)
+const initialRenderReady = ref(false)
 
 const statusClass = computed(() => (statusOk.value ? 'success' : 'warning'))
 const statusText = computed(() =>
@@ -668,6 +675,7 @@ onMounted(async () => {
   moveSettingsTabFrame(activeSettingsTab())
   await loadSettings()
   await loadDbStats()
+  initialRenderReady.value = true
 })
 
 onBeforeUnmount(() => {
@@ -921,6 +929,39 @@ async function runReset() {
   gap: 12px;
 }
 
+.palette-controls {
+  position: relative;
+}
+
+.palette-controls-content {
+  transition: filter 0.2s ease, opacity 0.2s ease;
+
+  &.blurred {
+    filter: blur(3px);
+    opacity: 0.48;
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
+.auto-palette-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+
+  span {
+    padding: 8px 12px;
+    border: 2px solid var(--primary-color);
+    background: var(--surface-card);
+    color: var(--text-color);
+    font-weight: 700;
+    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 28%, transparent);
+  }
+}
+
 .theme-groups {
   display: grid;
   gap: 18px;
@@ -968,41 +1009,19 @@ async function runReset() {
   }
 }
 
-.theme-orb {
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  border-radius: 50%;
-  clip-path: circle(50% at 50% 50%);
-  overflow: hidden;
-  background-clip: padding-box;
-  border: 2px solid color-mix(in srgb, var(--border-color) 55%, transparent);
-}
-
 .theme-name {
   font-weight: 600;
   color: var(--text-color);
 }
 
 .custom-palette {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--surface-200);
-}
-
-.custom-palette-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--text-color);
-  font-size: 0.9rem;
-  font-weight: 700;
+  min-width: 0;
 }
 
 .custom-palette-toggle {
-  width: 31px;
-  height: 31px;
+  width: 62px;
+  height: 62px;
+  flex: 0 0 62px;
   padding: 0;
   border: 2px solid var(--primary-color);
   background: transparent;
@@ -1025,6 +1044,8 @@ async function runReset() {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface-200);
 }
 
 .custom-theme-editor {
@@ -1060,7 +1081,7 @@ async function runReset() {
 .custom-orb {
   width: 26px;
   height: 26px;
-  flex-basis: 26px;
+  flex: 0 0 26px;
 }
 
 .custom-color-list {

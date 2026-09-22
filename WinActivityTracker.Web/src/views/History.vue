@@ -3,7 +3,7 @@
   Combines timeline visualization with aggregated stats
 -->
 <template>
-  <div class="history-page">
+  <div class="history-page" :data-page-ready="initialRenderReady">
     <!-- Time range picker with wheels -->
   <TimeRangePicker
       ref="timeRangePickerRef"
@@ -17,7 +17,7 @@
 
     <div v-if="focusedProcess" class="focus-banner mb-3">
       <Focus :size="18" />
-      <span>{{ t('history.focusedOn') }} <b>{{ focusedProcess }}</b></span>
+      <span>{{ t('history.focusedOn') }} <b>{{ focusedDisplayName }}</b></span>
       <button type="button" @click="clearProcessFocus"><X :size="16" /> {{ t('history.showAll') }}</button>
     </div>
 
@@ -163,6 +163,7 @@
       :process-color="selectedProcessColor"
       :initial-view="drawerView"
       :initial-tag-names="drawerTagNames"
+      tag-scope="process-title"
       allow-isolate
       return-to-popup
       @isolate="isolateProcess"
@@ -176,6 +177,7 @@
       page="history"
       :process-name="selectedProcess.processName || ''"
       :window-title="selectedProcess.windowTitle || ''"
+      :raw-window-title="selectedProcess.rawWindowTitle || selectedProcess.windowTitle || ''"
       :x="contextPoint.x"
       :y="contextPoint.y"
       @choose="chooseContextAction"
@@ -231,6 +233,7 @@ const systemEvents = ref([])
 const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
 const loading = ref(true)
+const initialRenderReady = ref(false)
 const error = ref('')
 const isTimeValid = ref(true)
 const timeEasterEgg = ref('')
@@ -265,6 +268,12 @@ let contextClosedAt = 0
 const selectedProcess = ref({})
 const selectedProcessColor = ref('var(--primary-color)')
 const focusedProcess = ref('')
+const focusedDisplayName = computed(() => {
+  const match = [...timeline.value, ...windowSessions.value].find(item =>
+    item.processName?.toLocaleLowerCase() === focusedProcess.value.toLocaleLowerCase()
+    && item.displayName && item.displayName !== item.processName)
+  return match?.displayName || focusedProcess.value
+})
 const processRelations = ref({ instances: [], parents: [], children: [] })
 const focusedProcessEntries = ref([])
 const relationProcessSessions = ref([])
@@ -526,7 +535,9 @@ function openProcessActions(data, point = null) {
   if (!processName) return
   selectedProcess.value = {
     processName,
+    displayName: data.displayName || data._bgSession?.displayName || data._processSession?.displayName || processName,
     windowTitle: data.windowTitle || data._bgSession?.windowTitle || '',
+    rawWindowTitle: data.rawWindowTitle || data._bgSession?.rawWindowTitle || '',
     timestamp: data.timestamp || data._bgSession?.openTime || data._processSession?.startTime || null,
     durationSeconds: data.durationSeconds || 0,
   }
@@ -1015,6 +1026,7 @@ async function loadData() {
 
   if (dataTooShort.value) {
     loading.value = false
+    initialRenderReady.value = true
     return
   }
 
@@ -1155,6 +1167,7 @@ async function loadData() {
     }
     await nextTick()
     await renderTimeline(myLoadId)
+    if (myLoadId === loadId) initialRenderReady.value = true
   } catch (e) {
     if (e.name === 'AbortError') return
     // If this isn't the latest call, don't show the error
@@ -1162,6 +1175,7 @@ async function loadData() {
     console.error('Load error:', e)
     error.value = t('history.error.loadDataFailed', { message: e.message })
     loading.value = false
+    initialRenderReady.value = true
   }
 }
 
@@ -1421,6 +1435,12 @@ async function renderTimeline(myLoadId) {
     if (isTitleFilterView) return !!filterMatcher && filterMatcher.test(session.windowTitle || '')
     return true
   })
+  const displayNameByProcess = new Map()
+  for (const item of [...sourceTimeline, ...sourceWindowSessions]) {
+    if (item.displayName && item.displayName !== item.processName)
+      displayNameByProcess.set(item.processName, item.displayName)
+  }
+  const displayProcessName = processName => displayNameByProcess.get(processName) || processName
   const allTags = [...new Set(tagRules.value
     .map(rule => rule.tag)
     .filter(tag => tag && !tag.startsWith('_')))]
@@ -1627,12 +1647,13 @@ async function renderTimeline(myLoadId) {
     ? allTags
     : (isProcessFilterView || isTitleFilterView)
       ? [...globalProcessRow.keys()]
+        .map(displayProcessName)
       : focusedProcess.value
         ? isolatedRows.map(row => {
         const role = row.role === 'target' ? '' : row.role === 'parent'
           ? `${t('processActions.parent')} · ` : `${t('processActions.children')} · `
         const pid = row.processId != null ? ` #${row.processId}` : ''
-        return `${role}${row.name}${pid}`
+        return `${role}${displayProcessName(row.name)}${pid}`
       })
         : Array.from({ length: rowCount }, (_, i) => String(i + 1))
   const allProcessNames = [...allProcs]
@@ -1813,11 +1834,13 @@ async function renderTimeline(myLoadId) {
 
     const focusStyle = { color, borderColor: color, borderWidth: 0 }
     focusedWindows.push({
-      name: item.processName,
+      name: item.displayName || displayProcessName(item.processName),
       value: [rowIdx, item._ts, end, item.durationSeconds],
       itemStyle: focusStyle,
       processName: item.processName,
+      displayName: item.displayName || displayProcessName(item.processName),
       windowTitle: item.windowTitle,
+      rawWindowTitle: item.rawWindowTitle || item.windowTitle,
       timestamp: item.timestamp,
       durationSeconds: item.durationSeconds,
       duringsSleep: false,
@@ -1889,10 +1912,11 @@ async function renderTimeline(myLoadId) {
         Math.max(start, xAxisMin), Math.min(end, xAxisMax), sleepPeriods)) {
         if (segmentEnd <= segmentStart) continue
         backgroundWindows.push({
-          name: session.processName,
+          name: session.displayName || displayProcessName(session.processName),
           value: [rowIdx, segmentStart, segmentEnd, 0],
           itemStyle: { color: 'transparent', borderColor: color, borderWidth: 1, opacity: isTagView ? .62 : .42 },
           processName: session.processName,
+          displayName: session.displayName || displayProcessName(session.processName),
           itemColor: color,
           _tag: tag,
           _tagBackground: isTagView,
@@ -1987,9 +2011,11 @@ async function renderTimeline(myLoadId) {
           opacity: 0.3,
         }
         backgroundWindows.push({
-          name: session.processName,
+          name: session.displayName || displayProcessName(session.processName),
           value: [rowIdx, segStart, segEnd, 0],
           itemStyle: bgStyle,
+          displayName: session.displayName || displayProcessName(session.processName),
+          processName: session.processName,
           _bgSession: session,
           itemColor: color,
         })
@@ -2352,14 +2378,14 @@ async function renderTimeline(myLoadId) {
 
         if (data._processSession) {
           const session = data._processSession
-          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${session.processName} #${session.processId}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${session.displayName || session.processName} #${session.processId}</div>
                   <div style="color:var(--surface-500);">${toLocalTime(session.startTime)} — ${session.endTime ? toLocalTime(session.endTime) : t('history.status.now')}</div>`
         }
 
         if (data._bgSession) {
           const s = data._bgSession
           const status = s.closeTime ? t('history.status.closed') : t('history.status.running')
-          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${s.processName}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${s.displayName || s.processName}</div>
                   <div style="font-size:0.9em;">${s.windowTitle}</div>
                   <div style="margin-top:4px;color:var(--surface-500);">
                     ${toLocalTime(s.openTime)} - ${s.closeTime ? toLocalTime(s.closeTime) : t('history.status.now')}
@@ -2367,7 +2393,7 @@ async function renderTimeline(myLoadId) {
                   <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
         }
 
-        return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${data.processName}</div>
+        return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${data.displayName || data.processName}</div>
                 <div style="font-size:0.9em;">${data.windowTitle}</div>
                 <div style="margin-top:4px;color:var(--primary-color);">
                   ${toLocalTime(data.timestamp)} · ${fmtShortDur(data.durationSeconds)}

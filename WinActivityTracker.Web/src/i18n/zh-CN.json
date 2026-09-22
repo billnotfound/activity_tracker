@@ -215,6 +215,7 @@
   "settings.appearance.geometric": "形状",
   "settings.appearance.autoColor": "自动配色",
   "settings.appearance.autoColorHelp": "从使用最多的程序中选择三色配色",
+  "settings.appearance.autoColorEnabled": "已启用自动配色",
   "settings.appearance.customPalette": "自定义配色",
   "settings.appearance.custom.primary": "主色",
   "settings.appearance.custom.secondary": "次色",
