@@ -12,15 +12,15 @@
             <span v-html="brandIconRaw" class="brand-icon"></span>
           </router-link>
         </div>
-        <div class="navbar-menu" ref="navMenuRef" @mousemove="onNavMouseMove" @mouseleave="onNavMouseLeave">
+        <div class="navbar-menu" ref="navMenuRef" @pointermove="onNavMouseMove" @pointerleave="onNavMouseLeave">
           <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving }"></div>
-          <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }">
+          <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
             {{ t('nav.dashboard') }}
           </router-link>
-          <router-link class="nav-item" to="/history" :class="{ active: $route.path === '/history' }">
+          <router-link class="nav-item" to="/history" :class="{ active: $route.path === '/history' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
             {{ t('nav.history') }}
           </router-link>
-          <router-link class="nav-item" to="/settings" :class="{ active: $route.path === '/settings' }">
+          <router-link class="nav-item" to="/settings" :class="{ active: $route.path === '/settings' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
             {{ t('nav.settings') }}
           </router-link>
         </div>
@@ -158,6 +158,7 @@ function initNavFrame() {
     if (!menu) return
     const active = menu.querySelector('.nav-item.active')
     if (active) {
+      navTargetEl = active
       navFrameStyle.value = {
         left: active.offsetLeft + 'px',
         width: active.offsetWidth + 'px',
@@ -299,7 +300,7 @@ watch(() => route.path, () => {
   }
 }
 
-.navbar-menu:hover .nav-frame:not(.moving) {
+.navbar-menu:hover .nav-frame {
   border-color: var(--text-color);
   transform: translateY(-2px);
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);

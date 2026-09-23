@@ -11,6 +11,7 @@ import {
   GridComponent,
   TooltipComponent,
   AxisPointerComponent,
+  LegendComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 
@@ -21,6 +22,7 @@ echarts.use([
   GridComponent,
   TooltipComponent,
   AxisPointerComponent,
+  LegendComponent,
   CanvasRenderer,
 ])
 

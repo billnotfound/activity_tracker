@@ -86,7 +86,9 @@ public static class FocusEndpoints
         // a single linear pass.
         var hiddenRules = tagService.GetHiddenRules();
         var idleRules = tagService.GetIdleRules().Where(rule => rule.Weight >= 10).ToList();
+        var tagSnapshot = tagService.CreateSnapshot();
         var buckets = new Dictionary<string, SummaryBucket>(StringComparer.OrdinalIgnoreCase);
+        var tagDurations = new Dictionary<string, Dictionary<string, double>>(StringComparer.Ordinal);
         var titleSnapshot = normalizer.CreateSnapshot();
         var previousProcess = (string?)null;
         double totalIdleSec = 0;
@@ -112,6 +114,12 @@ public static class FocusEndpoints
             if (!string.Equals(displayName, row.ProcessName, StringComparison.OrdinalIgnoreCase))
                 bucket.DisplayName = displayName;
             bucket.TotalSeconds += effectiveSeconds;
+            foreach (var tag in tagSnapshot.ResolveTags(row.ProcessName, row.WindowTitle))
+            {
+                if (!tagDurations.TryGetValue(tag, out var processes))
+                    tagDurations[tag] = processes = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+                processes[row.ProcessName] = processes.GetValueOrDefault(row.ProcessName) + effectiveSeconds;
+            }
             bucket.SwitchCount++;
             if (!string.Equals(previousProcess, row.ProcessName, StringComparison.OrdinalIgnoreCase))
                 bucket.AdjustedSwitchCount++;
@@ -130,8 +138,26 @@ public static class FocusEndpoints
                 d.TotalSeconds,
                 SwitchCount = d.SwitchCount,
                 d.AdjustedSwitchCount,
-                Tags = tagService.ResolveTags(d.ProcessName, null)
+                Tags = tagSnapshot.ResolveTags(d.ProcessName, null)
             }),
+            tagDurations = tagDurations
+                .Select(entry =>
+                {
+                    var processes = entry.Value
+                        .OrderByDescending(process => process.Value)
+                        .ThenBy(process => process.Key, StringComparer.OrdinalIgnoreCase)
+                        .Select(process => new ProcessDurationSummary(
+                            process.Key,
+                            buckets.TryGetValue(process.Key, out var bucket)
+                                ? bucket.DisplayName ?? process.Key : process.Key,
+                            process.Value))
+                        .ToList();
+                    return new TagDurationSummary(
+                        entry.Key, entry.Value.Values.Sum(), processes[0].ProcessName, processes);
+                })
+                .OrderByDescending(entry => entry.TotalSeconds)
+                .ThenBy(entry => entry.Tag, StringComparer.Ordinal)
+                .ToList(),
             totalSleepSeconds = totalSleepSec,
             totalIdleSeconds = totalIdleSec
         });
@@ -182,3 +208,12 @@ internal sealed class SummaryBucket(string processName)
     public int AdjustedSwitchCount { get; set; }
     public string? DisplayName { get; set; }
 }
+
+internal sealed record ProcessDurationSummary(
+    string ProcessName, string DisplayName, double TotalSeconds);
+
+internal sealed record TagDurationSummary(
+    string Tag,
+    double TotalSeconds,
+    string DominantProcess,
+    List<ProcessDurationSummary> Processes);

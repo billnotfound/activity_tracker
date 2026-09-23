@@ -281,6 +281,7 @@ watch(() => props.visible, async value => {
   hideConfirmed.value = false
   fetchedIcon.value = ''
   await Promise.all([loadRelations(), loadAnomalies(), loadIcon()])
+  if (view.value === 'usage') await openUsage()
 })
 
 function close() { emit('update:visible', false) }

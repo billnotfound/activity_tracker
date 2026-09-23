@@ -845,7 +845,7 @@ async function runReset() {
   }
 }
 
-.settings-tabs-nav:has(.p-tablist:hover) .settings-tab-frame:not(.moving) {
+.settings-tabs-nav:has(.p-tablist:hover) .settings-tab-frame {
   border-color: var(--text-color);
   transform: translateY(-2px);
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);

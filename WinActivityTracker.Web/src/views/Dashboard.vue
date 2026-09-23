@@ -86,23 +86,44 @@
       </MemphisCard>
     </div>
 
-    <!-- Pie overview: focus donut + media ring -->
-    <MemphisCard class="mb-3 overview-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'pie' }">
-      <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
-      <MemphisSkeleton v-if="loading" :lines="4" />
-      <div v-else class="pie-chart-wrapper">
-        <div ref="pieChartRef" class="pie-chart-container"></div>
-        <div class="water-ball" :style="{ '--fill': usagePercent }">
-          <div class="water-body">
-            <svg class="wave-band" viewBox="0 0 480 32" preserveAspectRatio="none">
-              <path :d="waterWavePath" fill="currentColor"/>
-            </svg>
-          </div>
-          <span class="water-text">{{ usageFmt }}</span>
+    <div class="overview-row mb-3">
+      <!-- Focus drill-down keeps the existing media ring and water level. -->
+      <MemphisCard class="overview-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'pie' }">
+        <div class="overview-heading">
+          <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
+          <button v-if="piePageOffset" type="button" class="pie-back" @click="showPreviousPiePage">
+            <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
+          </button>
         </div>
-        <div v-if="usagePercent >= 100" class="usage-warning">{{ t('dashboard.usageWarning') }}</div>
-      </div>
-    </MemphisCard>
+        <MemphisSkeleton v-if="loading" :lines="4" />
+        <div v-else class="pie-chart-wrapper">
+          <div ref="pieChartRef" class="pie-chart-container"></div>
+          <div class="water-ball" :style="{ '--fill': usagePercent }">
+            <div class="water-body">
+              <svg class="wave-band" viewBox="0 0 480 32" preserveAspectRatio="none">
+                <path :d="waterWavePath" fill="currentColor"/>
+              </svg>
+            </div>
+            <span class="water-text">{{ usageFmt }}</span>
+          </div>
+          <div v-if="usagePercent >= 100" class="usage-warning">{{ t('dashboard.usageWarning') }}</div>
+        </div>
+      </MemphisCard>
+
+      <MemphisCard class="tag-pie-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'tagPie' }">
+        <div class="overview-heading">
+          <h3 class="card-title">{{ selectedTag ? selectedTag.tag : t('dashboard.card.tagDurationPie') }}</h3>
+          <button v-if="selectedTag" type="button" class="pie-back" @click="showPreviousTagPiePage">
+            <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
+          </button>
+        </div>
+        <MemphisSkeleton v-if="loading" :lines="4" />
+        <div v-else class="tag-pie-wrapper">
+          <div ref="tagPieChartRef" class="tag-pie-chart"></div>
+          <div v-if="!tagDurations.length" class="tag-pie-empty">{{ t('dashboard.pie.noTags') }}</div>
+        </div>
+      </MemphisCard>
+    </div>
 
     <ProcessActionDrawer
       v-model:visible="actionDrawerVisible"
@@ -149,7 +170,7 @@ import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
-import { Play, Pause, X } from '@lucide/vue'
+import { ArrowLeft, Play, Pause, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
@@ -172,6 +193,10 @@ const isToday = computed(() => period.value === 'today')
 const pickDate = ref(toLocalDateString())
 const mergeSameProcess = ref(true)
 const summary = ref([])
+const tagDurations = ref([])
+const piePageOffset = ref(0)
+const selectedTag = ref(null)
+const tagPiePageOffset = ref(0)
 const totalSleepSeconds = ref(0)
 const media = ref([])
 const error = ref('')
@@ -382,6 +407,14 @@ const focusChartRef = ref(null)
 let focusChart = null
 const pieChartRef = ref(null)
 let pieChart = null
+let pieRenderId = 0
+let pieDrillLocked = false
+let pieDrillTimer = null
+const tagPieChartRef = ref(null)
+let tagPieChart = null
+let tagPieRenderId = 0
+let tagPieDrillLocked = false
+let tagPieDrillTimer = null
 let timer = null
 // Race guard: each loadSummary() call increments loadId; stale calls
 // bail before writing summary.value / rendering charts.
@@ -392,6 +425,9 @@ let loadId = 0
 const abortController = new AbortController()
 
 function setPeriod(p) {
+  piePageOffset.value = 0
+  selectedTag.value = null
+  tagPiePageOffset.value = 0
   period.value = p
   if (p === 'today') {
     const now = new Date()
@@ -403,7 +439,37 @@ function setPeriod(p) {
 }
 
 function onPickDate() {
+  piePageOffset.value = 0
+  selectedTag.value = null
+  tagPiePageOffset.value = 0
   startPolling()
+}
+
+function showPreviousPiePage() {
+  if (pieDrillLocked) return
+  piePageOffset.value = Math.max(0, piePageOffset.value - 5)
+  lockPieDrill()
+  renderPieChart(summary.value)
+}
+
+function lockPieDrill() {
+  pieDrillLocked = true
+  clearTimeout(pieDrillTimer)
+  pieDrillTimer = setTimeout(() => { pieDrillLocked = false }, 620)
+}
+
+function lockTagPieDrill() {
+  tagPieDrillLocked = true
+  clearTimeout(tagPieDrillTimer)
+  tagPieDrillTimer = setTimeout(() => { tagPieDrillLocked = false }, 520)
+}
+
+function showPreviousTagPiePage() {
+  if (tagPieDrillLocked) return
+  if (tagPiePageOffset.value > 0) tagPiePageOffset.value = Math.max(0, tagPiePageOffset.value - 5)
+  else selectedTag.value = null
+  lockTagPieDrill()
+  renderTagPieChart(tagDurations.value)
 }
 
 function startPolling() {
@@ -622,10 +688,14 @@ watch(isDark, () => {
   if (pieChart && summary.value && summary.value.length > 0) {
     renderPieChart(summary.value)
   }
+  if (tagPieChart) renderTagPieChart(tagDurations.value)
 })
 
 onUnmounted(() => {
   stopPolling()
+  clearTimeout(pieDrillTimer)
+  clearTimeout(tagPieDrillTimer)
+  clearTimeout(resizeTimer)
   loadId++  // cancel any in-flight load
   abortController.abort()
 
@@ -640,6 +710,10 @@ onUnmounted(() => {
   if (pieChart) {
     pieChart.dispose()
     pieChart = null
+  }
+  if (tagPieChart) {
+    tagPieChart.dispose()
+    tagPieChart = null
   }
 })
 
@@ -662,13 +736,19 @@ function handleResize() {
         renderPieChart(summary.value)
       }
     }
+    if (tagPieChart) {
+      tagPieChart.resize()
+      renderTagPieChart(tagDurations.value)
+    }
   }, 200) // 200ms debounce
 }
 
 async function loadSummary() {
   const myLoadId = ++loadId
   await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
+  if (myLoadId !== loadId) return
   if (summary.value) await renderPieChart(summary.value)
+  await renderTagPieChart(tagDurations.value)
   if (myLoadId === loadId) initialRenderReady.value = true
 }
 
@@ -685,6 +765,11 @@ async function fetchSummary(myLoadId) {
     if (myLoadId !== loadId) return  // stale, newer call in flight
 
     const rawData = Array.isArray(res) ? res : res.items || []
+    tagDurations.value = Array.isArray(res) ? [] : res.tagDurations || []
+    if (selectedTag.value) {
+      selectedTag.value = tagDurations.value.find(item => item.tag === selectedTag.value.tag) || null
+      if (!selectedTag.value) tagPiePageOffset.value = 0
+    }
 
     // Merge by normalized process name to handle inconsistent .exe suffixes
     const mergedData = mergeByProcessName(rawData, (item, acc) => {
@@ -727,6 +812,35 @@ async function fetchMedia(myLoadId) {
   }
 }
 
+async function getProcessIcon(processName, atTime) {
+  const cacheKey = `${processName}|${atTime}`
+  const cached = iconCache.get(cacheKey)
+  if (cached) return cached
+  let result = {
+    icon: null, colorPrimary: '#6B7FD7', colorSecondary: '#DD7596',
+    colorAccent: '#06D6A0', hasExtractedPalette: false,
+  }
+  try {
+    const response = await fetch(
+      `${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`,
+      { signal: abortController.signal })
+    if (response.ok) {
+      const data = await response.json()
+      result = {
+        icon: data.iconData ? `data:image/png;base64,${data.iconData}` : null,
+        colorPrimary: data.colorPrimary || result.colorPrimary,
+        colorSecondary: data.colorSecondary || result.colorSecondary,
+        colorAccent: data.colorAccent || result.colorAccent,
+        hasExtractedPalette: Boolean(data.colorPrimary && data.colorSecondary && data.colorAccent),
+      }
+    }
+  } catch (error) {
+    if (error.name !== 'AbortError') console.warn(`Failed to fetch icon for ${processName}:`, error)
+  }
+  iconCache.set(cacheKey, result)
+  return result
+}
+
 async function renderCharts(data) {
   if (!focusChartRef.value) return
 
@@ -742,41 +856,7 @@ async function renderCharts(data) {
     : new Date(toDate + 'T23:59:59').toISOString()
 
   // Fetch icons and colors for all processes (cached by process+atTime)
-  const iconPromises = labels.map(async (processName) => {
-    const cacheKey = `${processName}|${atTime}`
-    const cached = iconCache.get(cacheKey)
-    if (cached) return cached
-    try {
-      const response = await fetch(`${apiBase}/api/icons/${encodeURIComponent(processName)}?at=${encodeURIComponent(atTime)}`, { signal: abortController.signal })
-      if (response.ok) {
-        const iconData = await response.json()
-        const result = {
-          icon: iconData.iconData && iconData.iconData.length > 0
-            ? `data:image/png;base64,${iconData.iconData}`
-            : null,
-          colorPrimary: iconData.colorPrimary || '#6B7FD7',
-          colorSecondary: iconData.colorSecondary || '#DD7596',
-          colorAccent: iconData.colorAccent || '#06D6A0',
-          hasExtractedPalette: Boolean(iconData.colorPrimary && iconData.colorSecondary && iconData.colorAccent),
-        }
-        iconCache.set(cacheKey, result)
-        return result
-      }
-    } catch (e) {
-      console.warn(`Failed to fetch icon for ${processName}:`, e)
-    }
-    const fallback = {
-      icon: null,
-      colorPrimary: '#6B7FD7',
-      colorSecondary: '#DD7596',
-      colorAccent: '#06D6A0',
-      hasExtractedPalette: false,
-    }
-    iconCache.set(cacheKey, fallback)
-    return fallback
-  })
-
-  const iconDataList = await Promise.all(iconPromises)
+  const iconDataList = await Promise.all(labels.map(processName => getProcessIcon(processName, atTime)))
   await applyAutoColor(iconDataList.map(item => item.hasExtractedPalette ? item : {}))
   const icons = iconDataList.map(d => d.icon)
   const colors = iconDataList.map(d => d.colorPrimary)
@@ -879,6 +959,7 @@ async function renderCharts(data) {
 }
 async function renderPieChart(data) {
   if (!pieChartRef.value) return
+  const renderId = ++pieRenderId
 
   const cs = getComputedStyle(document.documentElement)
   const textColor = cs.getPropertyValue('--text-color').trim()
@@ -887,35 +968,23 @@ async function renderPieChart(data) {
   const primaryColor = cs.getPropertyValue('--primary-color').trim()
   const surface300 = cs.getPropertyValue('--surface-300').trim()
 
-  const top5 = data.slice(0, 5)
-  const otherSec = data.slice(5).reduce((s, i) => s + i.totalSeconds, 0)
+  const maxOffset = Math.max(0, Math.floor((data.length - 1) / 5) * 5)
+  if (piePageOffset.value > maxOffset) piePageOffset.value = maxOffset
+  const offset = piePageOffset.value
+  const top5 = data.slice(offset, offset + 5)
+  const otherSec = data.slice(offset + 5).reduce((s, i) => s + i.totalSeconds, 0)
 
   const [fromDate, toDate] = periodRange()
   const atTime = period.value === 'today'
     ? new Date().toISOString()
     : new Date(toDate + 'T23:59:59').toISOString()
 
-  const iconPromises = top5.map(async (item) => {
-    const cacheKey = `${item.processName}|${atTime}`
-    const cached = iconCache.get(cacheKey)
-    if (cached) return cached
-    try {
-      const r = await fetch(`${apiBase}/api/icons/${encodeURIComponent(item.processName)}?at=${encodeURIComponent(atTime)}`, { signal: abortController.signal })
-      if (r.ok) {
-        const d = await r.json()
-        const result = {
-          icon: d.iconData ? `data:image/png;base64,${d.iconData}` : null,
-          colorPrimary: d.colorPrimary || '#6B7FD7',
-        }
-        iconCache.set(cacheKey, result)
-        return result
-      }
-    } catch (e) { /* ignore */ }
-    return { icon: null, colorPrimary: '#6B7FD7' }
-  })
-  const icons = await Promise.all(iconPromises)
+  const icons = await Promise.all(top5.map(item => getProcessIcon(item.processName, atTime)))
+  if (renderId !== pieRenderId || !pieChartRef.value) return
 
   const focusData = top5.map((item, i) => ({
+    id: item.processName,
+    groupId: `other-${offset}`,
     value: item.totalSeconds,
     name: item.displayName || item.processName,
     itemStyle: {
@@ -930,6 +999,8 @@ async function renderPieChart(data) {
 
   if (otherSec > 0.5) {
     focusData.push({
+      id: 'other',
+      groupId: `other-${offset + 5}`,
       value: otherSec,
       name: t('dashboard.pie.other'),
       itemStyle: {
@@ -938,7 +1009,7 @@ async function renderPieChart(data) {
         borderWidth: 2,
       },
       _icon: null,
-      _type: 'focus',
+      _type: 'other',
     })
   }
 
@@ -948,19 +1019,28 @@ async function renderPieChart(data) {
     pieChart = echarts.init(pieChartRef.value)
     pieChart._firstRender = true
     pieChart.on('click', params => {
+      if (params.data?._type === 'other') {
+        if (pieDrillLocked || piePageOffset.value + 5 >= summary.value.length) return
+        piePageOffset.value += 5
+        lockPieDrill()
+        renderPieChart(summary.value)
+        return
+      }
       if (params.data?._type === 'focus') {
         openProcessActions(params.data._processName, params.data.itemStyle?.color, params.event?.event, 'pie', params.data.name)
       }
     })
   }
 
-  const animDur = pieChart._firstRender ? 800 : 300
+  const animDur = pieChart._firstRender ? 800 : 560
   pieChart._firstRender = false
 
   pieChart.setOption({
     animation: true,
     animationDuration: animDur,
+    animationDurationUpdate: 560,
     animationEasing: 'cubicOut',
+    animationEasingUpdate: 'cubicInOut',
     color: focusData.map(d => d.itemStyle.color),
     tooltip: {
       trigger: 'item',
@@ -977,6 +1057,8 @@ async function renderPieChart(data) {
             : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${d.itemStyle.color};margin-right:4px;vertical-align:middle"></span>`
           return `<div style="font-weight:600;margin-bottom:2px">${iconHtml}${d.name}</div><div style="font-size:0.95em">${fmtShortDur(d.value)}</div>`
         }
+        if (params.data._type === 'other')
+          return `${t('dashboard.pie.other')}<br/>${fmtShortDur(params.data.value)}`
         if (params.data._type === 'media') {
           const m = params.data._media
           return `<div style="font-weight:600;margin-bottom:2px;color:${successColor}">${m.title}</div>
@@ -988,8 +1070,10 @@ async function renderPieChart(data) {
     },
     series: [
       {
+        id: 'focus',
         name: 'focus',
         type: 'pie',
+        universalTransition: { enabled: true, divideShape: 'split' },
         radius: ['28%', '52%'],
         center: ['50%', '50%'],
         data: focusData,
@@ -999,6 +1083,7 @@ async function renderPieChart(data) {
         },
       },
       ...(ringData.length ? [{
+        id: 'media',
         name: 'media',
         type: 'pie',
         radius: ['58%', '72%'],
@@ -1011,7 +1096,119 @@ async function renderPieChart(data) {
         },
       }] : []),
     ],
-  }, true)
+  }, { replaceMerge: ['series'] })
+}
+
+async function renderTagPieChart(items) {
+  if (!tagPieChartRef.value) return
+  const renderId = ++tagPieRenderId
+  const valid = items.filter(item => item.tag && Number(item.totalSeconds) > 0)
+  const [, toDate] = periodRange()
+  const atTime = period.value === 'today'
+    ? new Date().toISOString()
+    : new Date(toDate + 'T23:59:59').toISOString()
+  const cs = getComputedStyle(document.documentElement)
+  const textColor = cs.getPropertyValue('--text-color').trim()
+  const surfaceCard = cs.getPropertyValue('--surface-card').trim()
+  const borderColor = cs.getPropertyValue('--border-color').trim()
+  const surface300 = cs.getPropertyValue('--surface-300').trim()
+  let chartData
+
+  if (selectedTag.value) {
+    const processes = selectedTag.value.processes || []
+    const maxOffset = Math.max(0, Math.floor((processes.length - 1) / 5) * 5)
+    if (tagPiePageOffset.value > maxOffset) tagPiePageOffset.value = maxOffset
+    const subset = processes.slice(tagPiePageOffset.value, tagPiePageOffset.value + 5)
+    const icons = await Promise.all(subset.map(item => getProcessIcon(item.processName, atTime)))
+    if (renderId !== tagPieRenderId || !tagPieChartRef.value) return
+    chartData = subset.map((item, index) => ({
+      id: item.processName,
+      groupId: `tag-${selectedTag.value.tag}-${tagPiePageOffset.value}`,
+      name: item.displayName || item.processName,
+      value: Number(item.totalSeconds),
+      itemStyle: { color: icons[index].colorPrimary, borderColor, borderWidth: 2 },
+      _type: 'tagProcess',
+      _processName: item.processName,
+    }))
+    const otherSeconds = processes.slice(tagPiePageOffset.value + 5)
+      .reduce((sum, item) => sum + Number(item.totalSeconds || 0), 0)
+    if (otherSeconds > .5) {
+      chartData.push({
+        id: 'other',
+        groupId: `tag-${selectedTag.value.tag}-${tagPiePageOffset.value + 5}`,
+        name: t('dashboard.pie.other'),
+        value: otherSeconds,
+        itemStyle: { color: surface300, borderColor, borderWidth: 2 },
+        _type: 'tagOther',
+      })
+    }
+  } else {
+    const icons = await Promise.all(valid.map(item => getProcessIcon(item.dominantProcess, atTime)))
+    if (renderId !== tagPieRenderId || !tagPieChartRef.value) return
+    chartData = valid.map((item, index) => ({
+      id: item.tag,
+      name: item.tag,
+      value: Number(item.totalSeconds),
+      itemStyle: { color: icons[index].colorPrimary, borderColor, borderWidth: 2 },
+      _type: 'tag',
+      _tagItem: item,
+    }))
+  }
+
+  if (!tagPieChart) {
+    tagPieChart = echarts.init(tagPieChartRef.value)
+    tagPieChart.on('click', params => {
+      const item = params.data
+      if (!item || tagPieDrillLocked) return
+      if (item._type === 'tag') {
+        selectedTag.value = item._tagItem
+        tagPiePageOffset.value = 0
+        lockTagPieDrill()
+        renderTagPieChart(tagDurations.value)
+      } else if (item._type === 'tagOther') {
+        tagPiePageOffset.value += 5
+        lockTagPieDrill()
+        renderTagPieChart(tagDurations.value)
+      } else if (item._type === 'tagProcess') {
+        openProcessActions(
+          item._processName, item.itemStyle?.color, params.event?.event, 'tagPie', item.name)
+      }
+    })
+  }
+  tagPieChart.setOption({
+    animationDuration: 600,
+    animationDurationUpdate: 450,
+    animationEasing: 'cubicOut',
+    animationEasingUpdate: 'cubicInOut',
+    legend: {
+      type: 'scroll',
+      orient: 'vertical',
+      right: 6,
+      top: 'middle',
+      height: '75%',
+      textStyle: { color: textColor, fontFamily: 'Ubuntu' },
+      formatter: name => name.length > 16 ? `${name.slice(0, 15)}…` : name,
+    },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: surfaceCard,
+      borderColor,
+      borderWidth: 2,
+      textStyle: { color: textColor, fontFamily: 'Ubuntu Mono' },
+      formatter: params => `${params.name}<br/>${fmtShortDur(params.value)}`,
+    },
+    series: [{
+      id: 'tags',
+      name: t('dashboard.card.tagDurationPie'),
+      type: 'pie',
+      universalTransition: { enabled: true, divideShape: 'split' },
+      radius: '62%',
+      center: ['36%', '50%'],
+      data: chartData,
+      label: { show: false },
+      emphasis: { scaleSize: 6 },
+    }],
+  }, { replaceMerge: ['series'] })
 }
 
 function buildMediaRing(mediaList, fromDate, toDate, successColor) {
@@ -1221,6 +1418,65 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   min-height: 350px;
 }
 
+.overview-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.overview-row > * { min-width: 0; }
+
+.overview-heading {
+  min-height: 27px;
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+
+  .card-title { margin-bottom: 0; }
+}
+
+.pie-back {
+  min-height: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--surface-300);
+  background: transparent;
+  color: var(--text-color);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: transform 150ms ease, border-color 150ms ease;
+
+  &:hover { border-color: var(--primary-color); transform: translateY(-2px); }
+  &:active { transform: translateY(1px) scale(.97); }
+}
+
+.tag-pie-wrapper {
+  position: relative;
+  height: 360px;
+}
+
+.tag-pie-chart {
+  width: 100%;
+  height: 100%;
+}
+
+.tag-pie-empty {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  color: var(--surface-400);
+  font-size: .9rem;
+}
+
+@media (max-width: 1050px) {
+  .overview-row { grid-template-columns: minmax(0, 1fr); }
+}
+
 .context-hover-locked {
   border-color: var(--text-color) !important;
   transform: translate(-2px, -2px) !important;
@@ -1375,6 +1631,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
 .table-wrapper {
   max-height: 400px;
   overflow-y: auto;
+  overflow-x: clip;
   border: 2px solid var(--surface-200);
 }
 
@@ -1403,11 +1660,11 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   tbody {
     tr {
       border-bottom: 1px solid var(--surface-200);
-      transition: all 0.2s ease;
+      transition: background-color 0.2s ease, box-shadow 0.2s ease;
 
       &:hover {
         background: var(--surface-100);
-        transform: translateX(2px);
+        box-shadow: inset 3px 0 0 var(--primary-color);
       }
 
       &.playing {

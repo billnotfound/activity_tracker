@@ -55,7 +55,26 @@ public class TagService
     public List<string> ResolveTags(string processName, string? windowTitle)
     {
         ReloadIfChanged();
-        var allMatches = FindAllMatches(processName, windowTitle)
+        return ResolveTags(_rules, processName, windowTitle);
+    }
+
+    public TagSnapshot CreateSnapshot()
+    {
+        ReloadIfChanged();
+        lock (_reloadLock)
+            return new TagSnapshot(_rules.ToArray());
+    }
+
+    public sealed class TagSnapshot(IReadOnlyList<TagRule> rules)
+    {
+        public List<string> ResolveTags(string processName, string? windowTitle)
+            => TagService.ResolveTags(rules, processName, windowTitle);
+    }
+
+    private static List<string> ResolveTags(
+        IReadOnlyList<TagRule> rules, string processName, string? windowTitle)
+    {
+        var allMatches = FindAllMatches(rules, processName, windowTitle)
             .Where(r => r.Tag != HiddenTag && r.Tag != IdleTag)
             .ToList();
         return ResolveByWeight(allMatches);
@@ -174,11 +193,12 @@ public class TagService
             .ToList();
     }
 
-    private List<TagRule> FindAllMatches(string processName, string? windowTitle)
+    private static List<TagRule> FindAllMatches(
+        IReadOnlyList<TagRule> rules, string processName, string? windowTitle)
     {
         var matches = new List<TagRule>();
 
-        foreach (var rule in _rules)
+        foreach (var rule in rules)
         {
             if (string.IsNullOrEmpty(rule.TitlePattern)) continue;
             if (string.IsNullOrEmpty(windowTitle)) continue;
@@ -193,7 +213,7 @@ public class TagService
 
         if (matches.Count > 0) return matches;
 
-        foreach (var rule in _rules)
+        foreach (var rule in rules)
         {
             if (!string.IsNullOrEmpty(rule.TitlePattern)) continue;
             if (string.IsNullOrEmpty(rule.Process)) continue;

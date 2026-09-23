@@ -6,12 +6,12 @@
         <div class="context-line" aria-hidden="true"></div>
         <div class="context-panel" :class="{ editing: inlineAction }" role="menu" :aria-label="processName">
           <Transition name="menu-swap" mode="out-in">
-            <form v-if="inlineAction === 'replace'" key="replace" class="inline-replace" @submit.prevent="submitReplacement">
-              <input ref="replacementInputRef" v-model="replacement" type="text" :placeholder="t('processActions.replaceWith')" />
-              <button type="submit" :disabled="!replacement.trim() || replaceState === 'saving'" :aria-label="t('common.save')">
+            <form v-if="inlineAction === 'replace'" key="replace" class="inline-replace" :aria-busy="replaceState === 'loading'" @submit.prevent="submitReplacement">
+              <input ref="replacementInputRef" v-model="replacement" type="text" :placeholder="t('processActions.replaceWith')" :disabled="replaceState === 'loading'" />
+              <button type="submit" :disabled="!replacement.trim() || replaceState === 'loading' || replaceState === 'saving'" :aria-label="t('common.save')">
                 <Transition name="icon-swap" mode="out-in">
                   <Check v-if="replaceState === 'saved'" key="saved" :size="18" />
-                  <LoaderCircle v-else-if="replaceState === 'saving'" key="saving" :size="18" class="spin" />
+                  <LoaderCircle v-else-if="replaceState === 'loading' || replaceState === 'saving'" key="loading" :size="18" class="spin" />
                   <ArrowRight v-else key="submit" :size="18" />
                 </Transition>
               </button>
@@ -24,10 +24,13 @@
                   type="button"
                   class="tag-chip"
                   :class="{ selected: selectedTags.includes(tag) }"
+                  :title="tag"
                   @click="toggleTag(tag)"
                 >
-                  <Check v-if="selectedTags.includes(tag)" :size="13" />
-                  {{ tag }}
+                  <Transition name="tag-check">
+                    <Check v-if="selectedTags.includes(tag)" :size="13" />
+                  </Transition>
+                  <span class="tag-chip-label">{{ tag }}</span>
                 </button>
               </div>
               <div class="tag-picker-actions">
@@ -118,12 +121,9 @@ const positionStyle = computed(() => {
 })
 
 function close() { emit('update:visible', false) }
-function choose(action) {
+async function choose(action) {
   if (props.page === 'dashboard' && action === 'replace') {
-    inlineAction.value = 'replace'
-    replacement.value = ''
-    replaceState.value = 'idle'
-    nextTick(() => replacementInputRef.value?.focus())
+    await openReplacementEditor()
     return
   }
   if (action === 'tag') {
@@ -137,6 +137,29 @@ function choose(action) {
   }
   emit('choose', action)
   close()
+}
+async function openReplacementEditor() {
+  inlineAction.value = 'replace'
+  replacement.value = ''
+  replaceState.value = 'loading'
+  try {
+    const response = await fetch('/api/tags/status')
+    if (response.ok) {
+      const status = await response.json()
+      const processRules = (status.titleRules?.rules || []).filter(rule =>
+        String(rule.process || '').toLocaleLowerCase() === props.processName.toLocaleLowerCase())
+      const currentRule = processRules.find(rule => String(rule.title || '').trim())
+        || processRules.find(rule => String(rule.titleReplacement || '').trim())
+      replacement.value = String(currentRule?.title || currentRule?.titleReplacement || '')
+    }
+  } catch {
+    // Keep the quick editor usable when the configuration status request is unavailable.
+  } finally {
+    replaceState.value = 'idle'
+    await nextTick()
+    replacementInputRef.value?.focus()
+    replacementInputRef.value?.select()
+  }
 }
 async function openTagPicker() {
   inlineAction.value = 'tags'
@@ -327,9 +350,14 @@ onUnmounted(() => {
 .inline-replace button { border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
 .inline-replace button:disabled { opacity: .45; cursor: not-allowed; }
 .tag-quick-picker { display: grid; gap: 6px; animation: inlineReveal 180ms ease both; }
-.tag-chip-list { display: flex; flex-wrap: wrap; gap: 5px; max-height: 158px; overflow-y: auto; padding: 2px; }
-.tag-chip { min-height: 30px; padding: 4px 7px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: .78rem; }
-.tag-chip.selected { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card)); color: var(--primary-color); }
+.tag-chip-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; max-height: 158px; overflow-y: auto; padding: 2px; }
+.tag-chip { min-width: 0; min-height: 30px; padding: 4px 6px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); display: flex; align-items: center; justify-content: center; gap: 3px; cursor: pointer; font-size: .76rem; transition: transform 160ms cubic-bezier(.2,.8,.2,1), border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 160ms ease; }
+.tag-chip:hover { border-color: var(--primary-color); transform: translateY(-1px); }
+.tag-chip.selected { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card)); color: var(--primary-color); transform: translateY(-2px); box-shadow: 0 2px 0 color-mix(in srgb, var(--primary-color) 55%, transparent); }
+.tag-chip:active { transform: translateY(1px) scale(.96); }
+.tag-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-check-enter-active, .tag-check-leave-active { transition: opacity 120ms ease, transform 160ms cubic-bezier(.2,.8,.2,1), width 160ms ease; }
+.tag-check-enter-from, .tag-check-leave-to { opacity: 0; transform: rotate(-55deg) scale(.45); width: 0; }
 .tag-picker-actions { display: grid; grid-template-columns: 36px 1fr; gap: 5px; border-top: 1px solid var(--surface-200); padding-top: 5px; }
 .new-tag-button, .apply-tags-button { min-height: 34px; border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
 .apply-tags-button { background: var(--primary-color); color: white; }
@@ -347,6 +375,7 @@ onUnmounted(() => {
 @keyframes inlineReveal { from { opacity: 0; transform: scaleX(.82); } to { opacity: 1; transform: scaleX(1); } }
 @keyframes spin { to { transform: rotate(360deg); } }
 .context-menu-leave-active { pointer-events: none; animation: layerHold 260ms linear both; }
+.context-menu-leave-active .context-anchor { overflow: hidden; }
 .context-menu-leave-active .context-items,
 .context-menu-leave-active .inline-replace,
 .context-menu-leave-active .tag-quick-picker { animation: menuContentsUp 150ms ease-in both; }

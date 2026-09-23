@@ -190,7 +190,7 @@ function finishGeometry(revision) {
   stageRevealing.value = true
   geometryFinishing.value = true
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const exitDuration = reducedMotion ? 0 : geometryExitVariant.value === 'burst' ? 620 : 300
+  const exitDuration = reducedMotion ? 0 : geometryExitVariant.value === 'burst' ? 460 : 300
   removeTimer = setTimeout(() => {
     if (revision !== transitionRevision) return
     const next = geometryLayers.value.find(layer => !layer.current)
@@ -302,11 +302,11 @@ onBeforeUnmount(() => {
 }
 
 .geometry-overlay.finishing.burst .geometry-shape {
-  animation: geometry-burst 0.62s cubic-bezier(0.55, 0.12, 0.9, 0.55) both;
+  animation: geometry-burst 0.46s cubic-bezier(0.55, 0.12, 0.9, 0.55) both;
 }
 
 .geometry-overlay.finishing.burst .shape-edge {
-  animation: edge-burst 0.62s ease both;
+  animation: edge-burst 0.46s ease both;
 }
 
 @keyframes geometry-arrive {
