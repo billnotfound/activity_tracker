@@ -295,7 +295,10 @@ onUnmounted(() => {
   transform-origin: top;
   animation: frameDrop 170ms cubic-bezier(.2,.8,.2,1) 110ms both;
   transition: padding 180ms ease;
+  font-family: inherit;
 }
+.context-panel button,
+.context-panel input { font: inherit; }
 .context-items { display: grid; }
 .context-items > button {
   position: relative;
@@ -345,7 +348,7 @@ onUnmounted(() => {
 }
 
 .inline-replace { display: grid; grid-template-columns: minmax(0, 1fr) 38px; gap: 5px; animation: inlineReveal 180ms ease both; }
-.inline-replace input { min-width: 0; height: 38px; padding: 7px 9px; border: 1px solid var(--surface-300); background: var(--surface-card); color: var(--text-color); font-family: 'Ubuntu Mono', monospace; }
+.inline-replace input { min-width: 0; height: 38px; padding: 7px 9px; border: 1px solid var(--surface-300); background: var(--surface-card); color: var(--text-color); }
 .inline-replace input:focus { outline: 2px solid var(--primary-color); outline-offset: -2px; }
 .inline-replace button { border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
 .inline-replace button:disabled { opacity: .45; cursor: not-allowed; }

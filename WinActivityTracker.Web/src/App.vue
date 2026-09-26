@@ -12,15 +12,15 @@
             <span v-html="brandIconRaw" class="brand-icon"></span>
           </router-link>
         </div>
-        <div class="navbar-menu" ref="navMenuRef" @pointermove="onNavMouseMove" @pointerleave="onNavMouseLeave">
-          <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving }"></div>
-          <router-link class="nav-item" to="/" :class="{ active: $route.path === '/' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
+        <div class="navbar-menu" ref="navMenuRef">
+          <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving, attracted: navAttracted }"></div>
+          <router-link class="nav-item" data-nav-key="dashboard" to="/" :class="{ active: $route.path === '/', magnetic: navMagneticKey === 'dashboard' }" @focus="focusNavItem($event.currentTarget)">
             {{ t('nav.dashboard') }}
           </router-link>
-          <router-link class="nav-item" to="/history" :class="{ active: $route.path === '/history' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
+          <router-link class="nav-item" data-nav-key="history" to="/history" :class="{ active: $route.path === '/history', magnetic: navMagneticKey === 'history' }" @focus="focusNavItem($event.currentTarget)">
             {{ t('nav.history') }}
           </router-link>
-          <router-link class="nav-item" to="/settings" :class="{ active: $route.path === '/settings' }" @pointerenter="startNavAnim($event.currentTarget)" @focus="startNavAnim($event.currentTarget)">
+          <router-link class="nav-item" data-nav-key="settings" to="/settings" :class="{ active: $route.path === '/settings', magnetic: navMagneticKey === 'settings' }" @focus="focusNavItem($event.currentTarget)">
             {{ t('nav.settings') }}
           </router-link>
         </div>
@@ -54,7 +54,7 @@
 import { useI18n } from './i18n/index.js'
 import { useTheme } from './composables/useTheme.js'
 import { useRoute } from 'vue-router'
-import { watch, onMounted, nextTick, ref, computed } from 'vue'
+import { watch, onMounted, onBeforeUnmount, nextTick, ref, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
 import { Sun, Moon } from '@lucide/vue'
 import timerIconRaw from './ico/timer.svg?raw'
@@ -105,18 +105,27 @@ watch([() => route.path, isDark], () => {
 // Update on mount to ensure initial state is correct
 onMounted(() => {
   initNavFrame()
+  window.addEventListener('pointermove', onNavMouseMove, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', onNavMouseMove)
+  if (moveTimer) clearTimeout(moveTimer)
 })
 
 // ── Nav sliding frame ──
-// Instead of a RAF loop interpolating left/width, set the target directly
-// and let CSS transition handle the animation. navMoving is toggled for the
-// transition duration so the hover shadow can be suppressed mid-flight.
+// Each item owns a magnetic capture area. Pointer movement only retargets the
+// frame inside that area; CSS keeps the current velocity visually continuous
+// when the target changes while a previous slide is still running.
 
 const navMenuRef = ref(null)
 const navFrameStyle = ref({})
 const navMoving = ref(false)
+const navAttracted = ref(false)
+const navMagneticKey = ref('')
 let moveTimer = null
 let navTargetEl = null
+const NAV_ATTRACTION_RADIUS = 64
 
 function startNavAnim(el) {
   if (!el) return
@@ -127,29 +136,45 @@ function startNavAnim(el) {
     width: el.offsetWidth + 'px',
   }
   if (moveTimer) clearTimeout(moveTimer)
-  // Match the CSS transition duration (0.28s) + small buffer.
-  moveTimer = setTimeout(() => { navMoving.value = false }, 320)
+  // Match the longest position transition (0.34s) + a small buffer.
+  moveTimer = setTimeout(() => { navMoving.value = false }, 380)
 }
 
 function onNavMouseMove(e) {
+  if (e.pointerType === 'touch') return
   const menu = navMenuRef.value
   if (!menu) return
   const items = menu.querySelectorAll('.nav-item')
   let nearest = null, minDist = Infinity
   for (const item of items) {
     const r = item.getBoundingClientRect()
-    const cx = r.left + r.width / 2
-    const dist = Math.abs(e.clientX - cx)
+    const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right)
+    const dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom)
+    const dist = Math.hypot(dx, dy)
     if (dist < minDist) { minDist = dist; nearest = item }
   }
-  if (nearest && nearest !== navTargetEl) startNavAnim(nearest)
+  if (nearest && minDist <= NAV_ATTRACTION_RADIUS) {
+    navAttracted.value = true
+    navMagneticKey.value = nearest.dataset.navKey || ''
+    if (nearest !== navTargetEl) startNavAnim(nearest)
+    return
+  }
+  releaseNavAttraction()
 }
 
-function onNavMouseLeave() {
+function releaseNavAttraction() {
+  if (!navAttracted.value) return
+  navAttracted.value = false
+  navMagneticKey.value = ''
   const menu = navMenuRef.value
   if (!menu) return
   const active = menu.querySelector('.nav-item.active')
-  if (active) startNavAnim(active)
+  if (active && active !== navTargetEl) startNavAnim(active)
+}
+
+function focusNavItem(element) {
+  if (!navAttracted.value) navMagneticKey.value = ''
+  startNavAnim(element)
 }
 
 function initNavFrame() {
@@ -291,23 +316,18 @@ watch(() => route.path, () => {
   box-shadow: 0 0 0 transparent;
   z-index: 0;
   transition:
-    left 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.15s ease-out;
-
-  &.moving {
-    box-shadow: 0 0 0 transparent !important;
-  }
+    left 0.34s cubic-bezier(0.22, 0.72, 0.18, 1),
+    width 0.3s cubic-bezier(0.22, 0.72, 0.18, 1),
+    transform 0.12s ease-out,
+    box-shadow 0.15s ease-out,
+    border-color 0.12s ease-out;
+  will-change: left, width, transform;
 }
 
-.navbar-menu:hover .nav-frame {
+.nav-frame.attracted {
   border-color: var(--text-color);
   transform: translateY(-2px);
   box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
-  transition:
-    box-shadow 0.15s ease-out,
-    transform 0.12s ease-out,
-    border-color 0s 0s;
 }
 
 .nav-item {
@@ -329,9 +349,15 @@ watch(() => route.path, () => {
     letter-spacing: 0.3px;
   }
 
-  &:hover {
+  &:hover,
+  &.magnetic {
     transform: translateY(-2px);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-frame,
+  .nav-item { transition-duration: 0.01ms; }
 }
 
 .navbar-actions {
