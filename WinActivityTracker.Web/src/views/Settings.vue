@@ -43,51 +43,33 @@
           <div class="palette-controls">
           <div class="palette-controls-content" :class="{ blurred: autoColor }">
             <div class="theme-groups">
-            <div class="theme-group">
-              <span class="theme-group-label">{{ t('settings.appearance.light') }}</span>
-              <div class="theme-selector">
-                <button
-                  v-for="th in lightThemes"
-                  :key="th.id"
-                  class="theme-option"
-                  :class="{ active: !isDark && lightTheme === th.id }"
-                  @click="selectTheme(th)"
-                >
-                  <ThemeOrb :colors="themePreviewColors(th)" />
-                  <span class="theme-name">{{ th.name }}</span>
-                </button>
-              </div>
-            </div>
-            <div class="theme-group">
-              <span class="theme-group-label">{{ t('settings.appearance.dark') }}</span>
-              <div class="theme-selector">
-                <button
-                  v-for="th in darkThemes"
-                  :key="th.id"
-                  class="theme-option"
-                  :class="{ active: isDark && darkTheme === th.id }"
-                  @click="selectTheme(th)"
-                >
-                  <ThemeOrb :colors="themePreviewColors(th)" />
-                  <span class="theme-name">{{ th.name }}</span>
-                </button>
-                <button
-                  class="custom-palette-toggle"
-                  :aria-expanded="showCustomPalette"
-                  :title="t('settings.appearance.customPalette')"
-                  @click="showCustomPalette = !showCustomPalette"
-                >
-                  <X v-if="showCustomPalette" :size="18" />
-                  <Plus v-else :size="18" />
-                </button>
-              </div>
-            </div>
-            </div>
-
-            <div class="custom-palette">
-            <Transition name="custom-expand">
-              <div v-if="showCustomPalette" class="custom-theme-grid">
-                <section v-for="mode in customModes" :key="mode" class="custom-theme-editor">
+              <div v-for="mode in customModes" :key="mode" class="theme-group">
+                <span class="theme-group-label">{{ t(`settings.appearance.${mode}`) }}</span>
+                <div class="theme-group-body">
+                  <div class="theme-selector">
+                    <button
+                      v-for="th in mode === 'light' ? lightThemes : darkThemes"
+                      :key="th.id"
+                      class="theme-option"
+                      :class="{ active: mode === 'light' ? (!isDark && lightTheme === th.id) : (isDark && darkTheme === th.id) }"
+                      @click="selectTheme(th)"
+                    >
+                      <ThemeOrb :colors="themePreviewColors(th)" />
+                      <span class="theme-name">{{ th.name }}</span>
+                    </button>
+                    <button
+                      class="custom-palette-toggle"
+                      :data-mode="mode"
+                      :aria-expanded="openCustomPalettes[mode]"
+                      :title="t(`settings.appearance.custom.${mode}Scheme`)"
+                      @click="openCustomPalettes[mode] = !openCustomPalettes[mode]"
+                    >
+                      <X v-if="openCustomPalettes[mode]" :size="18" />
+                      <Plus v-else :size="18" />
+                    </button>
+                  </div>
+                  <Transition name="custom-expand">
+                    <section v-if="openCustomPalettes[mode]" class="custom-theme-editor" :data-mode="mode">
                   <div class="custom-theme-editor-head">
                     <strong>{{ t(`settings.appearance.custom.${mode}Scheme`) }}</strong>
                     <ThemeOrb :colors="customPreview(mode)" class="custom-orb" />
@@ -110,9 +92,10 @@
                     <Check :size="16" />
                     <span>{{ customSaved[mode] ? t('settings.appearance.paletteSaved') : t('settings.appearance.savePalette') }}</span>
                   </button>
-                </section>
+                    </section>
+                  </Transition>
+                </div>
               </div>
-            </Transition>
             </div>
           </div>
           <div v-if="autoColor" class="auto-palette-lock">
@@ -207,21 +190,21 @@
             <div class="input-field">
               <label>
                 {{ t('settings.windowPollLabel') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.windowPollHelp')" />
+                <SettingHelp :text="t('settings.windowPollHelp')" />
               </label>
               <div class="unit-control"><InputNumber v-model="form.windowPollSeconds" :min="1" :placeholder="t('settings.windowPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
             <div class="input-field">
               <label>
                 {{ t('settings.processPollLabel') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.processPollHelp')" />
+                <SettingHelp :text="t('settings.processPollHelp')" />
               </label>
               <div class="unit-control"><InputNumber v-model="form.processPollSeconds" :min="5" :placeholder="t('settings.processPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
             <div class="input-field">
               <label>
                 {{ t('settings.mediaPollLabel') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.mediaPollHelp')" />
+                <SettingHelp :text="t('settings.mediaPollHelp')" />
               </label>
               <div class="unit-control"><InputNumber v-model="form.mediaPollSeconds" :min="1" :placeholder="t('settings.mediaPollPlaceholder')" /><span>{{ t('time.seconds.suffix') }}</span></div>
             </div>
@@ -233,7 +216,7 @@
           <div class="input-field">
             <label>
               {{ t('settings.idleThresholdLabel') }}
-              <CircleHelp :size="14" class="help-icon" :title="t('settings.idleThresholdHelp')" />
+              <SettingHelp :text="t('settings.idleThresholdHelp')" />
             </label>
             <div class="unit-control"><InputNumber v-model="form.idleThresholdMinutes" :min="1" :placeholder="t('settings.idleThresholdPlaceholder')" /><span>{{ t('time.minutes.suffix') }}</span></div>
           </div>
@@ -252,7 +235,7 @@
               </button>
               <label @click="form.fullscreenBypassIdle = !form.fullscreenBypassIdle">
                 {{ t('settings.fullscreenBypassLabel') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.fullscreenBypassHelp')" />
+                <SettingHelp :text="t('settings.fullscreenBypassHelp')" />
               </label>
             </div>
             <div class="checkbox-item">
@@ -268,7 +251,7 @@
               </button>
               <label @click="form.mergeSameProcessSwitches = !form.mergeSameProcessSwitches">
                 {{ t('settings.mergeSwitchesLabel') }}
-                <CircleHelp :size="14" class="help-icon" :title="t('settings.mergeSwitchesHelp')" />
+                <SettingHelp :text="t('settings.mergeSwitchesHelp')" />
               </label>
             </div>
           </div>
@@ -307,8 +290,8 @@
               <label>{{ t('settings.timeSourceMode') }}</label>
               <select v-model="form.timeSourceMode" class="memphis-select"><option v-for="m in timeSourceModes" :key="m.value" :value="m.value">{{ m.label }}</option></select>
             </div>
-            <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.timeAnomalyThresholdSeconds')" /></label><div class="unit-control"><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
-            <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <CircleHelp :size="14" class="help-icon" :title="t('settings.ntpEpsilonSeconds')" /></label><div class="unit-control"><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
+            <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <SettingHelp :text="t('settings.timeAnomalyThresholdHelp')" /></label><div class="unit-control"><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
+            <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <SettingHelp :text="t('settings.ntpEpsilonHelp')" /></label><div class="unit-control"><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
           </div>
         </MemphisCard>
         <TimeAnomalyView embedded />
@@ -321,7 +304,7 @@
           <div class="input-field">
             <label>
               {{ t('settings.retentionLabel') }}
-              <CircleHelp :size="14" class="help-icon" :title="t('settings.retentionHelp')" />
+              <SettingHelp :text="t('settings.retentionHelp')" />
             </label>
             <div class="unit-control"><InputNumber v-model="form.dataRetentionDays" :min="1" :placeholder="t('settings.retentionPlaceholder')" /><span>{{ t('common.day.suffix') }}</span></div>
           </div>
@@ -449,6 +432,7 @@ import MemphisCard from '../components/MemphisCard.vue'
 import TagsView from './Tags.vue'
 import TimeAnomalyView from './TimeAnomaly.vue'
 import ThemeOrb from '../components/ThemeOrb.vue'
+import SettingHelp from '../components/SettingHelp.vue'
 import Tabs from 'primevue/tabs'
 import TabList from 'primevue/tablist'
 import Tab from 'primevue/tab'
@@ -456,7 +440,7 @@ import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
 import InputNumber from 'primevue/inputnumber'
 import Button from 'primevue/button'
-import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, CircleHelp, Plus } from '@lucide/vue'
+import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, Plus } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
@@ -538,7 +522,7 @@ const darkTheme = computed(() => theme.darkTheme.value)
 const pageTransition = computed(() => theme.pageTransition.value)
 const customColorKeys = ['primary', 'secondary', 'accent']
 const customModes = ['light', 'dark']
-const showCustomPalette = ref(false)
+const openCustomPalettes = reactive({ light: false, dark: false })
 const customDrafts = reactive({
   light: {
     name: theme.customThemes.value.light?.name || '',
@@ -1014,10 +998,6 @@ async function runReset() {
   color: var(--text-color);
 }
 
-.custom-palette {
-  min-width: 0;
-}
-
 .custom-palette-toggle {
   width: 62px;
   height: 62px;
@@ -1039,13 +1019,10 @@ async function runReset() {
   &:active { transform: translateY(1px) scale(0.94); }
 }
 
-.custom-theme-grid {
+.theme-group-body {
+  min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--surface-200);
+  gap: 12px;
 }
 
 .custom-theme-editor {
@@ -1055,6 +1032,7 @@ async function runReset() {
   background: var(--surface-card);
   display: grid;
   gap: 12px;
+  max-width: 760px;
 }
 
 .custom-theme-editor-head {
@@ -1474,7 +1452,6 @@ async function runReset() {
     flex-wrap: wrap;
   }
 
-  .custom-theme-grid,
   .custom-color-list {
     grid-template-columns: 1fr;
   }

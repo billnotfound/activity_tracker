@@ -146,15 +146,18 @@ public class HeartbeatService : BackgroundService
 
     private TimeAnomaly RecordAnomaly(AppDbContext db, Heartbeat hb, TimeAnomalyClassification cls, DateTime now)
     {
-        _logger.LogWarning("Time change detected: offset {Offset}s at {At}", cls.OffsetSeconds, now);
+        _logger.LogWarning("Possible time change detected: offset {Offset}s at {At}; waiting for time-reference confirmation",
+            cls.OffsetSeconds, now);
         var anomaly = new TimeAnomaly
         {
             DetectedAt = now,
             Source = TimeAnomalySources.Heartbeat,
             OffsetSeconds = cls.OffsetSeconds,
-            Status = TimeAnomalyStatus.Confirmed,
+            // A monotonic/wall-clock disagreement is evidence, not proof. A
+            // fresh reference check either confirms it or closes it as Resolved.
+            Status = TimeAnomalyStatus.Suspicious,
             FromWall = hb.LastTick.AddSeconds(Math.Max(0, cls.OffsetSeconds)),
-            Note = cls.Note
+            Note = cls.Note ?? $"等待网络时间复核（检测偏移 {cls.OffsetSeconds:F1}s）"
         };
         // 直接写本作用域 DbContext（每 30s 至多一行，压力可忽略）：回调在
         // SaveChangesAsync 之后触发，必须收到已保存实体（Id 已赋值）。

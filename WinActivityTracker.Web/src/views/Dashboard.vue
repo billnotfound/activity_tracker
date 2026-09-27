@@ -860,6 +860,11 @@ async function renderCharts(data) {
   await applyAutoColor(iconDataList.map(item => item.hasExtractedPalette ? item : {}))
   const icons = iconDataList.map(d => d.icon)
   const colors = iconDataList.map(d => d.colorPrimary)
+  const chartWidth = focusChartRef.value.clientWidth || window.innerWidth
+  const plotWidth = Math.max(180, chartWidth - 80)
+  const slotWidth = plotWidth / Math.max(1, top.length)
+  const viewportCap = Math.max(15, Math.min(36, window.innerWidth * .02))
+  const iconSize = Math.round(Math.max(14, Math.min(viewportCap, slotWidth * .48)))
 
   // Resolve CSS variables for ECharts (Canvas doesn't support CSS custom properties)
   const cs = getComputedStyle(document.documentElement)
@@ -890,7 +895,7 @@ async function renderCharts(data) {
     })
   }
   focusChart.setOption({
-    grid: { left: 60, right: 20, top: 20, bottom: 80 },
+    grid: { left: 60, right: 20, top: 20, bottom: Math.max(68, iconSize + 42) },
     xAxis: {
       type: 'category',
       data: labels,
@@ -905,8 +910,9 @@ async function renderCharts(data) {
             backgroundColor: {
               image: icon || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8cmVjdCB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIGZpbGw9IiNDQ0NDQ0MiLz4KICA8dGV4dCB4PSI1MCUiIHk9IjUwJSIgZG9taW5hbnQtYmFzZWxpbmU9Im1pZGRsZSIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiIGZvbnQtc2l6ZT0iMTYiPj88L3RleHQ+Cjwvc3ZnPg=='
             },
-            height: 32,
-            width: 32
+            height: iconSize,
+            width: iconSize,
+            lineHeight: iconSize,
           }
           return acc
         }, {})
@@ -1407,24 +1413,20 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   padding: 0 8px;
 }
 
-.charts-row {
+.charts-row,
+.overview-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 24px;
 }
 
+.charts-row > *,
+.overview-row > * { min-width: 0; }
+
 .chart-card,
 .data-card {
   min-height: 350px;
 }
-
-.overview-row {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
-}
-
-.overview-row > * { min-width: 0; }
 
 .overview-heading {
   min-height: 27px;
@@ -1471,10 +1473,6 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   place-items: center;
   color: var(--surface-400);
   font-size: .9rem;
-}
-
-@media (max-width: 1050px) {
-  .overview-row { grid-template-columns: minmax(0, 1fr); }
 }
 
 .context-hover-locked {

@@ -9,6 +9,9 @@ public static class TimeAnomalyStatus
     public const string Applied = "Applied";
     public const string Reverted = "Reverted";
     public const string Ignored = "Ignored";
+    // A reference-time check completed but did not corroborate the anomaly.
+    // Keep the audit row without presenting it as an active problem.
+    public const string Resolved = "Resolved";
 }
 
 public static class TimeAnomalySources

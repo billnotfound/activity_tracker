@@ -68,8 +68,15 @@ public class TimeAnomalyService : BackgroundService
         catch (Exception ex) { _logger.LogError(ex, "Startup event-log back-query failed"); }
 
         // Subscribe after startup backfill so the startup NTP result cannot
-        // promote every historical Pending event at once.
+        // promote every historical Pending event at once. Historical rows are
+        // instead closed as Resolved by the freshness guard below.
         _ntp.ResultArrived += OnNtpResultArrived;
+
+        // Resolve stale/unverified rows before auto-apply. Older versions wrote
+        // large heartbeat deltas straight as Confirmed; applying those before a
+        // fresh reference pass would preserve the false-positive bug forever.
+        if (startupNtp is { Succeeded: true })
+            await ReevaluateUnconfirmedWithNtpAsync();
 
         // 启动自动应用：方向可自动判定的 Confirmed 异常（Heartbeat + EventLog/NTP 已定方向）
         // 立即修复数据；单条失败不中断（ApplyAllAutoAsync 内部逐条 try/catch）。
@@ -141,14 +148,20 @@ public class TimeAnomalyService : BackgroundService
             string status; string? note; string? direction;
             if (ntp is { Succeeded: true })
             {
-                // 当前墙钟 ≈ 参照 → 变化是修正，旧记录错；否则新记录错。
-                // 段方向在应用时决定；此处 NTP 可用即视为确认异常。
-                status = TimeAnomalyStatus.Confirmed;
-                direction = Math.Abs(ntp.OffsetSeconds) <= _settings.Settings.NtpEpsilonSeconds
-                    ? "pre" : "post";
-                note = direction == "pre"
-                    ? "变化前记录错（变化为修正）"
-                    : "变化后记录错（变化为改动）";
+                // A successful query is not automatically corroboration. It
+                // must say either "the new clock is now correct" (pre) or
+                // "the new clock is still wrong by this exact delta" (post).
+                direction = ReferenceDirection(delta, ntp.OffsetSeconds,
+                    _settings.Settings.NtpEpsilonSeconds);
+                status = direction == null
+                    ? TimeAnomalyStatus.Resolved
+                    : TimeAnomalyStatus.Confirmed;
+                note = direction switch
+                {
+                    "pre" => "变化前记录错（NTP 证实本次变化为校正）",
+                    "post" => "变化后记录错（NTP 偏移与本次变化吻合）",
+                    _ => $"NTP 未证实本次时间变化（{ntp.SourceName}），已解除异常"
+                };
             }
             else
             {
@@ -202,37 +215,20 @@ public class TimeAnomalyService : BackgroundService
         {
             var result = await _ntp.RequestCheckAsync();
             if (result is not { Succeeded: true }) return;
-            // 墙钟当前偏差 ≈ 检测偏移 → 确认为异常
-            if (Math.Abs(result.OffsetSeconds - anomaly.OffsetSeconds) <= _settings.Settings.NtpEpsilonSeconds)
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var note = $"NTP 确认（{result.SourceName}）";
-                var affected = await db.TimeAnomalies
-                    .Where(a => a.Id == anomaly.Id && a.Status == TimeAnomalyStatus.Suspicious)
-                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.Status, TimeAnomalyStatus.Confirmed)
-                        .SetProperty(a => a.Direction, "post")
-                        .SetProperty(a => a.Note, note));
-                // 条件原子更新：与 ResultArrived→ReevaluateUnconfirmedWithNtpAsync 并发时
-                // 只有一次 affected>0，防止同一异常双重通知。
-                if (affected > 0)
-                {
-                    anomaly.Status = TimeAnomalyStatus.Confirmed;
-                    anomaly.Direction = "post";
-                    anomaly.Note = note;
-                    NotifySafe(anomaly);
-                }
-            }
+            // RequestCheckAsync also emits ResultArrived. Explicitly await one
+            // pass as well; conditional updates keep the two paths idempotent.
+            await ReevaluateUnconfirmedWithNtpAsync();
         }
         catch (Exception ex) { _logger.LogError(ex, "NTP confirmation failed"); }
     }
 
     /// <summary>
     /// NTP 结果到达后重评未定/未确认的异常：
-    /// Pending+EventLog（启动回查）：当前墙钟 ≈ 参照 → 变化前记录错（修正）；
-    /// 墙钟偏差 ≈ 异常偏移 → 变化后记录错；两者都不满足保持 Pending。
-    /// Suspicious（任意来源）：墙钟偏差 ≈ 异常偏移 → NTP 确认升级 Confirmed 并通知；
-    /// 不满足保持原状。
+    /// Pending+EventLog：当前墙钟 ≈ 参照 → 变化前记录错；墙钟偏差 ≈
+    /// 异常偏移 → 变化后记录错。Heartbeat Suspicious/Drift 只在当前偏差
+    /// 与检测偏移吻合时确认。其余未确认项在成功校时后转为 Resolved，
+    /// 保留审计记录但不再作为活动异常；旧版无 NTP 证据的 Heartbeat
+    /// Confirmed 行也会在此收敛，避免升级后永久残留误报。
     /// </summary>
     public async Task ReevaluateUnconfirmedWithNtpAsync()
     {
@@ -244,51 +240,59 @@ public class TimeAnomalyService : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var rows = await db.TimeAnomalies.AsNoTracking()
-                .Where(a => (a.Status == TimeAnomalyStatus.Pending
-                        && a.Source == TimeAnomalySources.EventLog
-                        && a.DetectedAt >= corroborationFloor
-                        && Math.Abs(a.OffsetSeconds) >= _settings.Settings.TimeAnomalyThresholdSeconds)
-                    || a.Status == TimeAnomalyStatus.Suspicious)
+                .Where(a => a.Status == TimeAnomalyStatus.Pending
+                    || a.Status == TimeAnomalyStatus.Suspicious
+                    || a.Status == TimeAnomalyStatus.Drift
+                    || (a.Status == TimeAnomalyStatus.Confirmed
+                        && a.Source == TimeAnomalySources.Heartbeat
+                        && a.Direction == null
+                        && a.LastAppliedAt == null))
                 .ToListAsync();
             foreach (var row in rows)
             {
-                string? note;
-                string direction;
-                if (row.Status == TimeAnomalyStatus.Pending)
+                var previousStatus = row.Status;
+                string? direction = null;
+                var fresh = row.DetectedAt >= corroborationFloor;
+                if (fresh && row.Source == TimeAnomalySources.EventLog
+                    && row.Status == TimeAnomalyStatus.Pending
+                    && Math.Abs(row.OffsetSeconds) >= _settings.Settings.TimeAnomalyThresholdSeconds)
                 {
-                    if (Math.Abs(result.OffsetSeconds) <= _settings.Settings.NtpEpsilonSeconds)
-                    {
-                        direction = "pre";
-                        note = $"变化前记录错（NTP 复核，{result.SourceName}）";
-                    }
-                    else if (Math.Abs(result.OffsetSeconds - row.OffsetSeconds) <= _settings.Settings.NtpEpsilonSeconds)
-                    {
-                        direction = "post";
-                        note = $"变化后记录错（NTP 复核，{result.SourceName}）";
-                    }
-                    else
-                        continue;
+                    direction = ReferenceDirection(row.OffsetSeconds, result.OffsetSeconds,
+                        _settings.Settings.NtpEpsilonSeconds);
                 }
-                else // Suspicious 行：NTP 偏差与检测偏移吻合 → 确认异常
+                else if (fresh && row.Source == TimeAnomalySources.Heartbeat
+                    && Math.Abs(result.OffsetSeconds - row.OffsetSeconds)
+                        <= _settings.Settings.NtpEpsilonSeconds)
                 {
-                    if (Math.Abs(result.OffsetSeconds - row.OffsetSeconds) > _settings.Settings.NtpEpsilonSeconds)
-                        continue;
                     direction = "post";
-                    note = $"NTP 确认（{result.SourceName}）";
                 }
-                // 条件原子更新：仅当该行仍处于原状态时才升级；与 ConfirmWithNtpAsync
-                // 并发时只有一次 affected==1，防止同一异常双重通知。
+
+                var nextStatus = direction == null
+                    ? TimeAnomalyStatus.Resolved
+                    : TimeAnomalyStatus.Confirmed;
+                var note = direction switch
+                {
+                    "pre" => $"变化前记录错（NTP 复核，{result.SourceName}）",
+                    "post" => $"变化后记录错（NTP 确认偏移吻合，{result.SourceName}）",
+                    _ when fresh => $"NTP 校时后未证实该异常（{result.SourceName}），已解除",
+                    _ => $"旧异常无法由当前 NTP 样本证实（{result.SourceName}），已解除"
+                };
+
                 var affected = await db.TimeAnomalies
                     .Where(a => a.Id == row.Id && a.Status == row.Status)
-                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.Status, TimeAnomalyStatus.Confirmed)
+                    .ExecuteUpdateAsync(s => s.SetProperty(a => a.Status, nextStatus)
                         .SetProperty(a => a.Direction, direction)
                         .SetProperty(a => a.Note, note));
                 if (affected == 1)
                 {
-                    row.Status = TimeAnomalyStatus.Confirmed;
+                    row.Status = nextStatus;
                     row.Direction = direction;
                     row.Note = note;
-                    NotifySafe(row);
+                    if (nextStatus == TimeAnomalyStatus.Confirmed
+                        && previousStatus != TimeAnomalyStatus.Confirmed)
+                        NotifySafe(row);
+                    else if (nextStatus == TimeAnomalyStatus.Resolved)
+                        CancelReminderSafe(row.Id);
                 }
             }
         }
@@ -309,6 +313,19 @@ public class TimeAnomalyService : BackgroundService
         if (!ShouldNotify(anomaly)) return;
         try { _notifier?.NotifyConfirmed(anomaly); }
         catch (Exception ex) { _logger.LogError(ex, "Anomaly notifier failed"); }
+    }
+
+    private void CancelReminderSafe(long anomalyId)
+    {
+        try { _notifier?.CancelReminder(anomalyId); }
+        catch (Exception ex) { _logger.LogError(ex, "Anomaly reminder cancellation failed"); }
+    }
+
+    private static string? ReferenceDirection(double detectedOffset, double referenceOffset, double epsilon)
+    {
+        if (Math.Abs(referenceOffset) <= epsilon) return "pre";
+        if (Math.Abs(referenceOffset - detectedOffset) <= epsilon) return "post";
+        return null;
     }
 
     public List<TimeAnomaly> GetAnomalies(int limit)

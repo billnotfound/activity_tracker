@@ -262,7 +262,37 @@ const validTagDrafts = computed(() => {
   return active.length > 0 && active.every(draft =>
     (props.tagScope !== 'process-title' && draft.mode !== 'Overwrite') || !!draft.titleRegex.trim())
 })
-const hasAnomalies = computed(() => anomalyItems.value.some(item => !['Ignored', 'Reverted'].includes(item.status)))
+function anomalyBounds(item) {
+  const points = [item.oldTime, item.newTime, item.fromWall, item.toWall]
+    .map(value => parseUtcTs(value)?.getTime())
+    .filter(value => Number.isFinite(value))
+  if (points.length >= 2) return [Math.min(...points), Math.max(...points)]
+  const anchor = points[0] ?? parseUtcTs(item.detectedAt)?.getTime()
+  if (!Number.isFinite(anchor)) return null
+  const radius = Math.max(60, Math.abs(Number(item.offsetSeconds) || 0)) * 1000
+  return [anchor - radius, anchor + radius]
+}
+
+const repairAnomaly = computed(() => {
+  const selectedAt = props.process?.timestamp ? parseUtcTs(props.process.timestamp)?.getTime() : null
+  if (!Number.isFinite(selectedAt)) return null
+  const selectedEnd = selectedAt + Math.max(1, Number(props.process?.durationSeconds) || 1) * 1000
+  const overlapping = anomalyItems.value.filter(item => {
+    if (item.status !== 'Confirmed') return false
+    const bounds = anomalyBounds(item)
+    if (!bounds) return false
+    const [start, end] = bounds
+    return start < selectedEnd && selectedAt < end
+      && start < rangeEnd.value.getTime() && rangeStart.value.getTime() < end
+  })
+  if (!overlapping.length) return null
+  return [...overlapping].sort((a, b) => {
+    const aTime = parseUtcTs(a.fromWall || a.detectedAt)?.getTime() ?? selectedAt
+    const bTime = parseUtcTs(b.fromWall || b.detectedAt)?.getTime() ?? selectedAt
+    return Math.abs(aTime - selectedAt) - Math.abs(bTime - selectedAt)
+  })[0]
+})
+const hasAnomalies = computed(() => !!repairAnomaly.value)
 const visibleParents = computed(() => (relations.value.parents || (relations.value.parent ? [relations.value.parent] : []))
   .filter(parent => parent.name.toLocaleLowerCase() !== processName.value.toLocaleLowerCase()))
 const rangeStart = computed(() => props.rangeStart || new Date(Date.now() - 24 * 60 * 60 * 1000))
@@ -396,7 +426,7 @@ function isolate() {
 }
 
 function selectTime() {
-  emit('select-time', { ...props.process, processName: processName.value })
+  emit('select-time', { ...props.process, processName: processName.value, timeAnomaly: repairAnomaly.value })
   close()
 }
 

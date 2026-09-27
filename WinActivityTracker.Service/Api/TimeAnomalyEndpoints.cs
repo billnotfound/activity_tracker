@@ -14,6 +14,7 @@ public static class TimeAnomalyEndpoints
     public static void MapTimeAnomalyEndpoints(this WebApplication app)
     {
         app.MapGet("/api/time-anomalies", GetList);
+        app.MapGet("/api/time-anomalies/{id:long}", GetOne);
         app.MapPost("/api/time-anomalies/{id:long}/apply", Apply);
         app.MapPost("/api/time-anomalies/{id:long}/restore", Restore);
         app.MapPost("/api/time-anomalies/{id:long}/ignore", Ignore);
@@ -35,6 +36,9 @@ public static class TimeAnomalyEndpoints
                 sourceName = ntp.LastResult?.SourceName
             }
         });
+
+    private static IResult GetOne(long id, TimeAnomalyService svc)
+        => svc.Get(id) is { } anomaly ? Results.Ok(anomaly) : Results.NotFound();
 
     /// <summary>
     /// apply：preview=true → 只返回每表受影响行数；否则真实应用并返回结果。

@@ -69,13 +69,26 @@
               v-if="timeSelection.active"
               ref="timeSelectionLayerRef"
               class="time-selection-layer"
+              :class="{ 'repair-animating': timeSelection.animating }"
+              @pointerdown.self="onSelectionPointerDown($event, 'create')"
               @pointermove="onSelectionPointerMove"
               @pointerup="onSelectionPointerUp"
               @pointercancel="onSelectionPointerUp"
             >
               <div class="selection-mask mask-left" :style="selectionLeftMaskStyle"></div>
               <div class="selection-mask mask-right" :style="selectionRightMaskStyle"></div>
-              <div class="target-range" :style="targetRangeStyle"><span>{{ t('history.time.target') }}</span></div>
+              <div class="target-range" :style="targetRangeStyle" @pointerdown.stop="onSelectionPointerDown($event, 'target')">
+                <span>{{ t('history.time.target') }}</span>
+              </div>
+              <div
+                v-if="timeSelection.animationPhase"
+                class="repair-preview-slice"
+                :class="timeSelection.animationPhase"
+                :style="repairPreviewStyle"
+                aria-hidden="true"
+              >
+                <canvas ref="repairPreviewCanvasRef"></canvas>
+              </div>
               <div class="selected-range" :style="selectedRangeStyle" @pointerdown.stop="onSelectionPointerDown($event, 'move')">
                 <button class="selection-handle left" type="button" :aria-label="t('history.time.dragStart')" @pointerdown.stop="onSelectionPointerDown($event, 'start')"><ChevronLeft :size="24" /></button>
                 <span>{{ t('history.time.selected') }}</span>
@@ -129,9 +142,11 @@
             <p>{{ t('history.time.help') }}</p>
             <div class="time-correction-summary">
               <div><span>{{ t('history.time.from') }}</span><b>{{ selectionRangeLabel }}</b></div>
-              <ArrowRight :size="22" />
               <div><span>{{ t('history.time.to') }}</span><b>{{ targetRangeLabel }}</b></div>
+              <div class="offset-summary"><span>{{ t('history.time.offset') }}</span><b>{{ offsetDurationLabel }}</b></div>
             </div>
+            <div v-if="targetHasRecords" class="time-target-warning">{{ t('history.time.targetOccupied') }}</div>
+            <div v-else-if="!targetInRange" class="time-target-warning">{{ t('history.time.targetOutside') }}</div>
             <div class="shift-controls">
               <label>
                 <span>{{ t('history.time.shiftMinutes') }}</span>
@@ -144,7 +159,7 @@
             <div v-if="timeSelection.preview" class="time-preview-result">
               {{ t('timeAnomaly.applyPreview', { total: timeSelection.preview.total, tables: timeSelection.preview.tables.join(listSeparator) }) }}
             </div>
-            <button v-if="!timeSelection.preview" type="button" class="preview-button" :disabled="!timeSelection.shiftMinutes" @click="previewManualTime">
+            <button v-if="!timeSelection.preview" type="button" class="preview-button" :disabled="!timeSelection.shiftMinutes || !targetInRange || timeSelection.animating" @click="previewManualTime">
               <ScanSearch :size="17" /> {{ t('history.time.preview') }}
             </button>
             <button v-else type="button" class="apply-time-button" @click="applyManualTime">
@@ -202,7 +217,7 @@ import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Focus, ScanSearch, X } from '@lucide/vue'
+import { Check, ChevronLeft, ChevronRight, Focus, ScanSearch, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t, locale } = useI18n()
@@ -243,6 +258,7 @@ const hasRenderedTimeline = ref(false)
 const timeRangePickerRef = ref(null)
 const timelineChartRef = ref(null)
 const timeSelectionLayerRef = ref(null)
+const repairPreviewCanvasRef = ref(null)
 let timelineChart = null
 let renderedRangeMin = 0
 let renderedRangeMax = 0
@@ -290,9 +306,14 @@ const timeSelection = reactive({
   shiftMinutes: 60,
   preview: null,
   applying: false,
+  animating: false,
+  animationPhase: '',
 })
 let selectionDrag = null
 let filterLoadTimer = null
+let repairAnimationStartTimer = null
+let repairAnimationEndTimer = null
+let repairCaptureFrame = null
 
 const percentInRange = value => {
   const min = startDate.value.getTime()
@@ -304,17 +325,40 @@ const selectionRight = computed(() => percentInRange(timeSelection.end))
 const selectionLeftMaskStyle = computed(() => ({ width: `${selectionLeft.value}%` }))
 const selectionRightMaskStyle = computed(() => ({ left: `${selectionRight.value}%`, width: `${100 - selectionRight.value}%` }))
 const selectedRangeStyle = computed(() => ({ left: `${selectionLeft.value}%`, width: `${Math.max(.5, selectionRight.value - selectionLeft.value)}%` }))
+const targetStart = computed(() => timeSelection.start + timeSelection.shiftMinutes * 60000)
+const targetEnd = computed(() => timeSelection.end + timeSelection.shiftMinutes * 60000)
+const targetLeft = computed(() => percentInRange(targetStart.value))
+const targetRight = computed(() => percentInRange(targetEnd.value))
 const targetRangeStyle = computed(() => {
-  const shift = timeSelection.shiftMinutes * 60000
-  const left = percentInRange(timeSelection.start + shift)
-  const right = percentInRange(timeSelection.end + shift)
-  return { left: `${left}%`, width: `${Math.max(.5, right - left)}%` }
+  return { left: `${targetLeft.value}%`, width: `${Math.max(.5, targetRight.value - targetLeft.value)}%` }
 })
+const repairPreviewStyle = computed(() => ({
+  '--repair-source-left': `${selectionLeft.value}%`,
+  '--repair-target-left': `${targetLeft.value}%`,
+  width: `${Math.max(.5, selectionRight.value - selectionLeft.value)}%`,
+}))
 const selectionRangeLabel = computed(() => timeSelection.active
   ? `${new Date(timeSelection.start).toLocaleString()} — ${new Date(timeSelection.end).toLocaleString()}` : '')
 const targetRangeLabel = computed(() => {
-  const shift = timeSelection.shiftMinutes * 60000
-  return `${new Date(timeSelection.start + shift).toLocaleString()} — ${new Date(timeSelection.end + shift).toLocaleString()}`
+  return `${new Date(targetStart.value).toLocaleString()} — ${new Date(targetEnd.value).toLocaleString()}`
+})
+const offsetDurationLabel = computed(() => {
+  const seconds = Math.round(Math.abs(Number(timeSelection.shiftMinutes) || 0) * 60)
+  const sign = Number(timeSelection.shiftMinutes) > 0 ? '+' : Number(timeSelection.shiftMinutes) < 0 ? '−' : ''
+  return `${sign}${fmtShortDur(seconds)}`
+})
+const targetInRange = computed(() => targetStart.value >= startDate.value.getTime() && targetEnd.value <= endDate.value.getTime())
+const targetHasRecords = computed(() => {
+  if (!timeSelection.active || !targetInRange.value) return false
+  const start = targetStart.value
+  const end = targetEnd.value
+  return [...timeline.value, ...windowSessions.value].some(item => {
+    const itemStart = parseUtcTs(item.timestamp || item.openTime || item.startTime)?.getTime()
+    if (itemStart == null) return false
+    const explicitEnd = parseUtcTs(item.closeTime || item.endTime)?.getTime()
+    const itemEnd = explicitEnd ?? itemStart + Math.max(0, Number(item.durationSeconds || 0)) * 1000
+    return itemEnd > start && itemStart < end
+  })
 })
 
 // Hover-dim state: while hovering a process, a canvas layer is painted with
@@ -415,8 +459,22 @@ onMounted(async () => {
 
   await loadData()
   if (route.query.timeSelect === '1') {
-    beginTimeSelection({ processName: route.query.process ? String(route.query.process) : '' })
-    router.replace({ query: { ...route.query, timeSelect: undefined } })
+    let requestedAnomaly = null
+    if (route.query.anomalyId) {
+      try {
+        const response = await fetch(`${apiBase}/api/time-anomalies/${encodeURIComponent(route.query.anomalyId)}`, { signal: lifetimeController.signal })
+        if (response.ok) {
+          requestedAnomaly = await response.json()
+        }
+      } catch (error) {
+        if (error.name !== 'AbortError') console.warn('Failed to load requested time anomaly:', error)
+      }
+    }
+    beginTimeSelection({
+      processName: route.query.process ? String(route.query.process) : '',
+      timeAnomaly: requestedAnomaly,
+    })
+    router.replace({ query: { ...route.query, timeSelect: undefined, anomalyId: undefined } })
   }
 
   // Add window resize listener for chart responsiveness
@@ -452,6 +510,8 @@ onUnmounted(() => {
   if (rangeMotionTimer) clearTimeout(rangeMotionTimer)
   if (dragPreviewFrame) cancelAnimationFrame(dragPreviewFrame)
   if (filterLoadTimer) clearTimeout(filterLoadTimer)
+  clearRepairAnimation()
+  if (repairCaptureFrame) cancelAnimationFrame(repairCaptureFrame)
   disposeTimelineChart()
   // Cancel pending loads
   loadId++
@@ -508,6 +568,7 @@ function handleResize() {
         buildAllBarsPx()
         paintDimmer()
       }
+      scheduleRepairCapture()
     }
   }, 200)
 }
@@ -660,44 +721,144 @@ function powerBoundaries() {
   return [...new Set(boundaries)].sort((a, b) => a - b)
 }
 
-function beginTimeSelection(item = {}) {
+function clearRepairAnimation() {
+  clearTimeout(repairAnimationStartTimer)
+  clearTimeout(repairAnimationEndTimer)
+  repairAnimationStartTimer = null
+  repairAnimationEndTimer = null
+}
+
+function scheduleRepairCapture() {
+  if (!timeSelection.active) return
+  if (repairCaptureFrame) cancelAnimationFrame(repairCaptureFrame)
+  repairCaptureFrame = requestAnimationFrame(() => {
+    repairCaptureFrame = null
+    captureRepairPreview()
+  })
+}
+
+function captureRepairPreview() {
+  const output = repairPreviewCanvasRef.value
+  const layer = timeSelectionLayerRef.value
+  const chartHost = timelineChartRef.value
+  if (!output || !layer || !chartHost) return
+  const sourceCanvases = [...chartHost.querySelectorAll('canvas')]
+  if (!sourceCanvases.length) return
+  const layerRect = layer.getBoundingClientRect()
+  const sliceX = layerRect.left + layerRect.width * selectionLeft.value / 100
+  const sliceWidth = Math.max(2, layerRect.width * (selectionRight.value - selectionLeft.value) / 100)
+  const dpr = window.devicePixelRatio || 1
+  output.width = Math.max(1, Math.round(sliceWidth * dpr))
+  output.height = Math.max(1, Math.round(layerRect.height * dpr))
+  const context = output.getContext('2d')
+  context.clearRect(0, 0, output.width, output.height)
+  for (const source of sourceCanvases) {
+    const sourceRect = source.getBoundingClientRect()
+    if (!sourceRect.width || !sourceRect.height) continue
+    const scaleX = source.width / sourceRect.width
+    const scaleY = source.height / sourceRect.height
+    const sx = (sliceX - sourceRect.left) * scaleX
+    const sy = (layerRect.top - sourceRect.top) * scaleY
+    const sw = sliceWidth * scaleX
+    const sh = layerRect.height * scaleY
+    try {
+      context.drawImage(source, sx, sy, sw, sh, 0, 0, output.width, output.height)
+    } catch {
+      // A transient zero-sized renderer during resize should not cancel repair selection.
+    }
+  }
+}
+
+async function startRepairAnimation(animate) {
+  clearRepairAnimation()
+  timeSelection.animating = Boolean(animate) && !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  timeSelection.animationPhase = 'source'
+  await nextTick()
+  scheduleRepairCapture()
+  if (!timeSelection.animating) {
+    timeSelection.animationPhase = 'settled'
+    return
+  }
+  repairAnimationStartTimer = setTimeout(() => {
+    timeSelection.animationPhase = 'moving'
+  }, 700)
+  repairAnimationEndTimer = setTimeout(() => {
+    timeSelection.animationPhase = 'settled'
+    timeSelection.animating = false
+  }, 2950)
+}
+
+async function beginTimeSelection(item = {}) {
   const rangeStart = startDate.value.getTime()
   const rangeEnd = endDate.value.getTime()
-  const itemStart = item.timestamp ? parseUtcTs(item.timestamp).getTime() : (rangeStart + rangeEnd) / 2
+  const anomaly = item.timeAnomaly || null
+  const anomalyPoints = anomaly
+    ? [anomaly.fromWall, anomaly.toWall, anomaly.oldTime, anomaly.newTime]
+        .map(value => parseUtcTs(value)?.getTime())
+        .filter(value => Number.isFinite(value))
+    : []
+  const anomalyStart = anomalyPoints.length ? Math.min(...anomalyPoints) : null
+  const anomalyEnd = anomalyPoints.length > 1 ? Math.max(...anomalyPoints) : null
+  const useAnomaly = anomalyStart != null && anomalyStart >= rangeStart && anomalyStart < rangeEnd
+  const itemStart = useAnomaly
+    ? anomalyStart
+    : item.timestamp ? parseUtcTs(item.timestamp).getTime() : (rangeStart + rangeEnd) / 2
   const itemEnd = item.durationSeconds ? itemStart + item.durationSeconds * 1000 : itemStart
   const boundaries = powerBoundaries()
-  const left = [...boundaries].reverse().find(value => value <= itemStart) ?? rangeStart
-  const right = boundaries.find(value => value >= itemEnd && value > left) ?? rangeEnd
   const fallbackSpan = Math.min(60 * 60 * 1000, rangeEnd - rangeStart)
+  const left = useAnomaly
+    ? anomalyStart
+    : [...boundaries].reverse().find(value => value <= itemStart) ?? rangeStart
+  const right = useAnomaly && anomalyEnd != null && anomalyEnd > left
+    ? anomalyEnd
+    : boundaries.find(value => value >= itemEnd && value > left) ?? rangeEnd
   timeSelection.start = Math.max(rangeStart, left)
   timeSelection.end = Math.min(rangeEnd, right > left ? right : left + fallbackSpan)
   if (timeSelection.end - timeSelection.start < 60 * 1000) {
     timeSelection.start = Math.max(rangeStart, itemStart - fallbackSpan / 2)
     timeSelection.end = Math.min(rangeEnd, timeSelection.start + fallbackSpan)
   }
-  timeSelection.shiftMinutes = 60
+  const anomalyShiftMinutes = useAnomaly ? -Number(anomaly.offsetSeconds || 0) / 60 : 0
+  timeSelection.shiftMinutes = anomalyShiftMinutes || 60
   timeSelection.preview = null
   timeSelection.active = true
+  await startRepairAnimation(useAnomaly)
 }
 
 function cancelTimeSelection() {
+  clearRepairAnimation()
   timeSelection.active = false
   timeSelection.preview = null
+  timeSelection.animating = false
+  timeSelection.animationPhase = ''
   selectionDrag = null
 }
 
 function onSelectionPointerDown(event, edge) {
+  if (timeSelection.animating) return
   const rect = timeSelectionLayerRef.value?.getBoundingClientRect()
   if (!rect) return
   event.currentTarget.setPointerCapture?.(event.pointerId)
+  const rangeStart = startDate.value.getTime()
+  const rangeEnd = endDate.value.getTime()
+  const pointerTime = rangeStart + Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width))) * (rangeEnd - rangeStart)
+  if (edge === 'create') {
+    timeSelection.start = pointerTime
+    timeSelection.end = Math.min(rangeEnd, pointerTime + 60 * 1000)
+  }
   selectionDrag = {
     pointerId: event.pointerId,
     edge,
     startX: event.clientX,
     start: timeSelection.start,
     end: timeSelection.end,
+    shiftMinutes: Number(timeSelection.shiftMinutes) || 0,
+    anchor: pointerTime,
     width: Math.max(1, rect.width),
   }
+  timeSelection.animationPhase = 'settled'
+  timeSelection.preview = null
+  scheduleRepairCapture()
 }
 
 function onSelectionPointerMove(event) {
@@ -706,7 +867,20 @@ function onSelectionPointerMove(event) {
   const rangeEnd = endDate.value.getTime()
   const delta = ((event.clientX - selectionDrag.startX) / selectionDrag.width) * (rangeEnd - rangeStart)
   const minSpan = 60 * 1000
-  if (selectionDrag.edge === 'start') {
+  if (selectionDrag.edge === 'create') {
+    const current = Math.max(rangeStart, Math.min(rangeEnd, selectionDrag.anchor + delta))
+    timeSelection.start = Math.min(selectionDrag.anchor, current)
+    timeSelection.end = Math.max(selectionDrag.anchor, current)
+    if (timeSelection.end - timeSelection.start < minSpan) {
+      timeSelection.end = Math.min(rangeEnd, timeSelection.start + minSpan)
+      timeSelection.start = Math.max(rangeStart, timeSelection.end - minSpan)
+    }
+  } else if (selectionDrag.edge === 'target') {
+    const minShift = rangeStart - selectionDrag.start
+    const maxShift = rangeEnd - selectionDrag.end
+    const nextShift = Math.max(minShift, Math.min(maxShift, selectionDrag.shiftMinutes * 60000 + delta))
+    timeSelection.shiftMinutes = Number((nextShift / 60000).toFixed(2))
+  } else if (selectionDrag.edge === 'start') {
     timeSelection.start = Math.max(rangeStart, Math.min(selectionDrag.end - minSpan, selectionDrag.start + delta))
   } else if (selectionDrag.edge === 'end') {
     timeSelection.end = Math.min(rangeEnd, Math.max(selectionDrag.start + minSpan, selectionDrag.end + delta))
@@ -717,12 +891,21 @@ function onSelectionPointerMove(event) {
     timeSelection.end = nextStart + span
   }
   timeSelection.preview = null
+  scheduleRepairCapture()
 }
 
 function onSelectionPointerUp(event) {
   if (!selectionDrag || event.pointerId !== selectionDrag.pointerId) return
   selectionDrag = null
+  timeSelection.animationPhase = 'settled'
+  scheduleRepairCapture()
 }
+
+watch(() => timeSelection.shiftMinutes, () => {
+  if (!timeSelection.active || timeSelection.animating) return
+  timeSelection.preview = null
+  timeSelection.animationPhase = 'settled'
+})
 
 function manualTimeBody() {
   return {
@@ -2683,18 +2866,41 @@ function renderBar(params, api) {
 
 .target-range {
   position: absolute;
+  z-index: 2;
   top: 6%;
   bottom: 6%;
   border: 3px dashed var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  pointer-events: none;
+  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
+  pointer-events: auto;
+  cursor: grab;
   transition: left 160ms ease, width 160ms ease;
 
-  span { position: absolute; top: 5px; left: 6px; padding: 2px 5px; background: var(--accent-color); color: var(--surface-card); font-size: .68rem; font-weight: 700; }
+  span { position: absolute; top: 5px; left: 6px; padding: 2px 5px; background: var(--accent-color); color: var(--surface-card); font-size: .68rem; font-weight: 700; pointer-events: none; }
+}
+
+.repair-preview-slice {
+  position: absolute;
+  z-index: 1;
+  left: var(--repair-source-left);
+  top: 0;
+  bottom: 0;
+  min-width: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  border: 2px solid color-mix(in srgb, var(--accent-color) 82%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-card) 66%, transparent);
+
+  canvas { width: 100%; height: 100%; opacity: .72; display: block; }
+  &.moving {
+    left: var(--repair-target-left);
+    transition: left 2.2s cubic-bezier(.36,.02,.18,1);
+  }
+  &.settled { left: var(--repair-target-left); }
 }
 
 .selected-range {
   position: absolute;
+  z-index: 4;
   top: 0;
   bottom: 0;
   min-width: 8px;
@@ -2703,6 +2909,14 @@ function renderBar(params, api) {
   cursor: grab;
 
   > span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--primary-color); color: white; padding: 4px 7px; font-size: .72rem; font-weight: 700; white-space: nowrap; }
+}
+
+.time-selection-layer.repair-animating {
+  cursor: wait;
+
+  .selection-handle,
+  .selected-range,
+  .target-range { pointer-events: none; }
 }
 
 .selection-handle {
@@ -2738,9 +2952,10 @@ function renderBar(params, api) {
   > p { color: var(--text-color-secondary); font-size: .86rem; line-height: 1.45; }
 }
 
-.time-correction-summary { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; }
+.time-correction-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .time-correction-summary div { min-width: 0; padding: 10px; border-left: 4px solid var(--primary-color); background: var(--surface-card); display: grid; gap: 4px; }
-.time-correction-summary div:last-child { border-left-color: var(--accent-color); }
+.time-correction-summary div:nth-child(2) { border-left-color: var(--accent-color); }
+.time-correction-summary .offset-summary { border-left-color: var(--secondary-color); }
 .time-correction-summary span { color: var(--text-color-secondary); font-size: .72rem; }
 .time-correction-summary b { font: 600 .78rem/1.4 'Ubuntu Mono', monospace; overflow-wrap: anywhere; }
 .shift-controls { display: flex; gap: 7px; align-items: end; flex-wrap: wrap; }
@@ -2750,6 +2965,7 @@ function renderBar(params, api) {
 .shift-controls button { min-height: 38px; padding: 6px 9px; border: 2px solid var(--surface-200); background: var(--surface-card); color: var(--text-color); cursor: pointer; }
 .shift-controls button:hover { border-color: var(--primary-color); }
 .time-preview-result { padding: 10px; border-left: 4px solid var(--accent-color); background: var(--surface-card); }
+.time-target-warning { padding: 9px 10px; border: 2px solid var(--warning-color); background: color-mix(in srgb, var(--warning-color) 10%, var(--surface-card)); color: var(--text-color); font-size: .82rem; font-weight: 700; }
 .preview-button, .apply-time-button { min-height: 42px; padding: 8px 12px; border: 2px solid var(--primary-color); background: var(--primary-color); color: white; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
 .preview-button:disabled { opacity: .45; cursor: not-allowed; }
 .apply-time-button { border-color: var(--success-color); background: var(--success-color); }
@@ -2766,6 +2982,7 @@ function renderBar(params, api) {
   .timeline-loading {
     animation: none;
   }
+  .repair-preview-slice.moving { transition-duration: .01ms; }
 }
 
 .timeline-legend {
@@ -2864,7 +3081,6 @@ function renderBar(params, api) {
 @media (max-width: 700px) {
   .timeline-legend { gap: 10px; flex-wrap: wrap; }
   .time-correction-summary { grid-template-columns: 1fr; }
-  .time-correction-summary > svg { transform: rotate(90deg); justify-self: center; }
   .selection-handle { width: 36px; height: 82px; }
   .focus-banner { align-items: flex-start; flex-wrap: wrap; }
 }

@@ -190,7 +190,7 @@ function finishGeometry(revision) {
   stageRevealing.value = true
   geometryFinishing.value = true
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const exitDuration = reducedMotion ? 0 : geometryExitVariant.value === 'burst' ? 460 : 300
+  const exitDuration = reducedMotion ? 0 : 300
   removeTimer = setTimeout(() => {
     if (revision !== transitionRevision) return
     const next = geometryLayers.value.find(layer => !layer.current)
@@ -302,11 +302,11 @@ onBeforeUnmount(() => {
 }
 
 .geometry-overlay.finishing.burst .geometry-shape {
-  animation: geometry-burst 0.46s cubic-bezier(0.55, 0.12, 0.9, 0.55) both;
+  animation: geometry-burst 0.3s cubic-bezier(0.62, 0.08, 0.96, 0.48) both;
 }
 
 .geometry-overlay.finishing.burst .shape-edge {
-  animation: edge-burst 0.46s ease both;
+  animation: edge-burst 0.3s ease both;
 }
 
 @keyframes geometry-arrive {
@@ -328,14 +328,14 @@ onBeforeUnmount(() => {
 
 @keyframes geometry-burst {
   0% { transform: translate(0, 0) scale(1.2) rotate(var(--shape-rotation)); opacity: 1; }
-  28% { transform: translate(0, 0) scale(0.82) rotate(var(--shape-rotation)); opacity: 1; }
-  86% { opacity: 1; }
+  55% { transform: translate(0, 0) scale(0.82) rotate(var(--shape-rotation)); opacity: 1; }
+  88% { opacity: 1; }
   100% { transform: translate(0, 0) scale(var(--burst-scale)) rotate(var(--shape-rotation)); opacity: 0; }
 }
 
 @keyframes edge-burst {
-  0%, 28% { fill: var(--primary-color); }
-  42%, 100% { fill: #ffffff; }
+  0%, 55% { fill: var(--primary-color); }
+  68%, 100% { fill: #ffffff; }
 }
 
 @media (prefers-reduced-motion: reduce) {

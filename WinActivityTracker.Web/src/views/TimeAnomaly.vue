@@ -79,6 +79,8 @@
           <!-- Suspicious/Drift → ignore -->
           <Button v-else-if="a.status === 'Suspicious' || a.status === 'Drift'"
             :label="t('timeAnomaly.ignore')" size="small" @click="ignore(a)" />
+          <Button v-if="a.status === 'Confirmed' || a.status === 'Pending'"
+            :label="t('timeAnomaly.reviewHistory')" size="small" severity="secondary" @click="reviewInHistory(a)" />
         </div>
       </div>
       <button v-if="items.length" type="button" class="manual-correction-link" @click="startManualCorrection">
@@ -102,7 +104,7 @@
 import { ref, computed, inject, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '../i18n/index.js'
-import { parseUtcTs } from '../utils/time.js'
+import { parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import { ArrowRight, CircleCheck, MousePointer2 } from '@lucide/vue'
@@ -220,6 +222,30 @@ function sourceLabel(source) {
 function startManualCorrection() {
   router.push({ path: '/history', query: { timeSelect: '1' } })
 }
+function reviewInHistory(anomaly) {
+  const points = [anomaly.fromWall, anomaly.toWall, anomaly.oldTime, anomaly.newTime]
+    .map(value => parseUtcTs(value)?.getTime())
+    .filter(value => Number.isFinite(value))
+  const anchor = points.length
+    ? Math.min(...points)
+    : parseUtcTs(anomaly.detectedAt)?.getTime() ?? Date.now()
+  const sourceEnd = points.length > 1
+    ? Math.max(...points)
+    : anchor + Math.max(60, Math.abs(Number(anomaly.offsetSeconds) || 0)) * 1000
+  const correction = -Number(anomaly.offsetSeconds || 0) * 1000
+  const padding = Math.max(30 * 60 * 1000, Math.abs(correction) * .5)
+  const from = new Date(Math.min(anchor, anchor + correction) - padding)
+  const to = new Date(Math.max(sourceEnd, sourceEnd + correction) + padding)
+  router.push({
+    path: '/history',
+    query: {
+      timeSelect: '1',
+      anomalyId: String(anomaly.id),
+      from: toLocalDatetimeString(from),
+      to: toLocalDatetimeString(to),
+    },
+  })
+}
 onMounted(load)
 </script>
 
@@ -323,6 +349,7 @@ onMounted(load)
     &.badge-Applied { border-color: var(--success-color); color: var(--success-color); }
     &.badge-Reverted { border-color: var(--surface-400); color: var(--surface-400); }
     &.badge-Ignored { border-color: var(--surface-400); color: var(--surface-400); }
+    &.badge-Resolved { border-color: var(--surface-400); color: var(--surface-400); }
   }
 
   .note {
