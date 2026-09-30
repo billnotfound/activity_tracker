@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
@@ -11,6 +12,7 @@ public static class FocusEndpoints
     {
         app.MapGet("/api/summary/today", GetTodaySummary);
         app.MapGet("/api/summary/range", GetRangeSummary);
+        app.MapGet("/api/summary/title-breakdown", GetTitleBreakdown);
     }
 
     private static async Task<IResult> GetTodaySummary(string? date, AppDbContext db, TagService tagService,
@@ -46,6 +48,90 @@ public static class FocusEndpoints
         DateTimeKind.Local => dt.ToUniversalTime(),
         _ => DateTime.SpecifyKind(dt, DateTimeKind.Local).ToUniversalTime()
     };
+
+    private static async Task<IResult> GetTitleBreakdown(
+        DateTime from, DateTime to, string process, string? tag,
+        AppDbContext db, TagService tagService, TitleNormalizer normalizer)
+    {
+        if (string.IsNullOrWhiteSpace(process))
+            return Results.BadRequest(new { error = "process is required" });
+        var start = NormalizeToUtc(from);
+        var end = NormalizeToUtc(to);
+        if (end <= start) return Results.BadRequest(new { error = "invalid range" });
+
+        var rows = await db.FocusChanges.AsNoTracking()
+            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess)
+            .Where(f => EF.Functions.Collate(f.ProcessName, "NOCASE") == process)
+            .Where(f => f.Timestamp >= start && f.Timestamp <= end)
+            .OrderBy(f => f.Timestamp)
+            .Select(f => new SummaryFocusRow
+            {
+                Timestamp = f.Timestamp,
+                ProcessName = f.ProcessName,
+                WindowTitle = f.WindowTitle,
+                DurationSeconds = f.DurationSeconds
+            })
+            .ToListAsync();
+        var preceding = await db.FocusChanges.AsNoTracking()
+            .Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess
+                && EF.Functions.Collate(f.ProcessName, "NOCASE") == process
+                && f.Timestamp < start)
+            .OrderByDescending(f => f.Timestamp)
+            .Select(f => new SummaryFocusRow
+            {
+                Timestamp = f.Timestamp,
+                ProcessName = f.ProcessName,
+                WindowTitle = f.WindowTitle,
+                DurationSeconds = f.DurationSeconds
+            })
+            .FirstOrDefaultAsync();
+        if (preceding != null
+            && IntervalMath.SafeAddSeconds(preceding.Timestamp, preceding.DurationSeconds) > start)
+            rows.Insert(0, preceding);
+
+        var offPeriods = await GetOffPeriods(db, start, end);
+        var hiddenRules = tagService.GetHiddenRules();
+        var idleRules = tagService.GetIdleRules().Where(rule => rule.Weight >= 10).ToList();
+        var tagSnapshot = tagService.CreateSnapshot();
+        var titleSnapshot = normalizer.CreateSnapshot();
+        var titles = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            if (TagService.MatchesHidden(hiddenRules, row.ProcessName, row.WindowTitle)
+                || TagService.MatchesIdle(idleRules, row.ProcessName, row.WindowTitle)
+                || (!string.IsNullOrWhiteSpace(tag)
+                    && !tagSnapshot.ResolveTags(row.ProcessName, row.WindowTitle)
+                        .Contains(tag, StringComparer.Ordinal)))
+                continue;
+            var rowStart = row.Timestamp < start ? start : row.Timestamp;
+            var rawEnd = IntervalMath.SafeAddSeconds(row.Timestamp, row.DurationSeconds);
+            var rowEnd = rawEnd > end ? end : rawEnd;
+            var seconds = IntervalMath.Subtract(rowStart, rowEnd, offPeriods)
+                .Sum(segment => segment.DurationSeconds);
+            if (seconds <= 0) continue;
+
+            var normalized = titleSnapshot.Apply(row.ProcessName, row.WindowTitle);
+            var groupedTitle = NormalizeChangingNumbers(
+                string.IsNullOrWhiteSpace(normalized) ? row.ProcessName : normalized);
+            titles[groupedTitle] = titles.GetValueOrDefault(groupedTitle) + seconds;
+        }
+
+        return Results.Ok(new
+        {
+            processName = process,
+            tag = tag ?? string.Empty,
+            titles = titles.OrderByDescending(item => item.Value)
+                .ThenBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(item => new { title = item.Key, totalSeconds = item.Value })
+        });
+    }
+
+    internal static string NormalizeChangingNumbers(string title)
+    {
+        var withoutChangingNumbers = Regex.Replace(title.Trim(), @"\p{Nd}+", "#",
+            RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
+        return Regex.Replace(withoutChangingNumbers, @"\s+", " ").Trim();
+    }
 
     private static async Task<IResult> BuildSummary(AppDbContext db, DateTime start, DateTime end,
         TagService tagService, TitleNormalizer normalizer)

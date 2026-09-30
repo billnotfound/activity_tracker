@@ -48,7 +48,7 @@
             class="timeline-chart-wrap"
             :class="[rangeMotionClass, { 'is-dragging': timelineDragging }]"
             :style="{ '--range-motion-origin': rangeMotionOrigin, '--timeline-plot-left': focusedProcess || timelineViewMode !== 'process' ? '220px' : '20px' }"
-            @wheel.prevent="onTimelineWheel"
+            @wheel="onTimelineWheel"
             @pointerdown="onTimelinePointerDown"
             @pointermove="onTimelinePointerMove"
             @pointerup="onTimelinePointerUp"
@@ -206,7 +206,7 @@
 <script setup>
 import { computed, reactive, ref, inject, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toLocalTime, parseUtcTs, toLocalDatetimeString, fmtShortDur } from '../utils/time.js'
+import { toLocalTime, parseUtcTs, toLocalDateString, toLocalDatetimeString, fmtShortDur } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { mergeTimePeriods, subtractTimePeriods } from '../utils/intervals.js'
 import { useI18n } from '../i18n/index.js'
@@ -245,6 +245,7 @@ const data = ref([])
 const timeline = ref([])
 const windowSessions = ref([])
 const systemEvents = ref([])
+const mediaSessions = ref([])
 const mergeSameProcess = ref(true)
 const totalSleepSeconds = ref(0)
 const loading = ref(true)
@@ -253,6 +254,7 @@ const error = ref('')
 const isTimeValid = ref(true)
 const timeEasterEgg = ref('')
 const dataTooShort = ref(false)
+const mediaMode = computed(() => route.query.media === '1')
 const hasRenderedTimeline = ref(false)
 
 const timeRangePickerRef = ref(null)
@@ -1135,10 +1137,51 @@ function onTimelinePointerUp(event) {
     previewRange(drag.lastStart, drag.lastEnd)
     scheduleLoadData(220)
   } else if (drag.clickData) {
-    openProcessActions(drag.clickData, { x: event.clientX, y: event.clientY })
+    if (drag.clickData._mediaSession) focusMediaContext(drag.clickData._mediaSession)
+    else openProcessActions(drag.clickData, { x: event.clientX, y: event.clientY })
   }
   dragState = null
   timelineDragging.value = false
+}
+
+function focusMediaContext(selected) {
+  const sessions = mediaSessions.value
+    .filter(item => item.playbackStatus !== 'SystemSleep')
+    .map(item => ({
+      item,
+      start: parseUtcTs(item.startTime)?.getTime(),
+      end: item.endTime ? parseUtcTs(item.endTime)?.getTime() : Date.now(),
+    }))
+    .filter(item => Number.isFinite(item.start) && Number.isFinite(item.end) && item.end > item.start)
+    .sort((a, b) => a.start - b.start)
+  const index = sessions.findIndex(entry =>
+    (selected.id != null && entry.item.id === selected.id) || entry.item.startTime === selected.startTime)
+  if (index < 0) return
+
+  const durations = sessions.map(entry => entry.end - entry.start).sort((a, b) => a - b)
+  const medianDuration = durations[Math.floor(durations.length / 2)] || (sessions[index].end - sessions[index].start)
+  // Six typical neighboring tracks naturally lands around twenty minutes for
+  // music, while podcasts and very short clips receive an adaptive window.
+  const targetSpan = Math.max(8 * 60_000, Math.min(45 * 60_000, medianDuration * 6))
+  let left = index
+  let right = index
+  while (right - left + 1 < sessions.length
+    && sessions[right].end - sessions[left].start < targetSpan) {
+    const leftGap = left > 0 ? sessions[left].start - sessions[left - 1].end : Infinity
+    const rightGap = right + 1 < sessions.length ? sessions[right + 1].start - sessions[right].end : Infinity
+    if (leftGap <= rightGap) left--
+    else right++
+  }
+  const padding = Math.max(60_000, medianDuration * .35)
+  const { earliest, latest } = getSelectableBounds()
+  const nextStart = Math.max(earliest, sessions[left].start - padding)
+  const nextEnd = Math.min(latest, sessions[right].end + padding)
+  if (!(nextEnd > nextStart)) return
+  startDate.value = new Date(nextStart)
+  endDate.value = new Date(nextEnd)
+  timeRangePickerRef.value?.setRange(startDate.value, endDate.value)
+  playRangeMotion(renderedRangeMin || nextStart, renderedRangeMax || nextEnd, nextStart, nextEnd)
+  loadData()
 }
 
 function onTimelineWheel(event) {
@@ -1156,9 +1199,15 @@ function onTimelineWheel(event) {
 
   const rect = el.getBoundingClientRect()
   const localX = event.clientX - rect.left
+  const plotLeft = focusedProcess.value || timelineViewMode.value !== 'process' ? 220 : 20
+  const plotRight = rect.width - 40
+  // The label gutters and empty side margins belong to normal page scrolling.
+  // Only a wheel gesture over the actual time plot is interpreted as zoom.
+  if (localX < plotLeft || localX > plotRight) return
+  event.preventDefault()
   // Match the chart grid's fixed horizontal insets (left 20 / right 40). This
   // avoids a layout conversion for every high-resolution wheel event.
-  const plotRatio = Math.max(0, Math.min(1, (localX - 20) / Math.max(1, rect.width - 60)))
+  const plotRatio = Math.max(0, Math.min(1, (localX - plotLeft) / Math.max(1, plotRight - plotLeft)))
   const pointerRatio = Math.max(0, Math.min(1, localX / Math.max(1, rect.width)))
   const anchor = oldStart + oldSpan * plotRatio
 
@@ -1266,13 +1315,17 @@ async function loadData() {
         : null
 
     console.log('Loading data from', fromStr, 'to', toStr, `(range: ${rangeInHours.toFixed(1)} hours / ${rangeInDays.toFixed(1)} days, limit: ${timelineLimit})`)
-    const [r1, r2, r3, r4, r5, r6] = await Promise.all([
+    const mediaUrl = mediaMode.value
+      ? `${apiBase}/api/media/history?limit=1000&from=${toLocalDateString(queryStart)}&to=${toLocalDateString(queryEnd)}`
+      : null
+    const [r1, r2, r3, r4, r5, r6, r7] = await Promise.all([
       fetch(summaryUrl, { signal: loadController.signal }),
       fetch(timelineUrl, { signal: loadController.signal }),
       fetch(eventsUrl, { signal: loadController.signal }),
       fetch(sessionsUrl, { signal: loadController.signal }),
       relationSessionsUrl ? fetch(relationSessionsUrl, { signal: loadController.signal }) : Promise.resolve(null),
       viewSessionsUrl ? fetch(viewSessionsUrl, { signal: loadController.signal }) : Promise.resolve(null),
+      mediaUrl ? fetch(mediaUrl, { signal: loadController.signal }) : Promise.resolve(null),
     ])
 
     // Summary
@@ -1341,6 +1394,7 @@ async function loadData() {
 
     relationProcessSessions.value = r5?.ok ? await r5.json() : []
     filteredProcessSessions.value = r6?.ok ? await r6.json() : []
+    mediaSessions.value = r7?.ok ? await r7.json() : []
 
     loading.value = false
     // Only render if no newer loadData() call has started
@@ -1367,6 +1421,12 @@ let clearTimer = null
 function onTimelineMouseOver(params) {
   if (timelineDragging.value || hoverSuppressedUntilMove) return
   if (params.seriesName !== 'windows') return
+  if (params.data?._mediaSession) {
+    hoveredTimelineData = params.data
+    hoveredProcess.value = null
+    paintDimmer()
+    return
+  }
   const proc = params.data && params.data.processName
   if (!proc) return
   if (clearTimer) {
@@ -1825,8 +1885,8 @@ async function renderTimeline(myLoadId) {
     }
   }
 
-  const showRowLabels = !!focusedProcess.value || isTagView || isProcessFilterView || isTitleFilterView
-  const processList = isTagView
+  const showRowLabels = mediaMode.value || !!focusedProcess.value || isTagView || isProcessFilterView || isTitleFilterView
+  let processList = isTagView
     ? allTags
     : (isProcessFilterView || isTitleFilterView)
       ? [...globalProcessRow.keys()]
@@ -1839,6 +1899,11 @@ async function renderTimeline(myLoadId) {
         return `${role}${displayProcessName(row.name)}${pid}`
       })
         : Array.from({ length: rowCount }, (_, i) => String(i + 1))
+  const mediaRowIndex = mediaMode.value ? rowCount : -1
+  if (mediaMode.value) {
+    processList = [...processList, t('history.media.row')]
+    rowCount++
+  }
   const allProcessNames = [...allProcs]
 
   console.log(`${allProcessNames.length} Top-15 processes across ${dayStats.size} days, ${rowCount} stable rows`)
@@ -2233,8 +2298,35 @@ async function renderTimeline(myLoadId) {
 
   console.log('Created', backgroundWindows.length, 'background window chart items')
 
+  const defaultMediaColor = getComputedStyle(document.documentElement)
+    .getPropertyValue('--primary-color').trim() || '#6B7FD7'
+  const mediaWindows = mediaMode.value
+    ? mediaSessions.value
+        .filter(item => item.playbackStatus !== 'SystemSleep')
+        .map(item => {
+          const start = parseUtcTs(item.startTime)?.getTime()
+          const rawEnd = item.endTime ? parseUtcTs(item.endTime)?.getTime() : Date.now()
+          if (!Number.isFinite(start) || !Number.isFinite(rawEnd)) return null
+          const end = Math.max(start, rawEnd)
+          if (end <= xAxisMin || start >= xAxisMax) return null
+          return {
+            name: item.title || item.appName,
+            value: [mediaRowIndex, Math.max(start, xAxisMin), Math.min(end, xAxisMax), -Math.max(1, (end - start) / 1000)],
+            itemStyle: { color: defaultMediaColor, borderColor: defaultMediaColor, borderWidth: 0 },
+            processName: '__mediaPlayback',
+            displayName: item.title || item.appName,
+            windowTitle: item.artist || item.appName,
+            timestamp: item.startTime,
+            durationSeconds: Math.max(0, (end - start) / 1000),
+            itemColor: defaultMediaColor,
+            _mediaSession: item,
+          }
+        })
+        .filter(Boolean)
+    : []
+
   // Combine background windows (rendered first, behind) and focused windows (on top)
-  const allWindows = [...backgroundWindows, ...focusedWindows]
+  const allWindows = [...backgroundWindows, ...focusedWindows, ...mediaWindows]
   // Keep bars for hover-position computation (the chart isn't init'ed until
   // below, so convertToPixel can't run yet — buildAllBarsPx() runs after
   // setOption); reset hover state.
@@ -2306,10 +2398,15 @@ async function renderTimeline(myLoadId) {
     timelineChart.on('mouseover', onTimelineMouseOver)
     timelineChart.on('mouseout', onTimelineMouseOut)
     timelineChart.on('click', params => {
-      if (params.seriesName === 'windows') openProcessActions(params.data, {
-        x: params.event?.event?.clientX ?? window.innerWidth / 2,
-        y: params.event?.event?.clientY ?? window.innerHeight / 2,
-      })
+      if (params.seriesName !== 'windows') return
+      if (params.data?._mediaSession) {
+        focusMediaContext(params.data._mediaSession)
+        return
+      }
+      openProcessActions(params.data, {
+          x: params.event?.event?.clientX ?? window.innerWidth / 2,
+          y: params.event?.event?.clientY ?? window.innerHeight / 2,
+        })
     })
     // DOM mouseleave is the reliable way to clear hover state — ECharts'
     // series mouseout may not fire when the cursor leaves the canvas.
@@ -2559,6 +2656,13 @@ async function renderTimeline(myLoadId) {
         const data = params.data
         if (!data) return ''
 
+        if (data._mediaSession) {
+          const media = data._mediaSession
+          return `<div style="font-weight:600;margin-bottom:4px;color:${tooltipText};">${media.title || media.appName}</div>
+                  <div style="font-size:.9em;">${media.artist || media.appName || ''}</div>
+                  <div style="margin-top:4px;color:var(--primary-color);">${toLocalTime(media.startTime)} · ${fmtShortDur(data.durationSeconds)}</div>`
+        }
+
         if (data._processSession) {
           const session = data._processSession
           return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${session.displayName || session.processName} #${session.processId}</div>
@@ -2612,6 +2716,7 @@ function renderBar(params, api) {
   const start = api.coord([api.value(1), categoryIndex])
   const end = api.coord([api.value(2), categoryIndex])
   const durationSeconds = api.value(3)
+  const isMedia = durationSeconds < 0
 
   // Check if this is a background window (durationSeconds = 0) or focused window
   const isBackground = durationSeconds === 0
@@ -2629,10 +2734,13 @@ function renderBar(params, api) {
     }
   } else {
     // Render as a regular bar (focused window)
-    const height = api.size([0, 1])[1] * 0.6
+    const rowHeight = api.size([0, 1])[1]
+    const height = isMedia
+      ? Math.max(8, Math.min(20, rowHeight * .22))
+      : rowHeight * 0.6
     // Remember it so the hover dimmer paints rects of exactly this height
     // (row counts vary, so api.size is the only correct source).
-    lastFocusedBarH = height
+    if (!isMedia) lastFocusedBarH = height
     rectShape = {
       x: start[0],
       y: start[1] - height / 2,

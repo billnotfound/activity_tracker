@@ -33,7 +33,10 @@ public static class TimeAnomalyEndpoints
                 succeeded = ntp.LastResult?.Succeeded,
                 offsetSeconds = ntp.LastResult?.OffsetSeconds,
                 latencyMs = ntp.LastResult?.LatencyMs,
-                sourceName = ntp.LastResult?.SourceName
+                sourceName = ntp.LastResult?.SourceName,
+                toleranceSeconds = settings.Settings.NtpEpsilonSeconds,
+                withinTolerance = ntp.LastResult is { Succeeded: true }
+                    && Math.Abs(ntp.LastResult.OffsetSeconds) <= settings.Settings.NtpEpsilonSeconds
             }
         });
 

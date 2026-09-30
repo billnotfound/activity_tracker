@@ -27,9 +27,11 @@
                   :title="tag"
                   @click="toggleTag(tag)"
                 >
-                  <Transition name="tag-check">
-                    <Check v-if="selectedTags.includes(tag)" :size="13" />
-                  </Transition>
+                  <span class="tag-check-slot" aria-hidden="true">
+                    <Transition name="tag-check">
+                      <Check v-if="selectedTags.includes(tag)" :size="13" />
+                    </Transition>
+                  </span>
                   <span class="tag-chip-label">{{ tag }}</span>
                 </button>
               </div>
@@ -67,10 +69,11 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { ArrowRight, CaseUpper, Check, Clock3, EyeOff, Focus, ListTree, LoaderCircle, Plus, Tags, Type } from '@lucide/vue'
 import { useI18n } from '../i18n/index.js'
 import { exactTagTitlePattern, isExactTagTarget } from '../utils/tagRules.js'
+import { useFloatingMenuDismiss } from '../composables/useFloatingMenuDismiss.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -97,24 +100,31 @@ const tagRules = ref([])
 const processHasTagRule = ref(false)
 const existingExactTags = ref([])
 
-const items = computed(() => props.page === 'dashboard'
-  ? [
+const items = computed(() => {
+  if (props.page === 'dashboard') return [
       { action: 'replace', icon: Type, label: t('processActions.replace'), hint: t('processActions.replaceHelp') },
       { action: 'usage', icon: ListTree, label: t('processActions.usage'), hint: t('processActions.usageHelp') },
       { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
       { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
     ]
-  : [
+  if (props.page === 'title') return [
+    { action: 'isolate', icon: Focus, label: t('processActions.onlyProcess'), hint: t('processActions.onlyProcessHelp') },
+    { action: 'normalize', icon: CaseUpper, label: t('processActions.normalize'), hint: t('processActions.normalizeHelp') },
+    { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
+    { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
+  ]
+  return [
       { action: 'isolate', icon: Focus, label: t('processActions.onlyProcess'), hint: t('processActions.onlyProcessHelp') },
       { action: 'normalize', icon: CaseUpper, label: t('processActions.normalize'), hint: t('processActions.normalizeHelp') },
       { action: 'time', icon: Clock3, label: t('processActions.time'), hint: t('processActions.timeSelectHelp') },
       { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
       { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
-    ])
+    ]
+})
 
 const positionStyle = computed(() => {
   const width = 238
-  const height = props.page === 'dashboard' ? 210 : 255
+  const height = props.page === 'history' ? 255 : 210
   const left = Math.max(10, Math.min(props.x + 12, window.innerWidth - width - 10))
   const top = Math.max(10, Math.min(props.y - 8, window.innerHeight - height - 10))
   return { left: `${left}px`, top: `${top}px` }
@@ -193,7 +203,8 @@ function toggleTag(tag) {
     : [...selectedTags.value, tag]
 }
 function targetTitlePattern() {
-  return exactTagTitlePattern(props.page, props.rawWindowTitle, props.windowTitle)
+  return exactTagTitlePattern(props.page === 'title' ? 'history' : props.page,
+    props.rawWindowTitle, props.windowTitle)
 }
 function isExactTargetRule(rule) {
   return isExactTagTarget(rule, props.processName, targetTitlePattern())
@@ -218,7 +229,7 @@ async function submitQuickTags() {
         process: props.processName,
         titlePattern,
         weight,
-        mode: props.page === 'history' && selectedTags.value.length === 1 && !processHasTagRule.value
+        mode: props.page !== 'dashboard' && selectedTags.value.length === 1 && !processHasTagRule.value
           ? 'Overwrite' : 'Coexist',
       })
     }
@@ -248,21 +259,9 @@ async function submitReplacement() {
     replaceState.value = 'idle'
   }
 }
-function onKeydown(event) {
-  if (event.key !== 'Escape' || !props.visible) return
+function handleEscape() {
   if (inlineAction.value) inlineAction.value = ''
   else close()
-}
-function onDocumentPointerDown(event) {
-  if (!props.visible || contextAnchorRef.value?.contains(event.target)) return
-  close()
-}
-function onPointerMove(event) {
-  if (!props.visible || !contextAnchorRef.value) return
-  const rect = contextAnchorRef.value.getBoundingClientRect()
-  const dx = event.clientX < rect.left ? rect.left - event.clientX : event.clientX > rect.right ? event.clientX - rect.right : 0
-  const dy = event.clientY < rect.top ? rect.top - event.clientY : event.clientY > rect.bottom ? event.clientY - rect.bottom : 0
-  if (Math.hypot(dx, dy) > Math.max(rect.width, rect.height)) close()
 }
 watch(() => props.visible, visible => {
   if (!visible) return
@@ -272,18 +271,16 @@ watch(() => props.visible, visible => {
   existingExactTags.value = []
   tagState.value = 'idle'
 })
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onMounted(() => document.addEventListener('pointerdown', onDocumentPointerDown, true))
-onMounted(() => window.addEventListener('pointermove', onPointerMove, { passive: true }))
-onUnmounted(() => {
-  window.removeEventListener('keydown', onKeydown)
-  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
-  window.removeEventListener('pointermove', onPointerMove)
+useFloatingMenuDismiss({
+  rootRef: contextAnchorRef,
+  isVisible: () => props.visible,
+  onEscape: handleEscape,
+  onClose: close,
 })
 </script>
 
 <style lang="scss" scoped>
-.context-layer { position: fixed; inset: 0; z-index: 2050; pointer-events: none; }
+.context-layer { position: fixed; inset: 0; z-index: 10000020; pointer-events: none; }
 .context-anchor { --menu-line: color-mix(in srgb, var(--text-color) 82%, transparent); position: fixed; width: 238px; pointer-events: auto; }
 .context-line { width: 100%; height: 2px; background: var(--menu-line); transform-origin: left; animation: lineGrow 130ms cubic-bezier(.2,.8,.2,1) both; }
 .context-panel {
@@ -353,12 +350,13 @@ onUnmounted(() => {
 .inline-replace button { border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
 .inline-replace button:disabled { opacity: .45; cursor: not-allowed; }
 .tag-quick-picker { display: grid; gap: 6px; animation: inlineReveal 180ms ease both; }
-.tag-chip-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; max-height: 158px; overflow-y: auto; padding: 2px; }
-.tag-chip { min-width: 0; min-height: 30px; padding: 4px 6px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); display: flex; align-items: center; justify-content: center; gap: 3px; cursor: pointer; font-size: .76rem; transition: transform 160ms cubic-bezier(.2,.8,.2,1), border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 160ms ease; }
-.tag-chip:hover { border-color: var(--primary-color); transform: translateY(-1px); }
-.tag-chip.selected { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card)); color: var(--primary-color); transform: translateY(-2px); box-shadow: 0 2px 0 color-mix(in srgb, var(--primary-color) 55%, transparent); }
-.tag-chip:active { transform: translateY(1px) scale(.96); }
+.tag-chip-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; max-height: 158px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 4px 3px; }
+.tag-chip { position: relative; min-width: 0; min-height: 30px; padding: 4px 5px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); display: grid; grid-template-columns: 14px minmax(0, 1fr); align-items: center; gap: 2px; cursor: pointer; font-size: .76rem; text-align: left; transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 160ms ease; }
+.tag-chip:hover { border-color: var(--primary-color); }
+.tag-chip.selected { border-color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card)); color: var(--primary-color); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--primary-color) 70%, transparent); }
+.tag-chip:active { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary-color) 32%, transparent); }
 .tag-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-check-slot { width: 14px; height: 14px; display: grid; place-items: center; }
 .tag-check-enter-active, .tag-check-leave-active { transition: opacity 120ms ease, transform 160ms cubic-bezier(.2,.8,.2,1), width 160ms ease; }
 .tag-check-enter-from, .tag-check-leave-to { opacity: 0; transform: rotate(-55deg) scale(.45); width: 0; }
 .tag-picker-actions { display: grid; grid-template-columns: 36px 1fr; gap: 5px; border-top: 1px solid var(--surface-200); padding-top: 5px; }

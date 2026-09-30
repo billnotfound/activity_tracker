@@ -12,6 +12,14 @@
     <!-- Current status card -->
     <section class="memphis-box status-card">
       <h3 class="section-title">{{ t('timeAnomaly.statusCard.title') }}</h3>
+      <div class="current-time-state" :class="{ problem: activeItems.length, unavailable: ntp.succeeded === false }">
+        <TriangleAlert v-if="activeItems.length" :size="24" />
+        <CircleCheck v-else :size="24" />
+        <div>
+          <b>{{ activeItems.length ? t('timeAnomaly.currentProblem', { count: activeItems.length }) : t('timeAnomaly.currentClear') }}</b>
+          <span v-if="!activeItems.length && ntp.succeeded === false">{{ t('timeAnomaly.referenceUnavailable') }}</span>
+        </div>
+      </div>
       <div class="status-grid">
         <div class="status-item">
           <span>{{ t('timeAnomaly.ntpEnabled') }}</span>
@@ -38,12 +46,12 @@
     <!-- Anomaly list -->
     <section class="memphis-box list-card">
       <h3 class="section-title">{{ t('timeAnomaly.list.title') }}</h3>
-      <button v-if="!items.length" type="button" class="empty empty-action" @click="startManualCorrection">
+      <button v-if="!activeItems.length" type="button" class="empty empty-action" @click="startManualCorrection">
         <CircleCheck :size="28" />
-        <b>{{ t('timeAnomaly.empty') }}</b>
+        <b>{{ t('timeAnomaly.currentClear') }}</b>
         <span>{{ t('timeAnomaly.emptyAction') }}</span>
       </button>
-      <div v-for="a in items" :key="a.id" class="anomaly-row" :data-status="a.status">
+      <div v-for="a in activeItems" :key="a.id" class="anomaly-row" :data-status="a.status">
         <div class="anomaly-meta">
           <span class="badge" :class="'badge-' + a.status">{{ t('timeAnomaly.status.' + a.status) }}</span>
           <span>{{ sourceLabel(a.source) }}</span>
@@ -83,9 +91,27 @@
             :label="t('timeAnomaly.reviewHistory')" size="small" severity="secondary" @click="reviewInHistory(a)" />
         </div>
       </div>
-      <button v-if="items.length" type="button" class="manual-correction-link" @click="startManualCorrection">
+      <button v-if="activeItems.length" type="button" class="manual-correction-link" @click="startManualCorrection">
         <MousePointer2 :size="16" /> {{ t('timeAnomaly.manualAction') }}
       </button>
+      <div v-if="archivedItems.length" class="archive-section">
+        <button type="button" class="archive-toggle" :aria-expanded="showHistory" @click="showHistory = !showHistory">
+          <ChevronDown :size="17" :class="{ open: showHistory }" />
+          {{ t('timeAnomaly.historyRecords', { count: archivedItems.length }) }}
+        </button>
+        <Transition name="archive-expand">
+          <div v-if="showHistory" class="archive-list">
+            <article v-for="a in archivedItems" :key="a.id" class="archive-row">
+              <span class="badge" :class="'badge-' + a.status">{{ t('timeAnomaly.status.' + a.status) }}</span>
+              <span>{{ sourceLabel(a.source) }}</span>
+              <span>{{ formatOffset(a.offsetSeconds) }}</span>
+              <time>{{ formatTime(a.detectedAt) }}</time>
+              <small v-if="a.note">{{ a.note }}</small>
+              <Button v-if="a.status === 'Applied'" :label="t('timeAnomaly.restore')" size="small" @click="restore(a)" />
+            </article>
+          </div>
+        </Transition>
+      </div>
     </section>
 
     <!-- Preview confirmation dialog -->
@@ -107,7 +133,7 @@ import { useI18n } from '../i18n/index.js'
 import { parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import { ArrowRight, CircleCheck, MousePointer2 } from '@lucide/vue'
+import { ArrowRight, ChevronDown, CircleCheck, MousePointer2, TriangleAlert } from '@lucide/vue'
 
 defineProps({ embedded: { type: Boolean, default: false } })
 
@@ -121,9 +147,13 @@ const checking = ref(false)
 const showPreview = ref(false)
 const preview = ref({ total: 0, tableNames: [] })
 const pendingApply = ref(null)
+const showHistory = ref(false)
 
 // Locale-aware list separator for the preview text
 const listSep = computed(() => (locale.value === 'zh-CN' ? '、' : ', '))
+const activeStatuses = new Set(['Confirmed', 'Pending', 'Suspicious', 'Drift'])
+const activeItems = computed(() => items.value.filter(item => activeStatuses.has(item.status)))
+const archivedItems = computed(() => items.value.filter(item => !activeStatuses.has(item.status)))
 
 async function load() {
   try {
@@ -320,6 +350,26 @@ onMounted(load)
   gap: 12px;
 }
 
+.current-time-state {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 2px solid var(--success-color);
+  background: color-mix(in srgb, var(--success-color) 8%, var(--surface-card));
+  color: var(--text-color);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  > svg { color: var(--success-color); flex: 0 0 auto; }
+  > div { display: grid; gap: 3px; }
+  b { font-size: .92rem; }
+  span { color: var(--text-color-secondary); font-size: .78rem; }
+  &.unavailable { border-color: var(--surface-300); background: var(--surface-100); }
+  &.unavailable > svg { color: var(--surface-400); }
+  &.problem { border-color: var(--warning-color); background: color-mix(in srgb, var(--warning-color) 9%, var(--surface-card)); }
+  &.problem > svg { color: var(--warning-color); }
+}
+
 .anomaly-row {
   display: grid;
   gap: 14px;
@@ -373,6 +423,28 @@ onMounted(load)
   color: var(--surface-400);
   font-size: 0.82rem;
 }
+
+.archive-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--surface-200); }
+.archive-toggle {
+  width: 100%; min-height: 38px; padding: 7px 9px;
+  border: 1px solid var(--surface-300); background: transparent; color: var(--text-color);
+  font: inherit; font-weight: 700; display: flex; align-items: center; gap: 7px; cursor: pointer;
+}
+.archive-toggle svg { transition: transform 160ms ease; }
+.archive-toggle svg.open { transform: rotate(180deg); }
+.archive-list { display: grid; margin-top: 8px; border: 1px solid var(--surface-200); }
+.archive-row {
+  min-width: 0; padding: 9px 10px; border-bottom: 1px solid var(--surface-200);
+  display: grid; grid-template-columns: auto auto auto minmax(150px, 1fr) auto;
+  align-items: center; gap: 8px; color: var(--text-color-secondary); font-size: .78rem;
+}
+.archive-row:last-child { border-bottom: 0; }
+.archive-row small { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.archive-row .badge { padding: 2px 7px; border: 1px solid var(--surface-300); font-weight: 700; color: var(--surface-400); }
+.archive-row .badge-Applied { border-color: var(--success-color); color: var(--success-color); }
+.archive-row button { justify-self: end; }
+.archive-expand-enter-active, .archive-expand-leave-active { transition: opacity 150ms ease, transform 180ms ease; transform-origin: top; }
+.archive-expand-enter-from, .archive-expand-leave-to { opacity: 0; transform: scaleY(.94) translateY(-4px); }
 
 .time-change {
   display: grid;
@@ -468,5 +540,8 @@ onMounted(load)
     transform: rotate(90deg);
     justify-self: center;
   }
+
+  .archive-row { grid-template-columns: auto 1fr; }
+  .archive-row time, .archive-row small { grid-column: 1 / -1; }
 }
 </style>

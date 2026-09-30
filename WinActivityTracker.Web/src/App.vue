@@ -12,7 +12,7 @@
             <span v-html="brandIconRaw" class="brand-icon"></span>
           </router-link>
         </div>
-        <div class="navbar-menu" ref="navMenuRef">
+        <div class="navbar-menu" ref="navMenuRef" @pointerleave="releaseNavAttraction">
           <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving, attracted: navAttracted }"></div>
           <router-link class="nav-item" data-nav-key="dashboard" to="/" :class="{ active: $route.path === '/', magnetic: navMagneticKey === 'dashboard' }" @focus="focusNavItem($event.currentTarget)">
             {{ t('nav.dashboard') }}
@@ -125,7 +125,7 @@ const navAttracted = ref(false)
 const navMagneticKey = ref('')
 let moveTimer = null
 let navTargetEl = null
-const NAV_ATTRACTION_RADIUS = 64
+const NAV_ATTRACTION_RADIUS = 12
 
 function startNavAnim(el) {
   if (!el) return
@@ -145,15 +145,19 @@ function onNavMouseMove(e) {
   const menu = navMenuRef.value
   if (!menu) return
   const items = menu.querySelectorAll('.nav-item')
-  let nearest = null, minDist = Infinity
+  let nearest = null, minDist = Infinity, nearestRadius = 0
   for (const item of items) {
     const r = item.getBoundingClientRect()
     const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right)
     const dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom)
     const dist = Math.hypot(dx, dy)
-    if (dist < minDist) { minDist = dist; nearest = item }
+    if (dist < minDist) {
+      minDist = dist
+      nearest = item
+      nearestRadius = Math.min(NAV_ATTRACTION_RADIUS, r.height)
+    }
   }
-  if (nearest && minDist <= NAV_ATTRACTION_RADIUS) {
+  if (nearest && minDist <= nearestRadius) {
     navAttracted.value = true
     navMagneticKey.value = nearest.dataset.navKey || ''
     if (nearest !== navTargetEl) startNavAnim(nearest)

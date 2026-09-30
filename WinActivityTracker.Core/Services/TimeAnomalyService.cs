@@ -343,7 +343,16 @@ public class TimeAnomalyService : BackgroundService
         return db.TimeAnomalies.AsNoTracking().FirstOrDefault(a => a.Id == id);
     }
 
-    public async Task<TimeReferenceResult?> CheckNtpNow() => await _ntp.RequestCheckAsync();
+    public async Task<TimeReferenceResult?> CheckNtpNow()
+    {
+        var result = await _ntp.RequestCheckAsync();
+        // ResultArrived also schedules this pass, but the Settings page reloads
+        // immediately after this endpoint returns. Await an idempotent pass so
+        // stale Suspicious/Drift/Pending rows cannot flash as still active.
+        if (result is { Succeeded: true })
+            await ReevaluateUnconfirmedWithNtpAsync();
+        return result;
+    }
 
     /// <summary>
     /// 启动自动应用：优先复用已持久化方向，否则用本次 NTP 结果判定。

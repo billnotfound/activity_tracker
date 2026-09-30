@@ -25,6 +25,7 @@ public static class MediaEndpoints
     public static void MapMediaEndpoints(this WebApplication app)
     {
         app.MapGet("/api/media/history", GetMediaHistory);
+        app.MapGet("/api/media/listen-total", GetListenTotal);
         app.MapGet("/api/processes/snapshot", GetProcessSnapshot);
         app.MapGet("/api/title-rules", GetTitleRules);
         app.MapPut("/api/title-rules/save", SaveTitleRules);
@@ -69,6 +70,72 @@ public static class MediaEndpoints
             merged = merged.GetRange(merged.Count - take, take);
 
         return Results.Ok(merged);
+    }
+
+    private static async Task<IResult> GetListenTotal(
+        string? from, string? to, AppDbContext db, TagService tagService)
+    {
+        if (from == null || to == null
+            || !DateOnly.TryParse(from, out var fromDate)
+            || !DateOnly.TryParse(to, out var toDate))
+            return Results.BadRequest(new { error = "from and to must use yyyy-MM-dd" });
+
+        var start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+        var end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
+        if (end <= start) return Results.BadRequest(new { error = "invalid range" });
+
+        var records = await HiddenFilter.ExcludeHidden(
+                db.MediaSessionRecords.AsNoTracking()
+                    .Where(m => m.PlaybackStatus == "Playing")
+                    .Where(m => m.StartTime <= end
+                        && (m.EndTime == null || m.EndTime >= start)),
+                tagService.GetHiddenRules())
+            .OrderBy(m => m.StartTime)
+            .ToListAsync();
+        records = await FilterIdleMedia(db, records,
+            tagService.GetIdleRules(), tagService.GetHiddenRules());
+
+        var intervals = records
+            .Where(m => m.PlaybackStatus == "Playing" && !IsSystemMarker(m))
+            .Select(m =>
+            {
+                var intervalStart = m.StartTime < start ? start : m.StartTime;
+                var rawEnd = EffectiveEnd(m);
+                var intervalEnd = rawEnd > end ? end : rawEnd;
+                return (Start: intervalStart, End: intervalEnd);
+            })
+            .Where(interval => interval.End > interval.Start)
+            .OrderBy(interval => interval.Start)
+            .ToList();
+
+        return Results.Ok(new
+        {
+            totalSeconds = MergeListeningSeconds(intervals),
+            intervalCount = CountMergedIntervals(intervals)
+        });
+    }
+
+    internal static double MergeListeningSeconds(
+        IEnumerable<(DateTime Start, DateTime End)> source)
+        => MergeIntervals(source).Sum(interval => (interval.End - interval.Start).TotalSeconds);
+
+    internal static int CountMergedIntervals(
+        IEnumerable<(DateTime Start, DateTime End)> source)
+        => MergeIntervals(source).Count;
+
+    private static List<(DateTime Start, DateTime End)> MergeIntervals(
+        IEnumerable<(DateTime Start, DateTime End)> source)
+    {
+        var merged = new List<(DateTime Start, DateTime End)>();
+        foreach (var interval in source.Where(item => item.End > item.Start).OrderBy(item => item.Start))
+        {
+            if (merged.Count > 0 && interval.Start <= merged[^1].End)
+                merged[^1] = (merged[^1].Start,
+                    interval.End > merged[^1].End ? interval.End : merged[^1].End);
+            else
+                merged.Add(interval);
+        }
+        return merged;
     }
 
     private static async Task<List<MediaSessionRecord>> FilterIdleMedia(

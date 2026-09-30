@@ -44,7 +44,10 @@
       <MemphisCard class="data-card">
         <h3 class="card-title">
           {{ t('dashboard.card.recentMedia') }}
-          <small class="total-listen">{{ t('dashboard.totalListen', { duration: totalListenFmt }) }}</small>
+          <small class="total-listen">
+            <span>{{ t('dashboard.totalListen', { duration: totalListenFmt }) }}</span>
+            <LoaderCircle v-if="listenTotalLoading" :size="13" class="listen-refresh-spinner spin" />
+          </small>
         </h3>
         <MemphisSkeleton v-if="loading" :lines="8" />
         <div v-else class="table-wrapper">
@@ -61,7 +64,11 @@
               <tr
                 v-for="m in displayMedia.slice().reverse()"
                 :key="m.id || m.startTime"
-                :class="{ playing: m.playbackStatus === 'Playing', anomalous: m.isAnomalous }"
+                :class="{ playing: m.playbackStatus === 'Playing', anomalous: m.isAnomalous, selected: mediaMenuVisible && selectedMedia?.startTime === m.startTime }"
+                tabindex="0"
+                @click="openMediaJump(m, $event)"
+                @contextmenu.prevent="openMediaJump(m, $event)"
+                @keydown.enter.prevent="openMediaJump(m, $event)"
               >
                 <td>
                   <span :key="m.durationFmt" class="flicker-text" :class="{ 'anomaly-label': m.isAnomalous }">
@@ -90,14 +97,16 @@
       <!-- Focus drill-down keeps the existing media ring and water level. -->
       <MemphisCard class="overview-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'pie' }">
         <div class="overview-heading">
-          <h3 class="card-title">{{ t('dashboard.card.overviewPie') }}</h3>
-          <button v-if="piePageOffset" type="button" class="pie-back" @click="showPreviousPiePage">
+          <h3 class="card-title">{{ overviewPieHeading }}</h3>
+          <button v-if="selectedOverviewProcess || piePageOffset" type="button" class="pie-back" @click="showPreviousPiePage">
             <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
           </button>
         </div>
         <MemphisSkeleton v-if="loading" :lines="4" />
         <div v-else class="pie-chart-wrapper">
           <div ref="pieChartRef" class="pie-chart-container"></div>
+          <LoaderCircle v-if="overviewTitleLoading" :size="24" class="overview-title-loading spin" />
+          <div v-else-if="selectedOverviewProcess && !overviewTitleDurations.length" class="tag-pie-empty">{{ t('dashboard.pie.noTitles') }}</div>
           <div class="water-ball" :style="{ '--fill': usagePercent }">
             <div class="water-body">
               <svg class="wave-band" viewBox="0 0 480 32" preserveAspectRatio="none">
@@ -112,7 +121,7 @@
 
       <MemphisCard class="tag-pie-card" :class="{ 'context-hover-locked': contextMenuVisible && contextSource === 'tagPie' }">
         <div class="overview-heading">
-          <h3 class="card-title">{{ selectedTag ? selectedTag.tag : t('dashboard.card.tagDurationPie') }}</h3>
+          <h3 class="card-title">{{ tagPieHeading }}</h3>
           <button v-if="selectedTag" type="button" class="pie-back" @click="showPreviousTagPiePage">
             <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
           </button>
@@ -120,7 +129,9 @@
         <MemphisSkeleton v-if="loading" :lines="4" />
         <div v-else class="tag-pie-wrapper">
           <div ref="tagPieChartRef" class="tag-pie-chart"></div>
+          <LoaderCircle v-if="tagTitleLoading" :size="24" class="tag-pie-loading spin" />
           <div v-if="!tagDurations.length" class="tag-pie-empty">{{ t('dashboard.pie.noTags') }}</div>
+          <div v-else-if="selectedTagProcess && !tagTitleLoading && !tagTitleDurations.length" class="tag-pie-empty">{{ t('dashboard.pie.noTitles') }}</div>
         </div>
       </MemphisCard>
     </div>
@@ -134,7 +145,7 @@
       :icon="selectedProcessIcon"
       :initial-view="drawerView"
       :initial-tag-names="drawerTagNames"
-      tag-scope="process"
+      :tag-scope="contextSource === 'title' ? 'process-title' : 'process'"
       return-to-popup
       @select-time="openTimeSelection"
       @changed="loadSummary"
@@ -143,7 +154,7 @@
     <ProcessContextMenu
       :visible="contextMenuVisible"
       @update:visible="setContextMenuVisible"
-      page="dashboard"
+      :page="contextSource === 'title' ? 'title' : 'dashboard'"
       :process-name="selectedProcess.processName || ''"
       :window-title="selectedProcess.windowTitle || ''"
       :raw-window-title="selectedProcess.rawWindowTitle || selectedProcess.windowTitle || ''"
@@ -154,13 +165,20 @@
       @create-tag="openNewTagDrawer"
       @tags-saved="loadSummary"
     />
+    <MediaJumpMenu
+      v-model:visible="mediaMenuVisible"
+      :item="selectedMedia"
+      :x="mediaMenuPoint.x"
+      :y="mediaMenuPoint.y"
+      @confirm="openMediaHistory"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { fmtShortDur, parseUtcTs, toLocalDateString } from '../utils/time.js'
+import { fmtShortDur, parseUtcTs, toLocalDateString, toLocalDatetimeString } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -170,7 +188,8 @@ import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
-import { ArrowLeft, Play, Pause, X } from '@lucide/vue'
+import MediaJumpMenu from '../components/MediaJumpMenu.vue'
+import { ArrowLeft, LoaderCircle, Play, Pause, X } from '@lucide/vue'
 
 const apiBase = inject('apiBase')
 const { t } = useI18n()
@@ -195,10 +214,21 @@ const mergeSameProcess = ref(true)
 const summary = ref([])
 const tagDurations = ref([])
 const piePageOffset = ref(0)
+const selectedOverviewProcess = ref(null)
+const overviewTitleDurations = ref([])
+const overviewTitleLoading = ref(false)
 const selectedTag = ref(null)
+const selectedTagProcess = ref(null)
+const tagTitleDurations = ref([])
+const tagTitleLoading = ref(false)
 const tagPiePageOffset = ref(0)
 const totalSleepSeconds = ref(0)
 const media = ref([])
+const totalListenSeconds = ref(0)
+const listenTotalLoading = ref(false)
+const mediaMenuVisible = ref(false)
+const selectedMedia = ref(null)
+const mediaMenuPoint = ref({ x: 0, y: 0 })
 const error = ref('')
 const loading = ref(true)
 const initialRenderReady = ref(false)
@@ -209,6 +239,7 @@ const drawerTagNames = ref([])
 const contextPoint = ref({ x: 0, y: 0 })
 const contextSource = ref('focus')
 let contextClosedAt = 0
+let contextOpenedAt = 0
 const selectedProcess = ref({})
 const selectedProcessColor = ref('var(--primary-color)')
 const selectedProcessIcon = ref('')
@@ -217,15 +248,108 @@ const actionRange = computed(() => {
   const [from, to] = periodRange()
   return { start: new Date(`${from}T00:00:00`), end: new Date(`${to}T23:59:59`) }
 })
+const tagPieHeading = computed(() => {
+  if (selectedTagProcess.value)
+    return `${selectedTag.value?.tag || ''} · ${selectedTagProcess.value.displayName || selectedTagProcess.value.processName}`
+  return selectedTag.value ? selectedTag.value.tag : t('dashboard.card.tagDurationPie')
+})
+const overviewPieHeading = computed(() => selectedOverviewProcess.value
+  ? selectedOverviewProcess.value.displayName || selectedOverviewProcess.value.processName
+  : t('dashboard.card.overviewPie'))
 
-function openProcessActions(processName, color, nativeEvent = null, source = 'focus', displayName = '') {
+const TOOLTIP_GAP = 18
+const TOOLTIP_RIGHT_GUARD = 64
+const TOOLTIP_EDGE_GUARD = 12
+
+function visibleFloatingMenuRect() {
+  for (const selector of ['.context-anchor', '.media-menu-anchor']) {
+    const element = document.querySelector(selector)
+    if (element && element.getClientRects().length) return element.getBoundingClientRect()
+  }
+  return null
+}
+
+function overlaps(a, b) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
+}
+
+function smartTooltipPosition(point, _params, dom, _rect, size) {
+  const [viewWidth, viewHeight] = size.viewSize
+  const [contentWidth, contentHeight] = size.contentSize
+  dom.dataset.cursorX = String(point[0])
+  dom.dataset.cursorY = String(point[1])
+  let x = point[0] + TOOLTIP_GAP
+  const leftX = point[0] - contentWidth - TOOLTIP_GAP
+  if (x + contentWidth > viewWidth - TOOLTIP_RIGHT_GUARD) x = leftX
+  x = Math.max(TOOLTIP_EDGE_GUARD,
+    Math.min(x, viewWidth - contentWidth - TOOLTIP_RIGHT_GUARD))
+  let y = Math.max(TOOLTIP_EDGE_GUARD,
+    Math.min(point[1] - contentHeight / 2, viewHeight - contentHeight - TOOLTIP_EDGE_GUARD))
+
+  const hostRect = dom.offsetParent?.getBoundingClientRect?.()
+  const menuRect = visibleFloatingMenuRect()
+  if (hostRect && menuRect) {
+    const candidate = {
+      left: hostRect.left + x, top: hostRect.top + y,
+      right: hostRect.left + x + contentWidth, bottom: hostRect.top + y + contentHeight,
+    }
+    if (overlaps(candidate, menuRect)) {
+      const opposite = x > point[0] ? leftX : point[0] + TOOLTIP_GAP
+      if (opposite >= TOOLTIP_EDGE_GUARD
+        && opposite + contentWidth <= viewWidth - TOOLTIP_RIGHT_GUARD) x = opposite
+      else y = menuRect.top > hostRect.top + point[1]
+        ? Math.max(TOOLTIP_EDGE_GUARD, point[1] - contentHeight - TOOLTIP_GAP)
+        : Math.min(viewHeight - contentHeight - TOOLTIP_EDGE_GUARD, point[1] + TOOLTIP_GAP)
+    }
+  }
+  return [x, y]
+}
+
+function repositionVisibleTooltips() {
+  const menuRect = visibleFloatingMenuRect()
+  if (!menuRect) return
+  for (const tooltip of document.querySelectorAll('.wta-chart-tooltip')) {
+    if (getComputedStyle(tooltip).display === 'none' || !tooltip.offsetWidth) continue
+    const tooltipRect = tooltip.getBoundingClientRect()
+    if (!overlaps(tooltipRect, menuRect)) continue
+    const hostRect = tooltip.offsetParent?.getBoundingClientRect?.()
+    if (!hostRect) continue
+    const cursorX = Number(tooltip.dataset.cursorX)
+    const leftOfCursor = hostRect.left + cursorX - tooltipRect.width - TOOLTIP_GAP
+    const rightOfMenu = menuRect.right + TOOLTIP_GAP
+    let viewportLeft = leftOfCursor >= TOOLTIP_EDGE_GUARD
+      ? leftOfCursor : rightOfMenu
+    viewportLeft = Math.max(TOOLTIP_EDGE_GUARD,
+      Math.min(viewportLeft, window.innerWidth - tooltipRect.width - TOOLTIP_RIGHT_GUARD))
+    const localLeft = viewportLeft - hostRect.left
+    const localTop = tooltipRect.top - hostRect.top
+    // ECharts positions HTML tooltips with translate3d rather than `left`, so
+    // update the transform used by its renderer instead of a shadowed property.
+    tooltip.style.left = '0px'
+    tooltip.style.top = '0px'
+    tooltip.style.transform = `translate3d(${localLeft}px, ${localTop}px, 0)`
+  }
+}
+
+watch([contextMenuVisible, mediaMenuVisible], ([processOpen, mediaOpen]) => {
+  if (!processOpen && !mediaOpen) return
+  nextTick(() => {
+    repositionVisibleTooltips()
+    requestAnimationFrame(repositionVisibleTooltips)
+    setTimeout(repositionVisibleTooltips, 100)
+  })
+})
+
+function openProcessActions(processName, color, nativeEvent = null, source = 'focus', displayName = '', details = {}) {
   if (contextMenuVisible.value) {
+    if (performance.now() - contextOpenedAt < 260) return
     setContextMenuVisible(false)
     return
   }
   if (performance.now() - contextClosedAt < 320) return
   if (!processName || processName === t('dashboard.pie.other')) return
-  selectedProcess.value = { processName, displayName: displayName || processName }
+  mediaMenuVisible.value = false
+  selectedProcess.value = { processName, displayName: displayName || processName, ...details }
   selectedProcessColor.value = color || 'var(--primary-color)'
   const [fromDate, toDate] = periodRange()
   const atTime = period.value === 'today' ? new Date().toISOString() : new Date(`${toDate}T23:59:59`).toISOString()
@@ -238,6 +362,7 @@ function openProcessActions(processName, color, nativeEvent = null, source = 'fo
   }
   contextSource.value = source
   contextMenuVisible.value = true
+  contextOpenedAt = performance.now()
 }
 
 function setContextMenuVisible(value) {
@@ -246,8 +371,32 @@ function setContextMenuVisible(value) {
 }
 
 function chooseContextAction(action) {
+  if (contextSource.value === 'title' && action === 'isolate') {
+    const [from, to] = periodRange()
+    router.push({
+      path: '/history',
+      query: {
+        process: selectedProcess.value.processName,
+        isolate: '1',
+        from: `${from}T00:00`,
+        to: `${to}T23:59`,
+      },
+    })
+    return
+  }
   drawerView.value = action
   actionDrawerVisible.value = true
+}
+
+function openTitleActions(item, nativeEvent, source = 'title') {
+  const processName = item._processName || selectedTagProcess.value?.processName
+    || selectedOverviewProcess.value?.processName
+  if (!processName) return
+  openProcessActions(processName, item.itemStyle?.color, nativeEvent, source,
+    item._displayName || selectedTagProcess.value?.displayName
+      || selectedOverviewProcess.value?.displayName || processName,
+    { windowTitle: item._title || item.name, rawWindowTitle: item._title || item.name })
+  contextSource.value = 'title'
 }
 
 function openNewTagDrawer(selectedTags) {
@@ -286,6 +435,36 @@ async function replaceDashboardTitle(replacement) {
 function openTimeSelection(item) {
   const [from, to] = periodRange()
   router.push({ path: '/history', query: { process: item.processName, timeSelect: '1', from: `${from}T00:00`, to: `${to}T23:59` } })
+}
+
+function openMediaJump(item, event) {
+  setContextMenuVisible(false)
+  selectedMedia.value = item
+  mediaMenuPoint.value = {
+    x: event?.clientX ?? window.innerWidth / 2,
+    y: event?.clientY ?? window.innerHeight / 2,
+  }
+  mediaMenuVisible.value = true
+}
+
+function openMediaHistory(item) {
+  if (!item?.startTime) return
+  const start = parseUtcTs(item.startTime)
+  const end = item.endTime ? parseUtcTs(item.endTime) : new Date()
+  if (!start || !end) return
+  const duration = Math.max(60_000, end - start)
+  const span = Math.min(24 * 60 * 60 * 1000, Math.max(3 * 60 * 60 * 1000, duration * 12))
+  const center = (start.getTime() + end.getTime()) / 2
+  router.push({
+    path: '/history',
+    query: {
+      media: '1',
+      mediaAt: item.startTime,
+      mediaId: item.id || undefined,
+      from: toLocalDatetimeString(new Date(center - span / 2)),
+      to: toLocalDatetimeString(new Date(center + span / 2)),
+    },
+  })
 }
 
 // ── Date wheels (replaces date input) ──
@@ -416,6 +595,8 @@ let tagPieRenderId = 0
 let tagPieDrillLocked = false
 let tagPieDrillTimer = null
 let timer = null
+let longRangeBasePayload = null
+let longRangeListenBase = null
 // Race guard: each loadSummary() call increments loadId; stale calls
 // bail before writing summary.value / rendering charts.
 let loadId = 0
@@ -426,7 +607,13 @@ const abortController = new AbortController()
 
 function setPeriod(p) {
   piePageOffset.value = 0
+  selectedOverviewProcess.value = null
+  overviewTitleDurations.value = []
   selectedTag.value = null
+  selectedTagProcess.value = null
+  tagTitleDurations.value = []
+  longRangeBasePayload = null
+  longRangeListenBase = null
   tagPiePageOffset.value = 0
   period.value = p
   if (p === 'today') {
@@ -440,14 +627,25 @@ function setPeriod(p) {
 
 function onPickDate() {
   piePageOffset.value = 0
+  selectedOverviewProcess.value = null
+  overviewTitleDurations.value = []
   selectedTag.value = null
+  selectedTagProcess.value = null
+  tagTitleDurations.value = []
+  longRangeBasePayload = null
+  longRangeListenBase = null
   tagPiePageOffset.value = 0
   startPolling()
 }
 
 function showPreviousPiePage() {
   if (pieDrillLocked) return
-  piePageOffset.value = Math.max(0, piePageOffset.value - 5)
+  if (selectedOverviewProcess.value) {
+    selectedOverviewProcess.value = null
+    overviewTitleDurations.value = []
+  } else {
+    piePageOffset.value = Math.max(0, piePageOffset.value - 5)
+  }
   lockPieDrill()
   renderPieChart(summary.value)
 }
@@ -466,16 +664,79 @@ function lockTagPieDrill() {
 
 function showPreviousTagPiePage() {
   if (tagPieDrillLocked) return
-  if (tagPiePageOffset.value > 0) tagPiePageOffset.value = Math.max(0, tagPiePageOffset.value - 5)
+  if (selectedTagProcess.value) {
+    selectedTagProcess.value = null
+    tagTitleDurations.value = []
+  } else if (tagPiePageOffset.value > 0) tagPiePageOffset.value = Math.max(0, tagPiePageOffset.value - 5)
   else selectedTag.value = null
   lockTagPieDrill()
   renderTagPieChart(tagDurations.value)
 }
 
+async function openTagProcessTitles(item) {
+  selectedTagProcess.value = {
+    processName: item._processName,
+    displayName: item.name || item._processName,
+  }
+  tagTitleDurations.value = []
+  tagTitleLoading.value = true
+  lockTagPieDrill()
+  try {
+    tagTitleDurations.value = await fetchTitleBreakdown(
+      item._processName, selectedTag.value?.tag || '')
+  } catch (error) {
+    if (error.name !== 'AbortError') console.warn('Failed to load title breakdown:', error)
+  } finally {
+    tagTitleLoading.value = false
+    await renderTagPieChart(tagDurations.value)
+  }
+}
+
+async function fetchTitleBreakdown(processName, tag = '') {
+  const [from, to] = periodRange()
+  const query = new URLSearchParams({
+    from: `${from}T00:00:00`,
+    to: `${to}T23:59:59`,
+    process: processName,
+  })
+  if (tag) query.set('tag', tag)
+  const response = await fetch(`${apiBase}/api/summary/title-breakdown?${query}`, { signal: abortController.signal })
+  if (!response.ok) throw new Error(`API ${response.status}`)
+  return (await response.json()).titles || []
+}
+
+async function openOverviewProcessTitles(item) {
+  selectedOverviewProcess.value = {
+    processName: item._processName,
+    displayName: item.name || item._processName,
+  }
+  overviewTitleDurations.value = []
+  overviewTitleLoading.value = true
+  lockPieDrill()
+  try {
+    overviewTitleDurations.value = await fetchTitleBreakdown(item._processName)
+  } catch (error) {
+    if (error.name !== 'AbortError') console.warn('Failed to load overview title breakdown:', error)
+  } finally {
+    overviewTitleLoading.value = false
+    await renderPieChart(summary.value)
+  }
+}
+
 function startPolling() {
   stopPolling()
   loadSummary()
-  timer = setInterval(loadSummary, 2000)
+  schedulePolling()
+}
+
+function schedulePolling() {
+  stopPolling()
+  if (period.value === 'today') {
+    timer = setInterval(loadSummary, 2000)
+    return
+  }
+  const [, to] = periodRange()
+  if (to === toLocalDateString()) timer = setInterval(refreshLongRangeTail, 10000)
 }
 
 function stopPolling() {
@@ -569,24 +830,7 @@ const mergedMedia = computed(() => {
 
 const displayMedia = computed(() => mergedMedia.value)
 
-const totalListenFmt = computed(() => {
-  const playing = displayMedia.value.filter(m => m.playbackStatus === 'Playing' && !m.isAnomalous)
-  if (!playing.length) return '0s'
-  const intervals = playing
-    .map(m => {
-      const t = parseUtcTs(m.startTime)?.getTime() || 0
-      return [t, t + m.durationSec * 1000]
-    })
-    .sort((a, b) => a[0] - b[0])
-  const merged = []
-  for (const [s, e] of intervals) {
-    const last = merged[merged.length - 1]
-    if (last && s <= last[1]) last[1] = Math.max(last[1], e)
-    else merged.push([s, e])
-  }
-  const total = merged.reduce((sum, [s, e]) => sum + (e - s) / 1000, 0)
-  return fmtShortDur(total)
-})
+const totalListenFmt = computed(() => fmtShortDur(totalListenSeconds.value))
 
 const usageTotalSec = computed(() => {
   if (!summary.value || !summary.value.length) return 0
@@ -656,7 +900,7 @@ onMounted(async () => {
     console.error('Failed to load settings:', e)
   }
   await loadSummary()
-  startPolling()
+  schedulePolling()
 
   // Add window listeners
   window.addEventListener('resize', handleResize)
@@ -752,6 +996,114 @@ async function loadSummary() {
   if (myLoadId === loadId) initialRenderReady.value = true
 }
 
+function combineSummaryPayload(base, tail, sign = 1) {
+  const result = { items: [], tagDurations: [], totalSleepSeconds: 0, totalIdleSeconds: 0 }
+  const itemMap = new Map()
+  for (const source of [base, tail]) {
+    const factor = source === tail ? sign : 1
+    for (const item of source?.items || []) {
+      const key = String(item.processName || '').toLocaleLowerCase()
+      if (!itemMap.has(key)) itemMap.set(key, { ...item, totalSeconds: 0, switchCount: 0, adjustedSwitchCount: 0 })
+      const out = itemMap.get(key)
+      out.totalSeconds += factor * Number(item.totalSeconds || 0)
+      out.switchCount += factor * Number(item.switchCount || 0)
+      out.adjustedSwitchCount += factor * Number(item.adjustedSwitchCount || 0)
+      if (item.displayName) out.displayName = item.displayName
+    }
+  }
+  result.items = [...itemMap.values()].filter(item => item.totalSeconds > .01)
+
+  const tagMap = new Map()
+  for (const source of [base, tail]) {
+    const factor = source === tail ? sign : 1
+    for (const tag of source?.tagDurations || []) {
+      if (!tagMap.has(tag.tag)) tagMap.set(tag.tag, new Map())
+      const processMap = tagMap.get(tag.tag)
+      for (const process of tag.processes || []) {
+        const key = String(process.processName || '').toLocaleLowerCase()
+        if (!processMap.has(key)) processMap.set(key, { ...process, totalSeconds: 0 })
+        const out = processMap.get(key)
+        out.totalSeconds += factor * Number(process.totalSeconds || 0)
+        if (process.displayName) out.displayName = process.displayName
+      }
+    }
+  }
+  result.tagDurations = [...tagMap].map(([tag, processMap]) => {
+    const processes = [...processMap.values()]
+      .filter(item => item.totalSeconds > .01)
+      .sort((a, b) => b.totalSeconds - a.totalSeconds)
+    return {
+      tag,
+      totalSeconds: processes.reduce((sum, item) => sum + item.totalSeconds, 0),
+      dominantProcess: processes[0]?.processName || '',
+      processes,
+    }
+  }).filter(tag => tag.totalSeconds > .01).sort((a, b) => b.totalSeconds - a.totalSeconds)
+  result.totalSleepSeconds = Math.max(0,
+    Number(base?.totalSleepSeconds || 0) + sign * Number(tail?.totalSleepSeconds || 0))
+  result.totalIdleSeconds = Math.max(0,
+    Number(base?.totalIdleSeconds || 0) + sign * Number(tail?.totalIdleSeconds || 0))
+  return result
+}
+
+async function applySummaryPayload(res, myLoadId) {
+  if (myLoadId !== loadId) return
+  const rawData = Array.isArray(res) ? res : res.items || []
+  tagDurations.value = Array.isArray(res) ? [] : res.tagDurations || []
+  if (selectedTag.value) {
+    selectedTag.value = tagDurations.value.find(item => item.tag === selectedTag.value.tag) || null
+    if (!selectedTag.value) {
+      selectedTagProcess.value = null
+      tagPiePageOffset.value = 0
+    }
+  }
+  const mergedData = mergeByProcessName(rawData, (item, acc) => {
+    acc.totalSeconds += item.totalSeconds
+    acc.switchCount += item.switchCount
+    if (item.adjustedSwitchCount !== undefined)
+      acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
+  })
+  mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
+  summary.value = mergedData
+  totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
+  error.value = ''
+  loading.value = false
+  await nextTick()
+  if (myLoadId === loadId) await renderCharts(summary.value)
+}
+
+async function refreshLongRangeTail() {
+  if (!longRangeBasePayload || document.hidden) return
+  const myLoadId = ++loadId
+  const today = toLocalDateString()
+  try {
+    const [summaryResponse, mediaResponse, totalResponse] = await Promise.all([
+      fetch(`${apiBase}/api/summary/today?date=${today}`, { signal: abortController.signal }),
+      fetch(`${apiBase}/api/media/history?limit=100&from=${today}&to=${today}`, { signal: abortController.signal }),
+      fetch(`${apiBase}/api/media/listen-total?from=${today}&to=${today}`, { signal: abortController.signal }),
+    ])
+    if (!summaryResponse.ok) throw new Error(`API ${summaryResponse.status}`)
+    const tail = await summaryResponse.json()
+    const combined = combineSummaryPayload(longRangeBasePayload, tail)
+    await applySummaryPayload(combined, myLoadId)
+    if (myLoadId !== loadId) return
+    if (mediaResponse.ok) {
+      const latest = await mediaResponse.json()
+      const merged = new Map(media.value.map(item => [`${item.id || ''}:${item.startTime}`, item]))
+      for (const item of latest) merged.set(`${item.id || ''}:${item.startTime}`, item)
+      media.value = [...merged.values()].sort((a, b) => parseUtcTs(a.startTime) - parseUtcTs(b.startTime))
+    }
+    if (totalResponse.ok && longRangeListenBase != null) {
+      const total = await totalResponse.json()
+      totalListenSeconds.value = Math.max(0, longRangeListenBase + Number(total.totalSeconds || 0))
+    }
+    await renderPieChart(summary.value)
+    await renderTagPieChart(tagDurations.value)
+  } catch (error) {
+    if (error.name !== 'AbortError') console.warn('Long-range tail refresh failed:', error)
+  }
+}
+
 async function fetchSummary(myLoadId) {
   try {
     const [from, to] = periodRange()
@@ -763,32 +1115,16 @@ async function fetchSummary(myLoadId) {
     if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
     if (myLoadId !== loadId) return  // stale, newer call in flight
-
-    const rawData = Array.isArray(res) ? res : res.items || []
-    tagDurations.value = Array.isArray(res) ? [] : res.tagDurations || []
-    if (selectedTag.value) {
-      selectedTag.value = tagDurations.value.find(item => item.tag === selectedTag.value.tag) || null
-      if (!selectedTag.value) tagPiePageOffset.value = 0
-    }
-
-    // Merge by normalized process name to handle inconsistent .exe suffixes
-    const mergedData = mergeByProcessName(rawData, (item, acc) => {
-      acc.totalSeconds += item.totalSeconds
-      acc.switchCount += item.switchCount
-      if (item.adjustedSwitchCount !== undefined) {
-        acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
+    if (period.value !== 'today' && to === toLocalDateString() && !Array.isArray(res)) {
+      const tailResponse = await fetch(`${apiBase}/api/summary/today?date=${to}`, { signal: abortController.signal })
+      if (tailResponse.ok) {
+        const tail = await tailResponse.json()
+        longRangeBasePayload = combineSummaryPayload(res, tail, -1)
       }
-    })
-
-    // Sort after merge — merging can change totalSeconds and disrupt backend order
-    mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
-    summary.value = mergedData
-    totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
-    error.value = ''
-    loading.value = false
-    await nextTick()
-    if (myLoadId !== loadId) return  // stale
-    await renderCharts(summary.value)
+    } else {
+      longRangeBasePayload = null
+    }
+    await applySummaryPayload(res, myLoadId)
   } catch (e) {
     if (myLoadId !== loadId) return
     console.error(e)
@@ -802,13 +1138,32 @@ async function fetchMedia(myLoadId) {
     const [fromDate, toDate] = periodRange()
     const limits = { today: 2000, week: 500, month: 2000, halfYear: 5000, year: 5000 }
     const limit = limits[period.value] || 50
-    const r = await fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal: abortController.signal })
-    if (!r.ok) throw new Error(`API ${r.status}`)
-    const data = await r.json()
+    listenTotalLoading.value = true
+    const needsTailBase = period.value !== 'today' && toDate === toLocalDateString()
+    const [historyResponse, totalResponse, tailTotalResponse] = await Promise.all([
+      fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal: abortController.signal }),
+      fetch(`${apiBase}/api/media/listen-total?from=${fromDate}&to=${toDate}`, { signal: abortController.signal }),
+      needsTailBase
+        ? fetch(`${apiBase}/api/media/listen-total?from=${toDate}&to=${toDate}`, { signal: abortController.signal })
+        : Promise.resolve(null),
+    ])
+    if (!historyResponse.ok) throw new Error(`API ${historyResponse.status}`)
+    const data = await historyResponse.json()
+    const total = totalResponse.ok ? await totalResponse.json() : { totalSeconds: 0 }
     if (myLoadId !== loadId) return  // stale
     media.value = data
+    totalListenSeconds.value = Math.max(0, Number(total.totalSeconds) || 0)
+    if (needsTailBase && tailTotalResponse?.ok) {
+      const tailTotal = await tailTotalResponse.json()
+      longRangeListenBase = Math.max(0,
+        totalListenSeconds.value - Number(tailTotal.totalSeconds || 0))
+    } else {
+      longRangeListenBase = null
+    }
   } catch (e) {
     console.error(e)
+  } finally {
+    if (myLoadId === loadId) listenTotalLoading.value = false
   }
 }
 
@@ -948,6 +1303,8 @@ async function renderCharts(data) {
       },
     ],
     tooltip: {
+      className: 'wta-chart-tooltip',
+      position: smartTooltipPosition,
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       backgroundColor: surfaceCard,
@@ -974,52 +1331,58 @@ async function renderPieChart(data) {
   const primaryColor = cs.getPropertyValue('--primary-color').trim()
   const surface300 = cs.getPropertyValue('--surface-300').trim()
 
-  const maxOffset = Math.max(0, Math.floor((data.length - 1) / 5) * 5)
-  if (piePageOffset.value > maxOffset) piePageOffset.value = maxOffset
-  const offset = piePageOffset.value
-  const top5 = data.slice(offset, offset + 5)
-  const otherSec = data.slice(offset + 5).reduce((s, i) => s + i.totalSeconds, 0)
-
   const [fromDate, toDate] = periodRange()
   const atTime = period.value === 'today'
     ? new Date().toISOString()
     : new Date(toDate + 'T23:59:59').toISOString()
-
-  const icons = await Promise.all(top5.map(item => getProcessIcon(item.processName, atTime)))
-  if (renderId !== pieRenderId || !pieChartRef.value) return
-
-  const focusData = top5.map((item, i) => ({
-    id: item.processName,
-    groupId: `other-${offset}`,
-    value: item.totalSeconds,
-    name: item.displayName || item.processName,
-    itemStyle: {
-      color: icons[i].colorPrimary,
-      borderColor: textColor,
-      borderWidth: 2,
-    },
-    _icon: icons[i].icon,
-    _processName: item.processName,
-    _type: 'focus',
-  }))
-
-  if (otherSec > 0.5) {
-    focusData.push({
-      id: 'other',
-      groupId: `other-${offset + 5}`,
-      value: otherSec,
-      name: t('dashboard.pie.other'),
-      itemStyle: {
-        color: surface300,
-        borderColor: textColor,
-        borderWidth: 2,
-      },
-      _icon: null,
-      _type: 'other',
-    })
+  let focusData
+  if (selectedOverviewProcess.value) {
+    const icon = await getProcessIcon(selectedOverviewProcess.value.processName, atTime)
+    if (renderId !== pieRenderId || !pieChartRef.value) return
+    const palette = [icon.colorPrimary, icon.colorSecondary, icon.colorAccent]
+    focusData = overviewTitleDurations.value.map((item, index) => ({
+      id: `${selectedOverviewProcess.value.processName}:${item.title}`,
+      value: Number(item.totalSeconds),
+      name: item.title,
+      itemStyle: { color: palette[index % palette.length], borderColor: textColor, borderWidth: 2 },
+      _processName: selectedOverviewProcess.value.processName,
+      _displayName: selectedOverviewProcess.value.displayName,
+      _title: item.title,
+      _type: 'overviewTitle',
+    }))
+  } else {
+    const maxOffset = Math.max(0, Math.floor((data.length - 1) / 5) * 5)
+    if (piePageOffset.value > maxOffset) piePageOffset.value = maxOffset
+    const offset = piePageOffset.value
+    const top5 = data.slice(offset, offset + 5)
+    const otherSec = data.slice(offset + 5).reduce((s, i) => s + i.totalSeconds, 0)
+    const icons = await Promise.all(top5.map(item => getProcessIcon(item.processName, atTime)))
+    if (renderId !== pieRenderId || !pieChartRef.value) return
+    focusData = top5.map((item, i) => ({
+      id: item.processName,
+      groupId: `other-${offset}`,
+      value: item.totalSeconds,
+      name: item.displayName || item.processName,
+      itemStyle: { color: icons[i].colorPrimary, borderColor: textColor, borderWidth: 2 },
+      _icon: icons[i].icon,
+      _processName: item.processName,
+      _type: 'focus',
+    }))
+    if (otherSec > 0.5) {
+      focusData.push({
+        id: 'other',
+        groupId: `other-${offset + 5}`,
+        value: otherSec,
+        name: t('dashboard.pie.other'),
+        itemStyle: { color: surface300, borderColor: textColor, borderWidth: 2 },
+        _icon: null,
+        _type: 'other',
+      })
+    }
   }
 
-  const ringData = buildMediaRing(media.value, fromDate, toDate, successColor)
+  const ringData = !selectedOverviewProcess.value && period.value === 'today'
+    ? buildMediaRing(media.value, fromDate, toDate, successColor) : []
 
   if (!pieChart) {
     pieChart = echarts.init(pieChartRef.value)
@@ -1033,7 +1396,9 @@ async function renderPieChart(data) {
         return
       }
       if (params.data?._type === 'focus') {
-        openProcessActions(params.data._processName, params.data.itemStyle?.color, params.event?.event, 'pie', params.data.name)
+        openOverviewProcessTitles(params.data)
+      } else if (params.data?._type === 'overviewTitle') {
+        openTitleActions(params.data, params.event?.event, 'overviewTitle')
       }
     })
   }
@@ -1049,6 +1414,8 @@ async function renderPieChart(data) {
     animationEasingUpdate: 'cubicInOut',
     color: focusData.map(d => d.itemStyle.color),
     tooltip: {
+      className: 'wta-chart-tooltip',
+      position: smartTooltipPosition,
       trigger: 'item',
       backgroundColor: surfaceCard,
       borderColor: primaryColor,
@@ -1063,6 +1430,8 @@ async function renderPieChart(data) {
             : `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${d.itemStyle.color};margin-right:4px;vertical-align:middle"></span>`
           return `<div style="font-weight:600;margin-bottom:2px">${iconHtml}${d.name}</div><div style="font-size:0.95em">${fmtShortDur(d.value)}</div>`
         }
+        if (params.data._type === 'overviewTitle')
+          return `<div style="font-weight:600;margin-bottom:2px">${params.data.name}</div><div>${fmtShortDur(params.data.value)}</div>`
         if (params.data._type === 'other')
           return `${t('dashboard.pie.other')}<br/>${fmtShortDur(params.data.value)}`
         if (params.data._type === 'media') {
@@ -1120,7 +1489,21 @@ async function renderTagPieChart(items) {
   const surface300 = cs.getPropertyValue('--surface-300').trim()
   let chartData
 
-  if (selectedTag.value) {
+  if (selectedTagProcess.value) {
+    const icon = await getProcessIcon(selectedTagProcess.value.processName, atTime)
+    if (renderId !== tagPieRenderId || !tagPieChartRef.value) return
+    const palette = [icon.colorPrimary, icon.colorSecondary, icon.colorAccent]
+    chartData = tagTitleDurations.value.map((item, index) => ({
+      id: `${selectedTagProcess.value.processName}:${item.title}`,
+      name: item.title,
+      value: Number(item.totalSeconds),
+      itemStyle: { color: palette[index % palette.length], borderColor, borderWidth: 2 },
+      _type: 'tagTitle',
+      _processName: selectedTagProcess.value.processName,
+      _displayName: selectedTagProcess.value.displayName,
+      _title: item.title,
+    }))
+  } else if (selectedTag.value) {
     const processes = selectedTag.value.processes || []
     const maxOffset = Math.max(0, Math.floor((processes.length - 1) / 5) * 5)
     if (tagPiePageOffset.value > maxOffset) tagPiePageOffset.value = maxOffset
@@ -1176,8 +1559,9 @@ async function renderTagPieChart(items) {
         lockTagPieDrill()
         renderTagPieChart(tagDurations.value)
       } else if (item._type === 'tagProcess') {
-        openProcessActions(
-          item._processName, item.itemStyle?.color, params.event?.event, 'tagPie', item.name)
+        openTagProcessTitles(item)
+      } else if (item._type === 'tagTitle') {
+        openTitleActions(item, params.event?.event, 'tagTitle')
       }
     })
   }
@@ -1196,6 +1580,8 @@ async function renderTagPieChart(items) {
       formatter: name => name.length > 16 ? `${name.slice(0, 15)}…` : name,
     },
     tooltip: {
+      className: 'wta-chart-tooltip',
+      position: smartTooltipPosition,
       trigger: 'item',
       backgroundColor: surfaceCard,
       borderColor,
@@ -1475,6 +1861,15 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   font-size: .9rem;
 }
 
+.tag-pie-loading {
+  position: absolute;
+  left: 36%;
+  top: 50%;
+  margin: -12px 0 0 -12px;
+  color: var(--primary-color);
+  z-index: 3;
+}
+
 .context-hover-locked {
   border-color: var(--text-color) !important;
   transform: translate(-2px, -2px) !important;
@@ -1514,6 +1909,13 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
   grid-area: 1 / 1;
   width: 100%;
   height: 100%;
+}
+
+.overview-title-loading {
+  grid-area: 1 / 1;
+  place-self: center;
+  color: var(--primary-color);
+  z-index: 4;
 }
 
 .water-ball {
@@ -1629,7 +2031,9 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
 .table-wrapper {
   max-height: 400px;
   overflow-y: auto;
-  overflow-x: clip;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  contain: paint;
   border: 2px solid var(--surface-200);
 }
 
@@ -1637,12 +2041,14 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
 .media-table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 
   thead {
     position: sticky;
     top: 0;
     background: var(--surface-card);
-    z-index: 1;
+    z-index: 2;
+    box-shadow: 0 2px 0 var(--primary-color);
 
     th {
       padding: 12px 16px;
@@ -1659,6 +2065,7 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
     tr {
       border-bottom: 1px solid var(--surface-200);
       transition: background-color 0.2s ease, box-shadow 0.2s ease;
+      cursor: pointer;
 
       &:hover {
         background: var(--surface-100);
@@ -1666,16 +2073,21 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
       }
 
       &.playing {
-        border-left: 4px solid var(--success-color);
+        box-shadow: inset 4px 0 0 var(--success-color);
       }
 
       &.anomalous {
-        border-left: 4px solid var(--danger-color, #dc2626);
+        box-shadow: inset 4px 0 0 var(--danger-color);
       }
+
+      &.selected { background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-card)); }
 
       td {
         padding: 12px 16px;
         color: var(--text-color);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
     }
   }
@@ -1686,6 +2098,21 @@ function buildMediaRing(mediaList, fromDate, toDate, successColor) {
     font-style: italic;
   }
 }
+
+.media-table th:nth-child(1) { width: 20%; }
+.media-table th:nth-child(2) { width: 14%; }
+.media-table th:nth-child(3) { width: 38%; }
+.media-table th:nth-child(4) { width: 28%; }
+.total-listen {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 132px;
+  min-height: 18px;
+  padding-right: 18px;
+  font-variant-numeric: tabular-nums;
+}
+.listen-refresh-spinner { position: absolute; right: 0; top: 2px; }
 
 .flicker-text {
   display: inline-block;
