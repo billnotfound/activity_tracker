@@ -14,6 +14,7 @@
   "common.duration": "Duration",
 
   "error.saveFailed": "Save failed: {0}",
+  "error.configWriteConflict": "The configuration changed after it was loaded. Review the latest rules and save again.",
   "error.configParseFailed": "Failed to parse {0}: {1}. Using previous config.",
 
   "time.seconds": "{0}s",

@@ -16,6 +16,7 @@ public class NtpSyncService : BackgroundService
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public TimeReferenceResult? LastResult { get; private set; }
+    public TimeReferenceResult? LastAttemptResult { get; private set; }
     public DateTime? LastQueryAt { get; private set; }
 
     /// <summary>成功写入新结果后触发（TimeAnomalyService 借此重评 Pending 异常）。</summary>
@@ -45,6 +46,7 @@ public class NtpSyncService : BackgroundService
         {
             var result = await (_injected ?? CreateReference()).QueryAsync(cancellationToken);
             LastQueryAt = DateTime.UtcNow;
+            LastAttemptResult = result;
             if (result.Succeeded)
             {
                 LastResult = result;

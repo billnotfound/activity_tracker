@@ -12,12 +12,12 @@
     <!-- Current status card -->
     <section class="memphis-box status-card">
       <h3 class="section-title">{{ t('timeAnomaly.statusCard.title') }}</h3>
-      <div class="current-time-state" :class="{ problem: activeItems.length, unavailable: ntp.succeeded === false }">
-        <TriangleAlert v-if="activeItems.length" :size="24" />
+      <div class="current-time-state" :class="{ problem: activeTotal, unavailable: ntp.succeeded === false }">
+        <TriangleAlert v-if="activeTotal" :size="24" />
         <CircleCheck v-else :size="24" />
         <div>
-          <b>{{ activeItems.length ? t('timeAnomaly.currentProblem', { count: activeItems.length }) : t('timeAnomaly.currentClear') }}</b>
-          <span v-if="!activeItems.length && ntp.succeeded === false">{{ t('timeAnomaly.referenceUnavailable') }}</span>
+          <b>{{ activeTotal ? t('timeAnomaly.currentProblem', { count: activeTotal }) : t('timeAnomaly.currentClear') }}</b>
+          <span v-if="ntp.succeeded === false">{{ t('timeAnomaly.referenceUnavailable') }}</span>
         </div>
       </div>
       <div class="status-grid">
@@ -46,7 +46,7 @@
     <!-- Anomaly list -->
     <section class="memphis-box list-card">
       <h3 class="section-title">{{ t('timeAnomaly.list.title') }}</h3>
-      <button v-if="!activeItems.length" type="button" class="empty empty-action" @click="startManualCorrection">
+      <button v-if="!activeTotal" type="button" class="empty empty-action" @click="startManualCorrection">
         <CircleCheck :size="28" />
         <b>{{ t('timeAnomaly.currentClear') }}</b>
         <span>{{ t('timeAnomaly.emptyAction') }}</span>
@@ -91,13 +91,13 @@
             :label="t('timeAnomaly.reviewHistory')" size="small" severity="secondary" @click="reviewInHistory(a)" />
         </div>
       </div>
-      <button v-if="activeItems.length" type="button" class="manual-correction-link" @click="startManualCorrection">
+      <button v-if="activeTotal" type="button" class="manual-correction-link" @click="startManualCorrection">
         <MousePointer2 :size="16" /> {{ t('timeAnomaly.manualAction') }}
       </button>
-      <div v-if="archivedItems.length" class="archive-section">
+      <div v-if="archivedTotal" class="archive-section">
         <button type="button" class="archive-toggle" :aria-expanded="showHistory" @click="showHistory = !showHistory">
           <ChevronDown :size="17" :class="{ open: showHistory }" />
-          {{ t('timeAnomaly.historyRecords', { count: archivedItems.length }) }}
+          {{ t('timeAnomaly.historyRecords', { count: archivedTotal }) }}
         </button>
         <Transition name="archive-expand">
           <div v-if="showHistory" class="archive-list">
@@ -148,6 +148,8 @@ const showPreview = ref(false)
 const preview = ref({ total: 0, tableNames: [] })
 const pendingApply = ref(null)
 const showHistory = ref(false)
+const activeTotal = ref(0)
+const archivedTotal = ref(0)
 
 // Locale-aware list separator for the preview text
 const listSep = computed(() => (locale.value === 'zh-CN' ? '、' : ', '))
@@ -157,11 +159,20 @@ const archivedItems = computed(() => items.value.filter(item => !activeStatuses.
 
 async function load() {
   try {
-    const r = await fetch(`${apiBase}/api/time-anomalies?limit=50`)
-    if (!r.ok) return
-    const j = await r.json()
-    items.value = j.items || []
-    ntp.value = j.ntp || {}
+    const [activeResponse, archivedResponse] = await Promise.all([
+      fetch(`${apiBase}/api/time-anomalies?limit=500&scope=active`),
+      fetch(`${apiBase}/api/time-anomalies?limit=500&scope=archived`),
+    ])
+    if (!activeResponse.ok || !archivedResponse.ok) return
+    const [activeJson, archivedJson] = await Promise.all([
+      activeResponse.json(), archivedResponse.json(),
+    ])
+    const active = activeJson.items || []
+    const archived = archivedJson.items || []
+    items.value = [...active, ...archived]
+    activeTotal.value = Number(activeJson.total ?? activeJson.activeCount ?? active.length)
+    archivedTotal.value = Number(archivedJson.total ?? archivedJson.archivedCount ?? archived.length)
+    ntp.value = activeJson.ntp || {}
   } catch (e) {
     console.error('load anomalies:', e)
   }

@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from '../i18n/index.js'
 import TimeWheel from './TimeWheel.vue'
 
@@ -66,11 +66,12 @@ const props = defineProps({
 
 const emit = defineEmits(['update:startDate', 'update:endDate', 'change'])
 
-const now = new Date()
+const now = ref(new Date())
 let syncingExternalRange = false
+let syncingDurationFromDates = false
 
 const earliestYear = computed(() =>
-  props.earliestDate ? props.earliestDate.getFullYear() : now.getFullYear() - 5
+  props.earliestDate ? props.earliestDate.getFullYear() : now.value.getFullYear() - 5
 )
 const earliestMonth = computed(() =>
   props.earliestDate ? props.earliestDate.getMonth() + 1 : 1
@@ -79,16 +80,16 @@ const earliestDay = computed(() =>
   props.earliestDate ? props.earliestDate.getDate() : 1
 )
 
-const startYearOptions = computed(() => range(earliestYear.value, now.getFullYear()))
-const endYearOptions = computed(() => range(earliestYear.value, now.getFullYear()))
+const startYearOptions = computed(() => range(earliestYear.value, now.value.getFullYear()))
+const endYearOptions = computed(() => range(earliestYear.value, now.value.getFullYear()))
 
-const startYear = ref(clamp(props.startDate.getFullYear(), earliestYear.value, now.getFullYear()))
+const startYear = ref(clamp(props.startDate.getFullYear(), earliestYear.value, now.value.getFullYear()))
 const startMonth = ref(props.startDate.getMonth() + 1)
 const startDay = ref(props.startDate.getDate())
 const startHour = ref(props.startDate.getHours())
 const startMinute = ref(props.startDate.getMinutes())
 
-const endYear = ref(clamp(props.endDate.getFullYear(), earliestYear.value, now.getFullYear()))
+const endYear = ref(clamp(props.endDate.getFullYear(), earliestYear.value, now.value.getFullYear()))
 const endMonth = ref(props.endDate.getMonth() + 1)
 const endDay = ref(props.endDate.getDate())
 const endHour = ref(props.endDate.getHours())
@@ -161,7 +162,7 @@ const durationUnitLabel = computed(() => t(unitI18nKeys[durationUnitWheel.value]
 const UNIT_CAPS = { Min: 60, H: 24, D: 200 }
 const durationNumOptions = computed(() => {
   const earliest = props.earliestDate ? props.earliestDate.getTime() : 0
-  const maxMs = now.getTime() - earliest
+  const maxMs = now.value.getTime() - earliest
   if (maxMs <= 0) return [1]
   let max
   switch (durationUnitWheel.value) {
@@ -170,7 +171,16 @@ const durationNumOptions = computed(() => {
     case 'D':   max = Math.floor(maxMs / 86400000); break
   }
   const cap = UNIT_CAPS[durationUnitWheel.value] || 200
-  return range(1, Math.min(cap, Math.max(1, max)))
+  const options = range(1, Math.min(cap, Math.max(1, max)))
+  // External timeline ranges can be exact without being representable by the
+  // natural 60m/24h carry thresholds (for example 90m or 25.5h). Keep that
+  // exact value as an extra wheel stop instead of rounding the range.
+  const current = Number(durationNum.value)
+  if (Number.isFinite(current) && current > 0 && !options.includes(current)) {
+    options.push(current)
+    options.sort((left, right) => left - right)
+  }
+  return options
 })
 
 watch(durationNumOptions, (opts) => {
@@ -197,22 +207,27 @@ let carryGuard = false
 function syncDurationFromDates() {
   const ms = endDateTime.value.getTime() - startDateTime.value.getTime()
   const absMs = Math.max(0, ms)
-  const minutes = Math.floor(absMs / 60000)
-  const hours = Math.floor(minutes / 60)
-  const days = Math.floor(hours / 24)
+  const minutes = Math.max(1, Math.round(absMs / 60000))
 
   carryGuard = true
-  if (days > 0) {
+  syncingDurationFromDates = true
+  if (minutes % 1440 === 0) {
     durationUnitWheel.value = 'D'
-    durationNum.value = days
-  } else if (hours > 0) {
+    durationNum.value = minutes / 1440
+  } else if (minutes % 60 === 0) {
     durationUnitWheel.value = 'H'
-    durationNum.value = Math.max(1, hours)
-  } else {
+    durationNum.value = minutes / 60
+  } else if (minutes <= 1440) {
     durationUnitWheel.value = 'Min'
-    durationNum.value = Math.max(1, minutes)
+    durationNum.value = minutes
+  } else {
+    durationUnitWheel.value = 'H'
+    durationNum.value = Number((minutes / 60).toFixed(2))
   }
-  nextTick(() => { carryGuard = false })
+  nextTick(() => {
+    carryGuard = false
+    syncingDurationFromDates = false
+  })
 }
 
 function setStartDate(ts) {
@@ -227,7 +242,7 @@ function setStartDate(ts) {
 }
 
 function setEndDate(ts) {
-  const end = new Date(ts > now.getTime() ? now.getTime() : ts)
+  const end = new Date(ts > now.value.getTime() ? now.value.getTime() : ts)
   const refs = sideRefs.end
   refs.year.value   = end.getFullYear()
   refs.month.value  = end.getMonth() + 1
@@ -256,11 +271,11 @@ function applyDurationToRange() {
 
   if (increasing) {
     const newEnd = currentStart + ms
-    if (newEnd <= now.getTime()) {
+    if (newEnd <= now.value.getTime()) {
       setEndDate(newEnd)
     } else {
-      setEndDate(now.getTime())
-      setStartDate(now.getTime() - ms)
+      setEndDate(now.value.getTime())
+      setStartDate(now.value.getTime() - ms)
     }
   } else {
     const newStart = currentEnd - ms
@@ -269,7 +284,7 @@ function applyDurationToRange() {
     } else {
       setStartDate(earliest)
       const altEnd = earliest + ms
-      setEndDate(Math.min(altEnd, now.getTime()))
+      setEndDate(Math.min(altEnd, now.value.getTime()))
     }
   }
 }
@@ -312,11 +327,11 @@ function carryDuration(direction) {
 // (parent hasn't re-rendered), so they all compute the same next value.
 watch(durationNum, (newVal) => {
   if (carryGuard) return
-  const opts = durationNumOptions.value
   const units = durationUnitOptions
   const idx = units.indexOf(durationUnitWheel.value)
+  const cap = UNIT_CAPS[durationUnitWheel.value]
 
-  if (newVal === opts[opts.length - 1] && idx < units.length - 1) {
+  if (newVal === cap && idx < units.length - 1) {
     carryDuration(1)
   } else if (newVal === 1 && idx > 0) {
     carryDuration(-1)
@@ -324,6 +339,10 @@ watch(durationNum, (newVal) => {
 }, { flush: 'sync' })
 
 watch([durationNum, durationUnitWheel], () => {
+  if (syncingDurationFromDates || syncingExternalRange) {
+    lastCarryDelta = 0
+    return
+  }
   applyDurationToRange()
   lastCarryDelta = 0
   emitChange()
@@ -338,7 +357,7 @@ watch([startDateTime, endDateTime], () => {
 
 const startMonthOptions = computed(() => {
   const min = startYear.value === earliestYear.value ? earliestMonth.value : 1
-  const max = startYear.value === now.getFullYear() ? now.getMonth() + 1 : 12
+  const max = startYear.value === now.value.getFullYear() ? now.value.getMonth() + 1 : 12
   return range(min, max)
 })
 
@@ -349,30 +368,30 @@ const startDayOptions = computed(() => {
   if (startYear.value === earliestYear.value && startMonth.value === earliestMonth.value) {
     min = earliestDay.value
   }
-  if (startYear.value === now.getFullYear() && startMonth.value === now.getMonth() + 1) {
-    max = Math.min(maxDay, now.getDate())
+  if (startYear.value === now.value.getFullYear() && startMonth.value === now.value.getMonth() + 1) {
+    max = Math.min(maxDay, now.value.getDate())
   }
   return range(min, max)
 })
 
 const startHourOptions = computed(() => {
-  const max = (startYear.value === now.getFullYear() &&
-    startMonth.value === now.getMonth() + 1 &&
-    startDay.value === now.getDate()) ? now.getHours() : 23
+  const max = (startYear.value === now.value.getFullYear() &&
+    startMonth.value === now.value.getMonth() + 1 &&
+    startDay.value === now.value.getDate()) ? now.value.getHours() : 23
   return range(0, max)
 })
 
 const startMinuteOptions = computed(() => {
-  const max = (startYear.value === now.getFullYear() &&
-    startMonth.value === now.getMonth() + 1 &&
-    startDay.value === now.getDate() &&
-    startHour.value === now.getHours()) ? now.getMinutes() : 59
+  const max = (startYear.value === now.value.getFullYear() &&
+    startMonth.value === now.value.getMonth() + 1 &&
+    startDay.value === now.value.getDate() &&
+    startHour.value === now.value.getHours()) ? now.value.getMinutes() : 59
   return range(0, max)
 })
 
 const endMonthOptions = computed(() => {
   const min = endYear.value === earliestYear.value ? earliestMonth.value : 1
-  const max = endYear.value === now.getFullYear() ? now.getMonth() + 1 : 12
+  const max = endYear.value === now.value.getFullYear() ? now.value.getMonth() + 1 : 12
   return range(min, max)
 })
 
@@ -383,24 +402,24 @@ const endDayOptions = computed(() => {
   if (endYear.value === earliestYear.value && endMonth.value === earliestMonth.value) {
     min = earliestDay.value
   }
-  if (endYear.value === now.getFullYear() && endMonth.value === now.getMonth() + 1) {
-    max = Math.min(maxDay, now.getDate())
+  if (endYear.value === now.value.getFullYear() && endMonth.value === now.value.getMonth() + 1) {
+    max = Math.min(maxDay, now.value.getDate())
   }
   return range(min, max)
 })
 
 const endHourOptions = computed(() => {
-  const max = (endYear.value === now.getFullYear() &&
-    endMonth.value === now.getMonth() + 1 &&
-    endDay.value === now.getDate()) ? now.getHours() : 23
+  const max = (endYear.value === now.value.getFullYear() &&
+    endMonth.value === now.value.getMonth() + 1 &&
+    endDay.value === now.value.getDate()) ? now.value.getHours() : 23
   return range(0, max)
 })
 
 const endMinuteOptions = computed(() => {
-  const max = (endYear.value === now.getFullYear() &&
-    endMonth.value === now.getMonth() + 1 &&
-    endDay.value === now.getDate() &&
-    endHour.value === now.getHours()) ? now.getMinutes() : 59
+  const max = (endYear.value === now.value.getFullYear() &&
+    endMonth.value === now.value.getMonth() + 1 &&
+    endDay.value === now.value.getDate() &&
+    endHour.value === now.value.getHours()) ? now.value.getMinutes() : 59
   return range(0, max)
 })
 
@@ -443,7 +462,7 @@ function carry(side, unit, delta) {
 
   const earliest = props.earliestDate || new Date(0)
   if (newDate < earliest) return
-  if (newDate > now) return
+  if (newDate > now.value) return
 
   if (side === 'start' && newDate >= endDateTime.value) return
   if (side === 'end'   && newDate <= startDateTime.value) return
@@ -457,10 +476,12 @@ function carry(side, unit, delta) {
 }
 
 watch(startMonthOptions, (opts) => { if (!opts.includes(startMonth.value)) startMonth.value = opts[opts.length - 1] })
+watch(startYearOptions, (opts) => { if (!opts.includes(startYear.value)) startYear.value = opts[0] })
 watch(startDayOptions, (opts) => { if (!opts.includes(startDay.value)) startDay.value = opts[opts.length - 1] })
 watch(startHourOptions, (opts) => { if (!opts.includes(startHour.value)) startHour.value = opts[opts.length - 1] })
 watch(startMinuteOptions, (opts) => { if (!opts.includes(startMinute.value)) startMinute.value = opts[opts.length - 1] })
 watch(endMonthOptions, (opts) => { if (!opts.includes(endMonth.value)) endMonth.value = opts[opts.length - 1] })
+watch(endYearOptions, (opts) => { if (!opts.includes(endYear.value)) endYear.value = opts[opts.length - 1] })
 watch(endDayOptions, (opts) => { if (!opts.includes(endDay.value)) endDay.value = opts[opts.length - 1] })
 watch(endHourOptions, (opts) => { if (!opts.includes(endHour.value)) endHour.value = opts[opts.length - 1] })
 watch(endMinuteOptions, (opts) => { if (!opts.includes(endMinute.value)) endMinute.value = opts[opts.length - 1] })
@@ -480,7 +501,7 @@ function validate() {
     if (wasValid) pickEasterEgg(end - start)
     return false
   }
-  if (end > now) {
+  if (end > now.value) {
     isValid.value = false
     if (wasValid) pickEasterEgg(end - start)
     return false
@@ -503,8 +524,24 @@ function updateArrowWidth() {
 
 watch([durationNum, durationUnitWheel], updateArrowWidth, { flush: 'post' })
 
+let nowTimer = null
+function refreshNow() {
+  now.value = new Date()
+}
+function handleVisibilityChange() {
+  if (!document.hidden) refreshNow()
+}
+
 onMounted(() => {
+  refreshNow()
+  nowTimer = setInterval(refreshNow, 60_000)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
   nextTick(updateArrowWidth)
+})
+
+onUnmounted(() => {
+  if (nowTimer) clearInterval(nowTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 // ── Emit ──
@@ -554,26 +591,26 @@ function setRange(start, end) {
   })
 }
 
-defineExpose({ setRange })
+watch([
+  () => props.startDate?.getTime(),
+  () => props.endDate?.getTime(),
+], ([startMs, endMs]) => {
+  if (syncingExternalRange || !Number.isFinite(startMs) || !Number.isFinite(endMs)) return
+  if (startDateTime.value.getTime() === startMs && endDateTime.value.getTime() === endMs) return
+  setRange(new Date(startMs), new Date(endMs))
+})
+
+watch(() => props.earliestDate?.getTime(), earliestMs => {
+  if (!Number.isFinite(earliestMs) || startDateTime.value.getTime() >= earliestMs) return
+  const endMs = Math.max(endDateTime.value.getTime(), earliestMs + 60_000)
+  setRange(new Date(earliestMs), new Date(Math.min(endMs, now.value.getTime())))
+})
+
+defineExpose({ setRange, refreshNow })
 
 // ── Initialise duration wheels from props ──
 
-carryGuard = true
-const initMs = props.endDate.getTime() - props.startDate.getTime()
-const initMin = Math.floor(Math.max(0, initMs) / 60000)
-const initHr = Math.floor(initMin / 60)
-const initDay = Math.floor(initHr / 24)
-if (initDay > 0) {
-  durationNum.value = initDay
-  durationUnitWheel.value = 'D'
-} else if (initHr > 0) {
-  durationNum.value = Math.max(1, initHr)
-  durationUnitWheel.value = 'H'
-} else {
-  durationNum.value = Math.max(1, initMin)
-  durationUnitWheel.value = 'Min'
-}
-nextTick(() => { carryGuard = false })
+syncDurationFromDates()
 </script>
 
 <style lang="scss" scoped>

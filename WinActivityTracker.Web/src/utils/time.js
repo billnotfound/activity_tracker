@@ -1,32 +1,13 @@
 import { t } from '../i18n/index.js'
+import { parseUtcTs, toLocalDateString } from './date.js'
 
-// DB timestamps are UTC but may lack 'Z' suffix (EF Core strips DateTimeKind).
-// Append 'Z' so JS parses as UTC, then format in local time.
-export function parseUtcTs(ts) {
-  if (!ts) return null
-  return new Date(ts.endsWith('Z') ? ts : ts + 'Z')
-}
+export { parseUtcTs, toLocalDateString, toLocalDatetimeString } from './date.js'
 
 // Format a DB timestamp as a localized display string ('?' when missing).
 export function toUtcIso(ts) {
   if (!ts) return '?'
   const d = parseUtcTs(ts)
   return d ? d.toLocaleString() : '?'
-}
-
-// Local date string "YYYY-MM-DD" for date inputs and date-only API params.
-// Avoids toISOString() which shifts dates across midnight for non-UTC timezones.
-export function toLocalDateString(d) {
-  d = d || new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-}
-
-// Local datetime string "YYYY-MM-DDTHH:mm" for datetime-local inputs.
-export function toLocalDatetimeString(d) {
-  d = d || new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${toLocalDateString(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 export function toLocalTime(ts) {

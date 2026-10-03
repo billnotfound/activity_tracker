@@ -28,21 +28,22 @@ export function normalizeProcessName(processName) {
  * @returns {Array} - Merged items with normalized process names
  */
 export function mergeByProcessName(items, sumFields) {
-  const grouped = {}
+  const grouped = new Map()
 
   items.forEach(item => {
     const normalizedName = normalizeProcessName(item.processName)
+    const key = String(normalizedName || '').toLowerCase()
 
-    if (!grouped[normalizedName]) {
-      grouped[normalizedName] = {
+    if (!grouped.has(key)) {
+      grouped.set(key, {
         ...item,
         processName: normalizedName
-      }
+      })
     } else {
       // Merge numeric fields
-      sumFields(item, grouped[normalizedName])
+      sumFields(item, grouped.get(key))
     }
   })
 
-  return Object.values(grouped)
+  return [...grouped.values()]
 }

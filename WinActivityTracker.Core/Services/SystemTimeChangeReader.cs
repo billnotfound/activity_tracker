@@ -3,7 +3,39 @@ using System.Xml.Linq;
 
 namespace WinActivityTracker.Core.Services;
 
-public sealed record SystemTimeChange(DateTime OldTime, DateTime NewTime, DateTime OccurredAt);
+public sealed record SystemTimeChange(
+    DateTime OldTime,
+    DateTime NewTime,
+    DateTime OccurredAt,
+    int? Reason = null,
+    string? ProcessName = null,
+    int? ProcessId = null)
+{
+    /// <summary>
+    /// Kernel-General 1 also describes clock synchronization performed while
+    /// Windows or a virtual machine is resuming. Those events do not imply that
+    /// activity recorded before the gap used the wrong clock, so they must never
+    /// become a repair plan.
+    /// </summary>
+    public bool IsNonActionableForActivityRepair =>
+        Reason is 2 or 3 || IsVirtualMachineResumeSync(Reason, ProcessName);
+
+    public string NonActionableDescription => Reason switch
+    {
+        2 => "系统恢复后与硬件时钟同步，无需修复活动记录",
+        3 => "系统时区调整不改变 UTC 活动记录，无需修复",
+        _ when IsVirtualMachineResumeSync(Reason, ProcessName) =>
+            "虚拟机恢复后的宿主机时间同步，无需修复活动记录",
+        _ => "系统时间同步无需修复活动记录"
+    };
+
+    internal static bool IsVirtualMachineResumeSync(int? reason, string? processName)
+    {
+        if (reason != 1 || string.IsNullOrWhiteSpace(processName)) return false;
+        var executable = Path.GetFileName(processName);
+        return executable.Equals("vmtoolsd.exe", StringComparison.OrdinalIgnoreCase);
+    }
+}
 
 /// <summary>
 /// 系统时间变化的权威记录：Windows 每次 SetSystemTime 都会写
@@ -71,16 +103,23 @@ public class SystemTimeChangeReader
             if (id != "1") return null;
 
             DateTime? oldTime = null, newTime = null;
+            int? reason = null, processId = null;
+            string? processName = null;
             foreach (var data in doc.Descendants(ns + "Data"))
             {
                 var name = (string?)data.Attribute("Name");
-                if (name == "OldTime") oldTime = DateTime.Parse((string)data).ToUniversalTime();
-                if (name == "NewTime") newTime = DateTime.Parse((string)data).ToUniversalTime();
+                var value = (string)data;
+                if (name == "OldTime") oldTime = DateTime.Parse(value).ToUniversalTime();
+                if (name == "NewTime") newTime = DateTime.Parse(value).ToUniversalTime();
+                if (name == "Reason" && int.TryParse(value, out var parsedReason)) reason = parsedReason;
+                if (name == "ProcessName") processName = value;
+                if (name == "ProcessId" && int.TryParse(value, out var parsedPid)) processId = parsedPid;
             }
             if (oldTime == null || newTime == null) return null;
             return new SystemTimeChange(oldTime.Value, newTime.Value,
                 ParseTimeCreated(doc, ns)
-                ?? (oldTime.Value < newTime.Value ? oldTime.Value : newTime.Value));
+                ?? (oldTime.Value < newTime.Value ? oldTime.Value : newTime.Value),
+                reason, processName, processId);
         }
         catch { return null; }
     }

@@ -208,7 +208,9 @@ import { computed, reactive, ref, inject, onMounted, onUnmounted, nextTick, watc
 import { useRoute, useRouter } from 'vue-router'
 import { toLocalTime, parseUtcTs, toLocalDateString, toLocalDatetimeString, fmtShortDur } from '../utils/time.js'
 import { mergeByProcessName } from '../utils/process.js'
-import { mergeTimePeriods, subtractTimePeriods } from '../utils/intervals.js'
+import { inferIdleGaps, mergeTimePeriods, subtractTimePeriods } from '../utils/intervals.js'
+import { mergePixelIntervals, withAlpha } from '../utils/chart.js'
+import { escapeHtml } from '../utils/html.js'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
 import { echarts } from '../utils/echartsInit.js'
@@ -238,11 +240,11 @@ const DRAG_PREVIEW_INTERVAL_MS = 32
 
 const startDate = ref(new Date(Date.now() - THREE_HOURS_MS))
 const endDate = ref(new Date())
-const latestSelectableTime = endDate.value.getTime()
 const earliestDate = ref(null)
 
 const data = ref([])
 const timeline = ref([])
+const timelineMeta = ref({ sampled: false, truncated: false })
 const windowSessions = ref([])
 const systemEvents = ref([])
 const mediaSessions = ref([])
@@ -288,7 +290,7 @@ const selectedProcessColor = ref('var(--primary-color)')
 const focusedProcess = ref('')
 const focusedDisplayName = computed(() => {
   const match = [...timeline.value, ...windowSessions.value].find(item =>
-    item.processName?.toLocaleLowerCase() === focusedProcess.value.toLocaleLowerCase()
+    item.processName?.toLowerCase() === focusedProcess.value.toLowerCase()
     && item.displayName && item.displayName !== item.processName)
   return match?.displayName || focusedProcess.value
 })
@@ -354,13 +356,14 @@ const targetHasRecords = computed(() => {
   if (!timeSelection.active || !targetInRange.value) return false
   const start = targetStart.value
   const end = targetEnd.value
-  return [...timeline.value, ...windowSessions.value].some(item => {
+  const overlapsTarget = item => {
     const itemStart = parseUtcTs(item.timestamp || item.openTime || item.startTime)?.getTime()
     if (itemStart == null) return false
     const explicitEnd = parseUtcTs(item.closeTime || item.endTime)?.getTime()
     const itemEnd = explicitEnd ?? itemStart + Math.max(0, Number(item.durationSeconds || 0)) * 1000
     return itemEnd > start && itemStart < end
-  })
+  }
+  return timeline.value.some(overlapsTarget) || windowSessions.value.some(overlapsTarget)
 })
 
 // Hover-dim state: while hovering a process, a canvas layer is painted with
@@ -392,6 +395,18 @@ let loadId = 0
 // Cache process colors keyed by `${processName}|${atTime}` so re-renders
 // (e.g. theme toggle, resize) don't re-fetch /api/icons for the same range.
 const colorCache = new Map()
+const COLOR_CACHE_LIMIT = 500
+function getCachedColor(key) {
+  if (!colorCache.has(key)) return null
+  const color = colorCache.get(key)
+  colorCache.delete(key)
+  colorCache.set(key, color)
+  return color
+}
+function setCachedColor(key, color) {
+  colorCache.set(key, color)
+  if (colorCache.size > COLOR_CACHE_LIMIT) colorCache.delete(colorCache.keys().next().value)
+}
 // Remembers the last daily row used by each process across range reloads, so
 // dragging a day-sized view does not reshuffle unchanged applications.
 const stableDailyProcessRows = new Map()
@@ -646,19 +661,19 @@ async function loadProcessRelations(processName) {
 
 async function prepareProcessFocus(processName) {
   const relations = await loadProcessRelations(processName)
-  const exact = processName.toLocaleLowerCase()
+  const exact = processName.toLowerCase()
   const targetInstances = relations.instances?.length
     ? relations.instances.map(instance => ({ ...instance, role: 'target' }))
     : [{ processId: null, name: processName, role: 'target' }]
   // Same-name parents are another instance of the selected executable, not a
   // useful separate "parent" label. They remain counted with the target row.
   const parents = (relations.parents || (relations.parent ? [relations.parent] : []))
-    .filter(parent => parent.name.toLocaleLowerCase() !== exact)
+    .filter(parent => parent.name.toLowerCase() !== exact)
     .map(parent => ({ ...parent, role: 'parent' }))
   const children = (relations.children || []).map(child => ({ ...child, role: 'child' }))
   const seen = new Set()
   focusedProcessEntries.value = [...targetInstances, ...parents, ...children].filter(entry => {
-    const key = entry.processId != null ? `pid:${entry.processId}` : `${entry.role}:${entry.name.toLocaleLowerCase()}`
+    const key = entry.processId != null ? `pid:${entry.processId}` : `${entry.role}:${entry.name.toLowerCase()}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -671,7 +686,7 @@ async function isolateProcess(processName) {
   timelineViewMode.value = 'process'
   const old = focusedProcess.value
   await prepareProcessFocus(processName)
-  const keepNames = new Set(focusedProcessEntries.value.map(entry => entry.name.toLocaleLowerCase()))
+  const keepNames = new Set(focusedProcessEntries.value.map(entry => entry.name.toLowerCase()))
   const oldStartMs = startDate.value.getTime()
   const oldEndMs = endDate.value.getTime()
   const nextSpan = Math.max(TWO_MIN_MS, (oldEndMs - oldStartMs) * .5)
@@ -691,7 +706,7 @@ async function isolateProcess(processName) {
       series: [{}, {}, {
         data: [...backgroundWindowsData, ...focusedWindowsData].map(item => ({
           ...item,
-          itemStyle: { ...item.itemStyle, opacity: keepNames.has((item.processName || item._bgSession?.processName || '').toLocaleLowerCase()) ? 1 : 0.04 },
+          itemStyle: { ...item.itemStyle, opacity: keepNames.has((item.processName || item._bgSession?.processName || '').toLowerCase()) ? 1 : 0.04 },
         })),
       }],
     }, { lazyUpdate: false })
@@ -1015,7 +1030,7 @@ function getSelectableBounds() {
   const earliestRaw = earliestDate.value?.getTime() ?? startDate.value.getTime()
   return {
     earliest: Math.ceil(earliestRaw / 60000) * 60000,
-    latest: Math.floor(latestSelectableTime / 60000) * 60000,
+    latest: Math.floor(Date.now() / 60000) * 60000,
   }
 }
 
@@ -1273,7 +1288,7 @@ async function loadData() {
     const prefetchMs = Math.min(visibleRangeMs, PREFETCH_MAX_MS)
     const earliestMs = earliestDate.value?.getTime() ?? startDate.value.getTime() - prefetchMs
     const queryStart = new Date(Math.max(earliestMs, startDate.value.getTime() - prefetchMs))
-    const queryEnd = new Date(Math.min(latestSelectableTime, endDate.value.getTime() + prefetchMs))
+    const queryEnd = new Date(Math.min(Date.now(), endDate.value.getTime() + prefetchMs))
     const fromStr = toLocalDatetimeString(queryStart)
     const toStr = toLocalDatetimeString(queryEnd)
     console.log('Loading selected range', selectedFromStr, 'to', selectedToStr, 'with timeline buffer', fromStr, 'to', toStr)
@@ -1328,12 +1343,24 @@ async function loadData() {
       mediaUrl ? fetch(mediaUrl, { signal: loadController.signal }) : Promise.resolve(null),
     ])
 
-    // Summary
     if (!r1.ok) throw new Error(`Summary API ${r1.status}`)
-    const res = await r1.json()
-    const rawData = Array.isArray(res) ? res : res.items || []
+    if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
 
-    // Merge by normalized process name to handle inconsistent .exe suffixes
+    // Parse every response into locals first. A stale load must not partially
+    // replace refs before the final generation check below.
+    const [res, timelineRes, nextSystemEvents, nextWindowSessions,
+      nextRelationSessions, nextFilteredSessions, nextMediaSessions] = await Promise.all([
+      r1.json(),
+      r2.json(),
+      r3.ok ? r3.json() : Promise.resolve([]),
+      r4.ok ? r4.json() : Promise.resolve([]),
+      r5?.ok ? r5.json() : Promise.resolve([]),
+      r6?.ok ? r6.json() : Promise.resolve([]),
+      r7?.ok ? r7.json() : Promise.resolve([]),
+    ])
+    if (myLoadId !== loadId) return
+
+    const rawData = Array.isArray(res) ? res : res.items || []
     const mergedData = mergeByProcessName(rawData, (item, acc) => {
       acc.totalSeconds += item.totalSeconds
       acc.switchCount += item.switchCount
@@ -1341,21 +1368,15 @@ async function loadData() {
         acc.adjustedSwitchCount = (acc.adjustedSwitchCount || 0) + item.adjustedSwitchCount
       }
     })
-
-    // Sort after merge — merging can change totalSeconds and disrupt backend order
     mergedData.sort((a, b) => b.totalSeconds - a.totalSeconds)
-    data.value = mergedData
-    totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
 
-    // Timeline for visualization
-    if (!r2.ok) throw new Error(`Timeline API ${r2.status}`)
-    const timelineRes = await r2.json()
     const timelineData = timelineRes.data || timelineRes
-    const timelineTotal = timelineRes.total || timelineData.length
+    const timelineTotal = timelineRes.total ?? timelineData.length
     const sampled = timelineRes.sampled === true
+    const truncated = !sampled && timelineTotal > timelineData.length
     console.log('Timeline API returned', timelineData.length, 'records (total available:', timelineTotal, ')', sampled ? '(server-sampled)' : '')
 
-    if (!sampled && timelineTotal > timelineData.length) {
+    if (truncated) {
       console.warn(`⚠️ Timeline data truncated: showing ${timelineData.length} of ${timelineTotal} records`)
     }
 
@@ -1373,35 +1394,24 @@ async function loadData() {
       console.log(`📊 Systematic sampling: ${sampledData.length} records from ${timelineData.length} (every ${step}th point)`)
     }
 
+    // Commit one coherent generation after all parsing and transformation.
+    data.value = mergedData
+    totalSleepSeconds.value = Array.isArray(res) ? 0 : res.totalSleepSeconds || 0
     timeline.value = sampledData
+    timelineMeta.value = {
+      sampled: sampled || timelineData.length > MAX_POINTS,
+      truncated,
+    }
+    systemEvents.value = nextSystemEvents
+    windowSessions.value = nextWindowSessions
+    relationProcessSessions.value = nextRelationSessions
+    filteredProcessSessions.value = nextFilteredSessions
+    mediaSessions.value = nextMediaSessions
     console.log('✅ timeline.value set to:', timeline.value.length, 'records')
-
-    // System events (sleep/shutdown/idle periods)
-    if (r3.ok) {
-      systemEvents.value = await r3.json()
-      console.log('System events:', systemEvents.value.length, 'events')
-    } else {
-      systemEvents.value = []
-    }
-
-    // Window sessions (for background running apps)
-    if (r4.ok) {
-      windowSessions.value = await r4.json()
-      console.log('Window sessions:', windowSessions.value.length)
-    } else {
-      windowSessions.value = []
-    }
-
-    relationProcessSessions.value = r5?.ok ? await r5.json() : []
-    filteredProcessSessions.value = r6?.ok ? await r6.json() : []
-    mediaSessions.value = r7?.ok ? await r7.json() : []
+    console.log('System events:', systemEvents.value.length, 'events')
+    console.log('Window sessions:', windowSessions.value.length)
 
     loading.value = false
-    // Only render if no newer loadData() call has started
-    if (myLoadId !== loadId) {
-      console.log(`Stale loadData call #${myLoadId} — current is #${loadId}, skipping render`)
-      return
-    }
     await nextTick()
     await renderTimeline(myLoadId)
     if (myLoadId === loadId) initialRenderReady.value = true
@@ -1535,25 +1545,6 @@ function buildAllBarsPx() {
   barGeometryDirty = false
 }
 
-// Merge overlapping/touching [x0, x1] intervals into disjoint ones.
-function mergeIntervals(ints) {
-  if (ints.length === 0) return []
-  ints.sort((a, b) => a[0] - b[0])
-  const out = []
-  let cur = ints[0]
-  for (let i = 1; i < ints.length; i++) {
-    const iv = ints[i]
-    if (iv[0] <= cur[1]) {
-      if (iv[1] > cur[1]) cur[1] = iv[1]
-    } else {
-      out.push(cur)
-      cur = iv
-    }
-  }
-  out.push(cur)
-  return out
-}
-
 // Paint the dim layer: background-color rectangles over every bar except the
 // hovered process's. Clearing it (no hover) restores the full-color chart.
 // Runs on hover transitions only, never per mousemove. Intervals are unioned
@@ -1588,13 +1579,13 @@ function paintDimmer() {
       if (bar.focused) focusedInts.push(iv)
       else bgInts.push(iv)
     }
-    const focused = mergeIntervals(focusedInts)
+    const focused = mergePixelIntervals(focusedInts)
     // Focused bars: barH-tall band centered on the row.
     const y = row.centerY - row.barH / 2
     for (const [x0, x1] of focused) ctx.fillRect(x0, y, x1 - x0, row.barH)
     // Background lines: 1px at the center, clipped out of the focused band so
     // the crossing region is painted only once.
-    for (const [b0, b1] of mergeIntervals(bgInts)) {
+    for (const [b0, b1] of mergePixelIntervals(bgInts)) {
       let start = b0
       for (const [f0, f1] of focused) {
         if (f1 <= start) continue
@@ -1606,20 +1597,6 @@ function paintDimmer() {
       if (start < b1) ctx.fillRect(start, row.centerY, b1 - start, 1)
     }
   }
-}
-
-// Append alpha to a CSS color string (#rgb/#rrggbb/rgb(...)/rgba(...)).
-function withAlpha(color, alpha) {
-  if (!color) return `rgba(128, 128, 128, ${alpha})`
-  const m = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
-  if (m) {
-    const hex = m[1].length === 3 ? m[1].split('').map(c => c + c).join('') : m[1]
-    const n = parseInt(hex, 16)
-    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
-  }
-  const rgb = color.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
-  if (rgb) return `rgba(${rgb[1]}, ${rgb[2]}, ${rgb[3]}, ${alpha})`
-  return `rgba(128, 128, 128, ${alpha})`
 }
 
 async function renderTimeline(myLoadId) {
@@ -1791,7 +1768,7 @@ async function renderTimeline(myLoadId) {
       ? focusedProcessEntries.value
       : [{ name: focusedProcess.value, processId: null, role: 'target' }]
     for (const entry of entries) {
-      const actualName = parsedSource.find(item => item.processName.toLocaleLowerCase() === entry.name.toLocaleLowerCase())?.processName
+      const actualName = parsedSource.find(item => item.processName.toLowerCase() === entry.name.toLowerCase())?.processName
         || entry.name
       const row = isolatedRows.length
       if (!globalProcessRow.has(actualName)) globalProcessRow.set(actualName, row)
@@ -1920,7 +1897,7 @@ async function renderTimeline(myLoadId) {
   const atTime = startDate.value.toISOString()
   const colorPromises = allProcessNames.map(async (processName) => {
     const cacheKey = `${processName}|${atTime}`
-    const cached = colorCache.get(cacheKey)
+    const cached = getCachedColor(cacheKey)
     if (cached) return cached
     try {
       const signal = activeLoadController?.signal ?? lifetimeController.signal
@@ -1928,14 +1905,14 @@ async function renderTimeline(myLoadId) {
       if (response.ok) {
         const iconData = await response.json()
         const color = iconData.colorPrimary || '#6B7FD7'
-        colorCache.set(cacheKey, color)
+        setCachedColor(cacheKey, color)
         return color
       }
     } catch (e) {
       if (e.name === 'AbortError') return '#6B7FD7'
       console.warn(`Failed to fetch color for ${processName}:`, e)
     }
-    colorCache.set(cacheKey, '#6B7FD7')
+    setCachedColor(cacheKey, '#6B7FD7')
     return '#6B7FD7'
   })
 
@@ -1994,30 +1971,32 @@ async function renderTimeline(myLoadId) {
   const IDLE_GAP_MS = 2 * 60 * 1000  // 2 minutes
   const MIN_IDLE_MS = 10 * 1000       // ignore sub-10s idle fragments
 
-  const fullSorted = parsedSource
-    .map(item => ({ start: item._ts, end: item._end }))
-    .filter(item => !isDuringSleep(item.start))
-    .sort((a, b) => a.start - b.start)
-
   const gapIdleAreas = []
-  if (fullSorted.length > 1) {
-    for (let i = 1; i < fullSorted.length; i++) {
-      const gap = fullSorted[i].start - fullSorted[i - 1].end
-      if (gap >= IDLE_GAP_MS) {
-        const idleStart = fullSorted[i - 1].end
-        const idleEnd = fullSorted[i].start
-        if (idleEnd - idleStart >= MIN_IDLE_MS && idleEnd > xAxisMin && idleStart < xAxisMax) {
-          gapIdleAreas.push({
-            value: [Math.max(idleStart, xAxisMin), Math.min(idleEnd, xAxisMax), 0],
-            durationMs: idleEnd - idleStart,
-            areaType: 'idle',
-          })
-        }
-      }
-    }
+  const canInferIdleGaps = !timelineMeta.value.sampled
+    && !timelineMeta.value.truncated
+    && backendIdleAreas.length === 0
+  const fullSorted = canInferIdleGaps
+    ? parsedSource
+        .map(item => ({ start: item._ts, end: item._end }))
+        .filter(item => !isDuringSleep(item.start))
+        .sort((a, b) => a.start - b.start || a.end - b.end)
+    : []
+
+  for (const gap of inferIdleGaps(fullSorted, {
+    minimumGapMs: IDLE_GAP_MS,
+    rangeStart: xAxisMin,
+    rangeEnd: xAxisMax,
+  })) {
+    if (gap.end - gap.start < MIN_IDLE_MS) continue
+    gapIdleAreas.push({
+      value: [gap.start, gap.end, 0],
+      durationMs: gap.end - gap.start,
+      areaType: 'idle',
+    })
   }
 
-  console.log('Idle areas from gaps (fallback):', gapIdleAreas.length)
+  console.log('Idle areas from gaps (fallback):', gapIdleAreas.length,
+    canInferIdleGaps ? '' : '(disabled for explicit or incomplete idle data)')
 
   // Merge both sources: backend events + gap fallback for old data without Idle events
   let idleAreas = [...backendIdleAreas, ...gapIdleAreas]
@@ -2658,30 +2637,30 @@ async function renderTimeline(myLoadId) {
 
         if (data._mediaSession) {
           const media = data._mediaSession
-          return `<div style="font-weight:600;margin-bottom:4px;color:${tooltipText};">${media.title || media.appName}</div>
-                  <div style="font-size:.9em;">${media.artist || media.appName || ''}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;color:${tooltipText};">${escapeHtml(media.title || media.appName)}</div>
+                  <div style="font-size:.9em;">${escapeHtml(media.artist || media.appName || '')}</div>
                   <div style="margin-top:4px;color:var(--primary-color);">${toLocalTime(media.startTime)} · ${fmtShortDur(data.durationSeconds)}</div>`
         }
 
         if (data._processSession) {
           const session = data._processSession
-          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${session.displayName || session.processName} #${session.processId}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${escapeHtml(session.displayName || session.processName)} #${session.processId}</div>
                   <div style="color:var(--surface-500);">${toLocalTime(session.startTime)} — ${session.endTime ? toLocalTime(session.endTime) : t('history.status.now')}</div>`
         }
 
         if (data._bgSession) {
           const s = data._bgSession
           const status = s.closeTime ? t('history.status.closed') : t('history.status.running')
-          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${s.displayName || s.processName}</div>
-                  <div style="font-size:0.9em;">${s.windowTitle}</div>
+          return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${escapeHtml(s.displayName || s.processName)}</div>
+                  <div style="font-size:0.9em;">${escapeHtml(s.windowTitle)}</div>
                   <div style="margin-top:4px;color:var(--surface-500);">
                     ${toLocalTime(s.openTime)} - ${s.closeTime ? toLocalTime(s.closeTime) : t('history.status.now')}
                   </div>
-                  <div style="font-size:0.85em;color:var(--surface-400);">${t('history.status.background')} · ${status}</div>`
+                  <div style="font-size:0.85em;color:var(--surface-400);">${escapeHtml(t('history.status.background'))} · ${escapeHtml(status)}</div>`
         }
 
-        return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${data.displayName || data.processName}</div>
-                <div style="font-size:0.9em;">${data.windowTitle}</div>
+        return `<div style="font-weight:600;margin-bottom:4px;font-family:'Ubuntu Mono';color:${tooltipText};-webkit-text-stroke:.3px ${tooltipBg};paint-order:stroke fill;">${escapeHtml(data.displayName || data.processName)}</div>
+                <div style="font-size:0.9em;">${escapeHtml(data.windowTitle)}</div>
                 <div style="margin-top:4px;color:var(--primary-color);">
                   ${toLocalTime(data.timestamp)} · ${fmtShortDur(data.durationSeconds)}
                 </div>`
@@ -2760,437 +2739,4 @@ function renderBar(params, api) {
 }
 </script>
 
-<style lang="scss" scoped>
-.history-page {
-  width: 100%;
-}
-
-.error-banner {
-  padding: 12px 16px;
-  background: var(--danger-color);
-  color: white;
-  border: 2px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-}
-
-.close-btn {
-  background: transparent;
-  border: none;
-  color: white;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0 8px;
-}
-
-.focus-banner {
-  min-height: 48px;
-  padding: 9px 12px;
-  border: 2px solid var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 9%, var(--surface-card));
-  color: var(--text-color);
-  display: flex;
-  align-items: center;
-  gap: 9px;
-
-  span { flex: 1; }
-  b { font-family: 'Ubuntu Mono', monospace; color: var(--primary-color); }
-  button { min-height: 32px; padding: 5px 8px; border: 2px solid var(--surface-200); background: var(--surface-card); color: var(--text-color); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-}
-
-.timeline-card {
-  min-height: 200px;
-  border: 3px solid color-mix(in srgb, var(--text-color) 80%, transparent) !important;
-  box-shadow: 0 0 0 transparent;
-  transition: transform 0.12s ease-out, box-shadow 0.15s ease-out;
-
-  &:hover,
-  &.context-hover-locked {
-    border-color: var(--text-color);
-    transform: translate(-2px, -2px);
-    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
-  }
-}
-
-.easter-egg-chart {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-  border: 2px dashed var(--danger-color, #E76F51);
-  background: var(--surface-ground, #f8f9fa);
-  animation: eggFadeIn 0.4s ease-out;
-}
-
-.easter-egg-chart-text {
-  font-size: 1.6rem;
-  font-weight: 700;
-  color: var(--danger-color, #E76F51);
-  text-align: center;
-  padding: 32px;
-  animation: eggPulse 2s ease-in-out infinite;
-}
-
-@keyframes eggFadeIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes eggPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.6; }
-}
-
-.card-title {
-  font-size: 1.1rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  margin-bottom: 16px;
-  color: var(--text-color);
-
-  small { margin-left: 9px; color: var(--text-color-secondary); font-size: .7rem; font-weight: 400; letter-spacing: 0; }
-}
-
-.first-use-hint {
-  display: inline-block;
-  padding: 3px 7px;
-  border: 1px solid var(--primary-color);
-  color: var(--primary-color) !important;
-  animation: hintArrive 420ms cubic-bezier(.2,.8,.2,1);
-}
-
-@keyframes hintArrive {
-  from { opacity: 0; transform: translateX(-5px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-// Positioned wrapper: the overlay layers are siblings of the chart container
-// (echarts.init() clears the container's children), absolute within this box,
-// sharing the chart's origin so convertToPixel coords map directly.
-.timeline-chart-wrap {
-  position: relative;
-  margin-bottom: 16px;
-  transform-origin: var(--range-motion-origin, 50% 50%);
-  will-change: transform, opacity;
-  cursor: grab;
-  user-select: none;
-
-  &.is-dragging {
-    cursor: grabbing;
-
-    .hover-dimmer {
-      opacity: 0;
-    }
-  }
-
-  &.range-retreating {
-    animation: rangeRetreat 0.24s cubic-bezier(0.22, 0.78, 0.28, 1);
-  }
-
-  &.range-zooming-in {
-    animation: mapZoomIn 0.18s cubic-bezier(0.2, 0.75, 0.25, 1);
-  }
-
-  &.range-zooming-out {
-    animation: mapZoomOut 0.18s cubic-bezier(0.2, 0.75, 0.25, 1);
-  }
-}
-
-@keyframes rangeRetreat {
-  0% { transform: scaleX(1); opacity: 1; }
-  42% { transform: scaleX(0.965); opacity: 0.72; }
-  100% { transform: scaleX(1); opacity: 1; }
-}
-
-@keyframes mapZoomIn {
-  from { transform: scaleX(0.985); }
-  to { transform: scaleX(1); }
-}
-
-@keyframes mapZoomOut {
-  from { transform: scaleX(1.015); }
-  to { transform: scaleX(1); }
-}
-
-.timeline-chart {
-  width: 100%;
-  height: 440px;
-  background: var(--surface-card);
-}
-
-// Hover overlay: a pointer-events: none canvas so the chart canvas keeps
-// receiving mouse events. Painted by paintDimmer() — background-color rects
-// over every bar except the hovered process's. Shares the wrapper's
-// coordinate space (inset: 0), so convertToPixel coords map directly.
-.hover-dimmer {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  pointer-events: none;
-  z-index: 5;
-  transition: opacity 0.25s ease;
-
-  &.visible {
-    opacity: 1;
-  }
-}
-
-.timeline-loading {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 6;
-  width: 28%;
-  height: 3px;
-  pointer-events: none;
-  background: var(--primary-color);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface-card) 65%, transparent);
-  animation: timelineLoading 0.85s ease-in-out infinite alternate;
-}
-
-.time-selection-layer {
-  position: absolute;
-  z-index: 8;
-  inset: 20px 40px 46px var(--timeline-plot-left, 20px);
-  overflow: hidden;
-  pointer-events: auto;
-  cursor: crosshair;
-  touch-action: none;
-}
-
-.selection-mask {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  background: color-mix(in srgb, var(--surface-ground) 72%, transparent);
-  backdrop-filter: grayscale(1);
-  pointer-events: none;
-}
-.mask-left { left: 0; }
-
-.target-range {
-  position: absolute;
-  z-index: 2;
-  top: 6%;
-  bottom: 6%;
-  border: 3px dashed var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
-  pointer-events: auto;
-  cursor: grab;
-  transition: left 160ms ease, width 160ms ease;
-
-  span { position: absolute; top: 5px; left: 6px; padding: 2px 5px; background: var(--accent-color); color: var(--surface-card); font-size: .68rem; font-weight: 700; pointer-events: none; }
-}
-
-.repair-preview-slice {
-  position: absolute;
-  z-index: 1;
-  left: var(--repair-source-left);
-  top: 0;
-  bottom: 0;
-  min-width: 2px;
-  overflow: hidden;
-  pointer-events: none;
-  border: 2px solid color-mix(in srgb, var(--accent-color) 82%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-card) 66%, transparent);
-
-  canvas { width: 100%; height: 100%; opacity: .72; display: block; }
-  &.moving {
-    left: var(--repair-target-left);
-    transition: left 2.2s cubic-bezier(.36,.02,.18,1);
-  }
-  &.settled { left: var(--repair-target-left); }
-}
-
-.selected-range {
-  position: absolute;
-  z-index: 4;
-  top: 0;
-  bottom: 0;
-  min-width: 8px;
-  border: 3px solid var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
-  cursor: grab;
-
-  > span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--primary-color); color: white; padding: 4px 7px; font-size: .72rem; font-weight: 700; white-space: nowrap; }
-}
-
-.time-selection-layer.repair-animating {
-  cursor: wait;
-
-  .selection-handle,
-  .selected-range,
-  .target-range { pointer-events: none; }
-}
-
-.selection-handle {
-  position: absolute;
-  z-index: 2;
-  top: 50%;
-  width: 44px;
-  height: 72px;
-  transform: translateY(-50%);
-  border: 3px solid var(--primary-color);
-  background: var(--surface-card);
-  color: var(--primary-color);
-  display: grid;
-  place-items: center;
-  cursor: ew-resize;
-}
-.selection-handle.left { left: -22px; }
-.selection-handle.right { right: -22px; }
-
-.time-correction-panel {
-  margin-top: 14px;
-  padding: 16px;
-  border: 2px solid var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 6%, var(--surface-card));
-  color: var(--text-color);
-  display: grid;
-  gap: 14px;
-
-  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-  header span { color: var(--text-color-secondary); font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; }
-  h4 { margin-top: 3px; font-size: 1rem; }
-  header button { min-height: 34px; padding: 5px 8px; border: 2px solid var(--surface-200); background: var(--surface-card); color: var(--text-color); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
-  > p { color: var(--text-color-secondary); font-size: .86rem; line-height: 1.45; }
-}
-
-.time-correction-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
-.time-correction-summary div { min-width: 0; padding: 10px; border-left: 4px solid var(--primary-color); background: var(--surface-card); display: grid; gap: 4px; }
-.time-correction-summary div:nth-child(2) { border-left-color: var(--accent-color); }
-.time-correction-summary .offset-summary { border-left-color: var(--secondary-color); }
-.time-correction-summary span { color: var(--text-color-secondary); font-size: .72rem; }
-.time-correction-summary b { font: 600 .78rem/1.4 'Ubuntu Mono', monospace; overflow-wrap: anywhere; }
-.shift-controls { display: flex; gap: 7px; align-items: end; flex-wrap: wrap; }
-.shift-controls label { display: grid; gap: 5px; margin-right: 4px; }
-.shift-controls label span { color: var(--text-color-secondary); font-size: .75rem; }
-.shift-controls input { width: 120px; min-height: 38px; padding: 6px 8px; border: 2px solid var(--surface-200); background: var(--surface-card); color: var(--text-color); }
-.shift-controls button { min-height: 38px; padding: 6px 9px; border: 2px solid var(--surface-200); background: var(--surface-card); color: var(--text-color); cursor: pointer; }
-.shift-controls button:hover { border-color: var(--primary-color); }
-.time-preview-result { padding: 10px; border-left: 4px solid var(--accent-color); background: var(--surface-card); }
-.time-target-warning { padding: 9px 10px; border: 2px solid var(--warning-color); background: color-mix(in srgb, var(--warning-color) 10%, var(--surface-card)); color: var(--text-color); font-size: .82rem; font-weight: 700; }
-.preview-button, .apply-time-button { min-height: 42px; padding: 8px 12px; border: 2px solid var(--primary-color); background: var(--primary-color); color: white; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
-.preview-button:disabled { opacity: .45; cursor: not-allowed; }
-.apply-time-button { border-color: var(--success-color); background: var(--success-color); }
-
-@keyframes timelineLoading {
-  from { transform: translateX(0); }
-  to { transform: translateX(257%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .timeline-chart-wrap.range-retreating,
-  .timeline-chart-wrap.range-zooming-in,
-  .timeline-chart-wrap.range-zooming-out,
-  .timeline-loading {
-    animation: none;
-  }
-  .repair-preview-slice.moving { transition-duration: .01ms; }
-}
-
-.timeline-legend {
-  display: flex;
-  gap: 24px;
-  justify-content: center;
-  padding: 12px 0;
-  border-top: 2px solid var(--surface-200);
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--text-color);
-}
-
-.legend-box {
-  width: 24px;
-  height: 12px;
-
-  &.focus {
-    background: var(--primary-color);
-  }
-
-  &.visible {
-    background: var(--accent-color);
-    height: 2px;
-    opacity: 0.6;
-  }
-
-  &.idle {
-    background: transparent;
-    border: 2px solid var(--secondary-color);
-    opacity: 0.7;
-  }
-
-  &.offline {
-    background: transparent;
-    border: 2px dashed var(--secondary-color);
-    opacity: 0.7;
-  }
-}
-
-:deep(.time-range-picker .wheel-frame:not(.frameless)) {
-  border-color: color-mix(in srgb, var(--text-color) 80%, transparent);
-  box-shadow: 0 0 0 transparent;
-  transition:
-    transform 0.12s ease-out,
-    box-shadow 0.12s ease-out,
-    border-color 0.2s 5s;
-
-  &:hover {
-    border-color: var(--text-color);
-    transform: translate(-2px, -2px);
-    box-shadow: 5px 5px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
-    transition:
-      transform 0.12s ease-out,
-      box-shadow 0.12s ease-out,
-      border-color 0s 0s;
-  }
-
-  &.scrolling {
-    border-color: var(--text-color);
-    box-shadow: 4px 4px 0 color-mix(in srgb, var(--primary-color) 80%, transparent);
-    transition:
-      transform 0.12s ease-out,
-      box-shadow 0.12s ease-out,
-      border-color 0s 0s;
-  }
-}
-
-.timeline-view-controls {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--surface-200);
-}
-
-.timeline-view-controls select,
-.timeline-filter-input {
-  min-height: 36px;
-  padding: 6px 9px;
-  border: 2px solid var(--surface-200);
-  background: var(--surface-card);
-  color: var(--text-color);
-  font: 600 .82rem 'Ubuntu Mono', monospace;
-}
-.timeline-view-controls select:focus,
-.timeline-filter-input:focus { outline: none; border-color: var(--primary-color); }
-.timeline-filter-input { width: min(360px, 52vw); }
-
-@media (max-width: 700px) {
-  .timeline-legend { gap: 10px; flex-wrap: wrap; }
-  .time-correction-summary { grid-template-columns: 1fr; }
-  .selection-handle { width: 36px; height: 82px; }
-  .focus-banner { align-items: flex-start; flex-wrap: wrap; }
-}
-
-</style>
+<style lang="scss" scoped src="../styles/views/history.scss"></style>

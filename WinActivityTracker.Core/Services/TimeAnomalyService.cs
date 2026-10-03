@@ -14,6 +14,14 @@ namespace WinActivityTracker.Core.Services;
 /// </summary>
 public class TimeAnomalyService : BackgroundService
 {
+    private static readonly string[] ActiveStatuses =
+    [
+        TimeAnomalyStatus.Confirmed,
+        TimeAnomalyStatus.Pending,
+        TimeAnomalyStatus.Suspicious,
+        TimeAnomalyStatus.Drift
+    ];
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SettingsService _settings;
     private readonly NtpSyncService _ntp;
@@ -58,12 +66,27 @@ public class TimeAnomalyService : BackgroundService
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var since = await GetLastKnownTimeAsync(db);
-            var changes = _logReader.GetChangesSince(since);
+            // First retire legacy rows that the current classifier would never
+            // create. If active EventLog rows remain, read far enough back to
+            // recover their original Reason/ProcessName and reconcile system or
+            // VM-resume clock synchronization records already in the database.
+            await ReconcileLegacyEventLogRowsAsync([], db);
+            var earliestActive = await db.TimeAnomalies.AsNoTracking()
+                .Where(a => a.Source == TimeAnomalySources.EventLog
+                    && ActiveStatuses.Contains(a.Status))
+                .MinAsync(a => (DateTime?)a.DetectedAt);
+            var reconciliationSince = earliestActive is { } oldest && oldest < since
+                ? oldest.AddMinutes(-1)
+                : since;
+            var changes = _logReader.GetChangesSince(reconciliationSince);
+            await ReconcileLegacyEventLogRowsAsync(changes, db);
             // A time reference queried now cannot prove whether an old, offline
             // event-log change was a correction or an intentional clock change.
             // Keep backfilled events Pending for explicit review. Only the live
             // watcher pairs an event with a fresh reference result.
-            await IngestEventLogChanges(changes, ntp: null, db);
+            await IngestEventLogChanges(
+                changes.Where(c => c.OccurredAt.ToUniversalTime() >= since).ToList(),
+                ntp: null, db);
         }
         catch (Exception ex) { _logger.LogError(ex, "Startup event-log back-query failed"); }
 
@@ -82,6 +105,12 @@ public class TimeAnomalyService : BackgroundService
         // 立即修复数据；单条失败不中断（ApplyAllAutoAsync 内部逐条 try/catch）。
         try { await ApplyAllAutoAsync(startupNtp is { Succeeded: true } ? startupNtp : null); }
         catch (Exception ex) { _logger.LogError(ex, "Startup auto-apply failed"); }
+
+        // The same real clock change is commonly reported first by EventLog and
+        // a few seconds later by Heartbeat. Once the Heartbeat repair is already
+        // applied, its EventLog twin is no longer an independent active problem.
+        try { await ReconcileAppliedHeartbeatDuplicatesAsync(); }
+        catch (Exception ex) { _logger.LogError(ex, "Applied heartbeat duplicate reconciliation failed"); }
 
         await Task.Delay(Timeout.Infinite, stoppingToken);
     }
@@ -124,6 +153,14 @@ public class TimeAnomalyService : BackgroundService
     {
         foreach (var c in changes)
         {
+            if (c.IsNonActionableForActivityRepair)
+            {
+                _logger.LogInformation(
+                    "Ignoring non-actionable system time synchronization: reason {Reason}, process {Process}, offset {Offset}s",
+                    c.Reason, c.ProcessName, (c.NewTime - c.OldTime).TotalSeconds);
+                continue;
+            }
+
             var delta = (c.NewTime - c.OldTime).TotalSeconds;
             // Kernel-General event 1 also records routine sub-second/seconds
             // synchronizations. The same user setting that guards heartbeat
@@ -187,6 +224,65 @@ public class TimeAnomalyService : BackgroundService
             await db.SaveChangesAsync();
             if (status == TimeAnomalyStatus.Confirmed) NotifySafe(anomaly);
         }
+    }
+
+    /// <summary>
+    /// Retires active rows created by older builds for routine small clock
+    /// adjustments, hardware-clock synchronization, timezone changes, or a VM
+    /// guest-tools resume synchronization. Applied rows are deliberately left
+    /// untouched: reversing timestamp journals is a separate explicit recovery
+    /// operation and must never happen during startup.
+    /// </summary>
+    public async Task<int> ReconcileLegacyEventLogRowsAsync(
+        IReadOnlyList<SystemTimeChange> changes, AppDbContext db)
+    {
+        var resolvedIds = new List<long>();
+        var threshold = _settings.Settings.TimeAnomalyThresholdSeconds;
+
+        var belowThreshold = await db.TimeAnomalies.AsNoTracking()
+            .Where(a => a.Source == TimeAnomalySources.EventLog
+                && ActiveStatuses.Contains(a.Status)
+                && Math.Abs(a.OffsetSeconds) < threshold)
+            .Select(a => a.Id)
+            .ToListAsync();
+        if (belowThreshold.Count > 0)
+        {
+            await db.TimeAnomalies
+                .Where(a => belowThreshold.Contains(a.Id)
+                    && ActiveStatuses.Contains(a.Status))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, TimeAnomalyStatus.Resolved)
+                    .SetProperty(a => a.Direction, (string?)null)
+                    .SetProperty(a => a.Note,
+                        $"偏移低于当前异常阈值 {threshold:F0}s，已解除"));
+            resolvedIds.AddRange(belowThreshold);
+        }
+
+        foreach (var change in changes.Where(c => c.IsNonActionableForActivityRepair))
+        {
+            var occurredAt = change.OccurredAt.ToUniversalTime();
+            var matchingIds = await db.TimeAnomalies.AsNoTracking()
+                .Where(a => a.Source == TimeAnomalySources.EventLog
+                    && ActiveStatuses.Contains(a.Status)
+                    && a.OldTime == change.OldTime
+                    && a.NewTime == change.NewTime
+                    && a.DetectedAt == occurredAt)
+                .Select(a => a.Id)
+                .ToListAsync();
+            if (matchingIds.Count == 0) continue;
+
+            await db.TimeAnomalies
+                .Where(a => matchingIds.Contains(a.Id)
+                    && ActiveStatuses.Contains(a.Status))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, TimeAnomalyStatus.Resolved)
+                    .SetProperty(a => a.Direction, (string?)null)
+                    .SetProperty(a => a.Note, change.NonActionableDescription));
+            resolvedIds.AddRange(matchingIds);
+        }
+
+        foreach (var id in resolvedIds.Distinct()) CancelReminderSafe(id);
+        return resolvedIds.Distinct().Count();
     }
 
     /// <summary>
@@ -328,12 +424,68 @@ public class TimeAnomalyService : BackgroundService
         return null;
     }
 
-    public List<TimeAnomaly> GetAnomalies(int limit)
+    public List<TimeAnomaly> GetAnomalies(int limit, string? scope = null)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        return db.TimeAnomalies.AsNoTracking()
+        using var serviceScope = _scopeFactory.CreateScope();
+        var db = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var query = FilterAnomalyScope(db.TimeAnomalies.AsNoTracking(), scope);
+        return query
             .OrderByDescending(a => a.DetectedAt).Take(limit).ToList();
+    }
+
+    public int CountAnomalies(string? scope = null)
+    {
+        using var serviceScope = _scopeFactory.CreateScope();
+        var db = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        return FilterAnomalyScope(db.TimeAnomalies.AsNoTracking(), scope).Count();
+    }
+
+    private static IQueryable<TimeAnomaly> FilterAnomalyScope(
+        IQueryable<TimeAnomaly> query, string? scope) => scope?.ToLowerInvariant() switch
+    {
+        "active" => query.Where(a => ActiveStatuses.Contains(a.Status)),
+        "archived" => query.Where(a => !ActiveStatuses.Contains(a.Status)),
+        _ => query
+    };
+
+    public async Task<int> ReconcileAppliedHeartbeatDuplicatesAsync()
+    {
+        using var serviceScope = _scopeFactory.CreateScope();
+        var db = serviceScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var eventRows = await db.TimeAnomalies.AsNoTracking()
+            .Where(a => a.Source == TimeAnomalySources.EventLog
+                && ActiveStatuses.Contains(a.Status)
+                && a.Direction != null)
+            .ToListAsync();
+        if (eventRows.Count == 0) return 0;
+
+        var appliedHeartbeats = await db.TimeAnomalies.AsNoTracking()
+            .Where(a => a.Source == TimeAnomalySources.Heartbeat
+                && a.Status == TimeAnomalyStatus.Applied
+                && a.Direction != null)
+            .ToListAsync();
+        var resolved = 0;
+        foreach (var eventRow in eventRows)
+        {
+            var duplicate = appliedHeartbeats.FirstOrDefault(heartbeat =>
+                string.Equals(eventRow.Direction, heartbeat.Direction, StringComparison.OrdinalIgnoreCase)
+                && Math.Abs((eventRow.DetectedAt - heartbeat.DetectedAt).TotalMinutes) <= 2
+                && Math.Abs(eventRow.OffsetSeconds - heartbeat.OffsetSeconds) <= 1);
+            if (duplicate == null) continue;
+
+            var affected = await db.TimeAnomalies
+                .Where(a => a.Id == eventRow.Id && ActiveStatuses.Contains(a.Status))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(a => a.Status, TimeAnomalyStatus.Ignored)
+                    .SetProperty(a => a.Note,
+                        $"与已应用的 Heartbeat 异常 #{duplicate.Id} 为同一次时钟变化，未重复处理"));
+            if (affected == 1)
+            {
+                resolved++;
+                CancelReminderSafe(eventRow.Id);
+            }
+        }
+        return resolved;
     }
 
     public TimeAnomaly? Get(long id)
@@ -414,7 +566,9 @@ public class TimeAnomalyService : BackgroundService
         TimeAnomaly yAnomaly, PlanInfo y) =>
         !string.Equals(xAnomaly.Source, yAnomaly.Source, StringComparison.Ordinal)
         && Math.Abs((xAnomaly.DetectedAt - yAnomaly.DetectedAt).TotalMinutes) <= 2
-        && Math.Abs(x.Shift - y.Shift) < 0.001
+        // EventLog and Heartbeat observe the same change at slightly different
+        // instants; sub-second scheduling jitter must not defeat deduplication.
+        && Math.Abs(x.Shift - y.Shift) <= 1
         && (x.From ?? DateTime.MinValue) < (y.To ?? DateTime.MaxValue)
         && (y.From ?? DateTime.MinValue) < (x.To ?? DateTime.MaxValue);
 

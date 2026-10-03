@@ -8,6 +8,7 @@ namespace WinActivityTracker.Service.Api;
 
 public static class TagEndpoints
 {
+    private static readonly SemaphoreSlim _saveGate = new(1, 1);
     private static readonly JsonSerializerOptions _saveOptions = new()
     {
         WriteIndented = true,
@@ -35,15 +36,13 @@ public static class TagEndpoints
             {
                 rules = tagService.GetRules(),
                 error = tagService.ConfigError,
-                lastWrite = File.Exists(tagsPath)
-                    ? File.GetLastWriteTimeUtc(tagsPath).ToString("o") : null
+                lastWrite = ConfigWritePrecondition.GetLastWrite(tagsPath)
             },
             titleRules = new
             {
                 rules = titleNormalizer.GetRules(),
                 error = titleNormalizer.ConfigError,
-                lastWrite = File.Exists(titleRulesPath)
-                    ? File.GetLastWriteTimeUtc(titleRulesPath).ToString("o") : null
+                lastWrite = ConfigWritePrecondition.GetLastWrite(titleRulesPath)
             }
         });
     }
@@ -54,7 +53,7 @@ public static class TagEndpoints
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 
-    private static async Task SaveTagRules(HttpRequest request, HttpResponse response)
+    private static async Task<IResult> SaveTagRules(HttpRequest request, AppPaths appPaths)
     {
         try
         {
@@ -63,11 +62,7 @@ public static class TagEndpoints
             var rules = JsonSerializer.Deserialize<List<TagService.TagRule>>(body, _readOptions);
 
             if (rules == null || rules.Count == 0)
-            {
-                response.StatusCode = 400;
-                await response.WriteAsJsonAsync(new { error = "Rule list is empty." });
-                return;
-            }
+                return Results.BadRequest(new { error = "Rule list is empty." });
 
             // "__hidden" and "__idle" are special internal tags and must survive the save.
             var skipped = rules
@@ -78,45 +73,41 @@ public static class TagEndpoints
                 .ToList();
 
             if (rules.Count == 0)
-            {
-                response.StatusCode = 400;
-                await response.WriteAsJsonAsync(new { error = I18nService._("tags.allSkippedPrefix") });
-                return;
-            }
+                return Results.BadRequest(new { error = I18nService._("tags.allSkippedPrefix") });
 
-            var appPaths = request.HttpContext.RequestServices.GetRequiredService<AppPaths>();
             var path = Path.Combine(appPaths.ConfigDir, "tags.json");
-
             var json = JsonSerializer.Serialize(rules, _saveOptions);
-            var tmp = path + ".tmp";
-            await File.WriteAllTextAsync(tmp, json);
-            File.Move(tmp, path, overwrite: true);
+            await _saveGate.WaitAsync(request.HttpContext.RequestAborted);
+            try
+            {
+                if (ConfigWritePrecondition.Validate(request, path) is { } conflict)
+                    return conflict;
+                var tmp = path + ".tmp";
+                await File.WriteAllTextAsync(tmp, json, request.HttpContext.RequestAborted);
+                File.Move(tmp, path, overwrite: true);
+            }
+            finally { _saveGate.Release(); }
 
             if (skipped.Count > 0)
             {
-                response.StatusCode = 200;
-                await response.WriteAsJsonAsync(new
+                return Results.Ok(new
                 {
                     saved = rules.Count,
                     skipped = skipped.Count,
                     skippedTags = skipped.Select(s => s.Tag).ToList(),
                     message = I18nService._("tags.rulesSaved") + " (" + I18nService._("tags.skippedPrefixCount", skipped.Count) + ")"
                 });
-                return;
             }
 
-            response.StatusCode = 200;
-            await response.WriteAsJsonAsync(new { saved = rules.Count, message = I18nService._("tags.rulesSaved") });
+            return Results.Ok(new { saved = rules.Count, message = I18nService._("tags.rulesSaved") });
         }
         catch (JsonException ex)
         {
-            response.StatusCode = 400;
-            await response.WriteAsJsonAsync(new { error = I18nService._("tags.jsonError", ex.Message) });
+            return Results.BadRequest(new { error = I18nService._("tags.jsonError", ex.Message) });
         }
         catch (Exception ex)
         {
-            response.StatusCode = 500;
-            await response.WriteAsJsonAsync(new { error = I18nService._("error.saveFailed", ex.Message) });
+            return Results.Problem(I18nService._("error.saveFailed", ex.Message));
         }
     }
 }

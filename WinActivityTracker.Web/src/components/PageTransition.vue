@@ -53,7 +53,7 @@ const props = defineProps({
 
 const route = useRoute()
 const { pageTransition } = useTheme()
-const routeOrder = ['/', '/history', '/tags', '/settings']
+const routeOrder = ['/', '/history', '/settings']
 const isForward = ref(true)
 const geometryLayers = shallowRef([{ key: props.routeKey, component: props.component, current: true }])
 const displayedRouteKey = ref(props.routeKey)

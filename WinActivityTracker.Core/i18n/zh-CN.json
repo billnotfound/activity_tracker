@@ -14,6 +14,7 @@
   "common.duration": "时长",
 
   "error.saveFailed": "保存失败: {0}",
+  "error.configWriteConflict": "配置在读取后已被其他操作修改，请核对最新规则后再次保存。",
   "error.configParseFailed": "{0} 解析失败: {1}。已沿用旧配置。",
 
   "time.seconds": "{0}秒",

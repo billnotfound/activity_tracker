@@ -217,6 +217,7 @@ import RegexBuilder from './RegexBuilder.vue'
 import { useI18n } from '../i18n/index.js'
 import { fmtShortDur, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
 import { escapeRegex } from '../utils/tagRules.js'
+import { configWriteHeaders, ensureConfigWriteSucceeded } from '../utils/configVersion.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -294,7 +295,7 @@ const repairAnomaly = computed(() => {
 })
 const hasAnomalies = computed(() => !!repairAnomaly.value)
 const visibleParents = computed(() => (relations.value.parents || (relations.value.parent ? [relations.value.parent] : []))
-  .filter(parent => parent.name.toLocaleLowerCase() !== processName.value.toLocaleLowerCase()))
+  .filter(parent => parent.name.toLowerCase() !== processName.value.toLowerCase()))
 const rangeStart = computed(() => props.rangeStart || new Date(Date.now() - 24 * 60 * 60 * 1000))
 const rangeEnd = computed(() => props.rangeEnd || new Date())
 const rangeSummary = computed(() => `${rangeStart.value.toLocaleString()} — ${rangeEnd.value.toLocaleString()}`)
@@ -444,7 +445,7 @@ async function saveTitleRule() {
     // The server stores one title rule per process. Replace that exact process
     // entry case-insensitively while leaving every unrelated rule untouched.
     const kept = (status.titleRules?.rules || []).filter(rule =>
-      String(rule.process || '').toLocaleLowerCase() !== processName.value.toLocaleLowerCase())
+      String(rule.process || '').toLowerCase() !== processName.value.toLowerCase())
     kept.push({
       process: processName.value,
       title: null,
@@ -455,9 +456,9 @@ async function saveTitleRule() {
       applyOnWrite: false,
     })
     const r = await fetch(`${apiBase}/api/title-rules/save`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(kept),
+      method: 'PUT', headers: configWriteHeaders(status.titleRules?.lastWrite), body: JSON.stringify(kept),
     })
-    if (!r.ok) throw new Error(`API ${r.status}`)
+    await ensureConfigWriteSucceeded(r)
     showMessage(t('processActions.saved'))
     emit('changed', 'title')
     if (!props.returnToPopup) view.value = 'menu'
@@ -472,7 +473,7 @@ async function saveReplacement() {
   try {
     const status = await getConfig()
     const kept = (status.titleRules?.rules || []).filter(rule =>
-      String(rule.process || '').toLocaleLowerCase() !== processName.value.toLocaleLowerCase())
+      String(rule.process || '').toLowerCase() !== processName.value.toLowerCase())
     kept.push({
       process: processName.value,
       title: canonicalTitle.value.trim(),
@@ -481,9 +482,9 @@ async function saveReplacement() {
       applyOnWrite: false,
     })
     const r = await fetch(`${apiBase}/api/title-rules/save`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(kept),
+      method: 'PUT', headers: configWriteHeaders(status.titleRules?.lastWrite), body: JSON.stringify(kept),
     })
-    if (!r.ok) throw new Error(`API ${r.status}`)
+    await ensureConfigWriteSucceeded(r)
     showMessage(t('processActions.saved'))
     emit('changed', 'title')
     if (!props.returnToPopup) view.value = 'menu'
@@ -508,13 +509,13 @@ async function saveTags() {
       }))
     const rules = (status.tags?.rules || []).filter(rule => !nextRules.some(next =>
       next.tag === rule.tag
-      && String(rule.process || '').toLocaleLowerCase() === processName.value.toLocaleLowerCase()
+      && String(rule.process || '').toLowerCase() === processName.value.toLowerCase()
       && String(rule.titlePattern || '') === String(next.titlePattern || '')))
     rules.push(...nextRules)
     const r = await fetch(`${apiBase}/api/tags/save`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules),
+      method: 'PUT', headers: configWriteHeaders(status.tags?.lastWrite), body: JSON.stringify(rules),
     })
-    if (!r.ok) throw new Error(`API ${r.status}`)
+    await ensureConfigWriteSucceeded(r)
     showMessage(t('processActions.saved'))
     emit('changed', 'tags')
     if (!props.returnToPopup) view.value = 'menu'
@@ -530,13 +531,13 @@ async function hideProcess() {
     const status = await getConfig()
     const rules = [...(status.tags?.rules || [])]
     const exists = rules.some(rule => rule.tag === '__hidden'
-      && String(rule.process || '').toLocaleLowerCase() === processName.value.toLocaleLowerCase()
+      && String(rule.process || '').toLowerCase() === processName.value.toLowerCase()
       && !rule.titlePattern)
     if (!exists) rules.push({ tag: '__hidden', process: processName.value, titlePattern: null, weight: 100, mode: 'Overwrite' })
     const r = await fetch(`${apiBase}/api/tags/save`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules),
+      method: 'PUT', headers: configWriteHeaders(status.tags?.lastWrite), body: JSON.stringify(rules),
     })
-    if (!r.ok) throw new Error(`API ${r.status}`)
+    await ensureConfigWriteSucceeded(r)
     emit('changed', 'hidden')
     close()
   } catch (e) {

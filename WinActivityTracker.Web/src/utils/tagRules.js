@@ -9,7 +9,7 @@ export function exactTagTitlePattern(page, rawWindowTitle, displayWindowTitle = 
 }
 
 export function isExactTagTarget(rule, processName, titlePattern) {
-  if (String(rule?.process || '').toLocaleLowerCase() !== String(processName || '').toLocaleLowerCase())
+  if (String(rule?.process || '').toLowerCase() !== String(processName || '').toLowerCase())
     return false
   const actual = String(rule?.titlePattern || '').trim()
   return titlePattern == null ? actual === '' : actual === titlePattern

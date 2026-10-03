@@ -1,0 +1,18 @@
+export const thirdPartyResources = [
+  { name: 'Vue.js', license: 'MIT', url: 'https://vuejs.org/' },
+  { name: 'Vue Router', license: 'MIT', url: 'https://router.vuejs.org/' },
+  { name: 'Vite', license: 'MIT', url: 'https://vite.dev/' },
+  { name: 'PrimeVue', license: 'MIT', url: 'https://primevue.org/' },
+  { name: 'PrimeIcons', license: 'MIT', url: 'https://primevue.org/icons/' },
+  { name: 'Apache ECharts', license: 'Apache-2.0', url: 'https://echarts.apache.org/' },
+  { name: 'Lucide', license: 'ISC', url: 'https://lucide.dev/' },
+  { name: 'Sass', license: 'MIT', url: 'https://sass-lang.com/' },
+  { name: '.NET / ASP.NET Core', license: 'MIT', url: 'https://dotnet.microsoft.com/' },
+  { name: 'Entity Framework Core', license: 'MIT', url: 'https://learn.microsoft.com/ef/core/' },
+  { name: 'Windows Services Hosting', license: 'MIT', url: 'https://www.nuget.org/packages/Microsoft.Extensions.Hosting.WindowsServices' },
+  { name: 'SQLite', license: 'Public Domain', url: 'https://sqlite.org/' },
+  { name: 'SQLitePCLRaw', license: 'MIT', url: 'https://github.com/ericsink/SQLitePCL.raw' },
+  { name: 'CommunityToolkit Notifications', license: 'MIT', url: 'https://github.com/CommunityToolkit/Labs-Windows' },
+  { name: 'Ubuntu Font Family', license: 'Ubuntu Font Licence 1.0', url: 'https://design.ubuntu.com/font' },
+  { name: 'NSIS', license: 'zlib/libpng', url: 'https://nsis.sourceforge.io/' },
+]

@@ -243,6 +243,7 @@
 <script setup>
 import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '../i18n/index.js'
+import { configWriteHeaders } from '../utils/configVersion.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -280,18 +281,30 @@ const modes = [
 const newCount = computed(() => rules.value.filter(r => !r._saved && r.tag).length)
 
 let timer = null
+let pollingGeneration = 0
+let loadGeneration = 0
+let loadController = null
+
+async function pollRules(generation) {
+  await loadRules()
+  if (generation !== pollingGeneration || document.hidden) return
+  timer = setTimeout(() => pollRules(generation), 2000)
+}
 
 function startPolling() {
   stopPolling()
-  loadRules()
-  timer = setInterval(loadRules, 2000)
+  const generation = ++pollingGeneration
+  pollRules(generation)
 }
 
 function stopPolling() {
+  pollingGeneration++
   if (timer) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
+  loadController?.abort()
+  loadController = null
 }
 
 function handleVisibility() {
@@ -322,10 +335,15 @@ function markDirty(row) {
 }
 
 async function loadRules() {
+  const generation = ++loadGeneration
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
   try {
-    const r = await fetch(`${apiBase}/api/tags/status`)
+    const r = await fetch(`${apiBase}/api/tags/status`, { signal: controller.signal })
     if (!r.ok) return
     const data = await r.json()
+    if (generation !== loadGeneration) return
 
     // ---- tags.json ----
     const tagsWrite = data.tags?.lastWrite || ''
@@ -363,7 +381,9 @@ async function loadRules() {
       titleRules.value = [...serverTitleRules, ...unsavedTitle]
     }
   } catch (e) {
-    console.error('loadRules:', e)
+    if (e.name !== 'AbortError') console.error('loadRules:', e)
+  } finally {
+    if (loadController === controller) loadController = null
   }
 }
 
@@ -423,7 +443,7 @@ async function saveRules() {
       }))
     const r = await fetch(`${apiBase}/api/tags/save`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: configWriteHeaders(lastTagsWrite.value),
       body: JSON.stringify(body),
     })
     if (r.ok) {
@@ -459,7 +479,7 @@ async function saveTitleRules() {
       }))
     const r = await fetch(`${apiBase}/api/title-rules/save`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: configWriteHeaders(lastTitleWrite.value),
       body: JSON.stringify(body),
     })
     if (r.ok) {

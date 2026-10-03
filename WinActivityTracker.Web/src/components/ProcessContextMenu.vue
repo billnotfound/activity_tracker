@@ -15,6 +15,7 @@
                   <ArrowRight v-else key="submit" :size="18" />
                 </Transition>
               </button>
+              <small v-if="inlineError" class="inline-error">{{ inlineError }}</small>
             </form>
             <div v-else-if="inlineAction === 'tags'" key="tags" class="tag-quick-picker">
               <div class="tag-chip-list" :aria-busy="tagLoading">
@@ -45,6 +46,7 @@
                   </Transition>
                 </button>
               </div>
+              <small v-if="inlineError" class="inline-error">{{ inlineError }}</small>
             </div>
             <div v-else key="items" class="context-items">
               <button
@@ -74,6 +76,7 @@ import { ArrowRight, CaseUpper, Check, Clock3, EyeOff, Focus, ListTree, LoaderCi
 import { useI18n } from '../i18n/index.js'
 import { exactTagTitlePattern, isExactTagTarget } from '../utils/tagRules.js'
 import { useFloatingMenuDismiss } from '../composables/useFloatingMenuDismiss.js'
+import { configWriteHeaders, ensureConfigWriteSucceeded } from '../utils/configVersion.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -97,6 +100,8 @@ const selectedTags = ref([])
 const tagState = ref('idle')
 const tagLoading = ref(false)
 const tagRules = ref([])
+const tagRulesLastWrite = ref('')
+const inlineError = ref('')
 const processHasTagRule = ref(false)
 const existingExactTags = ref([])
 
@@ -149,6 +154,7 @@ async function choose(action) {
   close()
 }
 async function openReplacementEditor() {
+  inlineError.value = ''
   inlineAction.value = 'replace'
   replacement.value = ''
   replaceState.value = 'loading'
@@ -157,7 +163,7 @@ async function openReplacementEditor() {
     if (response.ok) {
       const status = await response.json()
       const processRules = (status.titleRules?.rules || []).filter(rule =>
-        String(rule.process || '').toLocaleLowerCase() === props.processName.toLocaleLowerCase())
+        String(rule.process || '').toLowerCase() === props.processName.toLowerCase())
       const currentRule = processRules.find(rule => String(rule.title || '').trim())
         || processRules.find(rule => String(rule.titleReplacement || '').trim())
       replacement.value = String(currentRule?.title || currentRule?.titleReplacement || '')
@@ -172,6 +178,7 @@ async function openReplacementEditor() {
   }
 }
 async function openTagPicker() {
+  inlineError.value = ''
   inlineAction.value = 'tags'
   selectedTags.value = []
   existingExactTags.value = []
@@ -184,6 +191,7 @@ async function openTagPicker() {
     if (!response.ok) return
     const status = await response.json()
     tagRules.value = status.tags?.rules || []
+    tagRulesLastWrite.value = status.tags?.lastWrite || ''
     availableTags.value = [...new Set(tagRules.value
       .map(rule => rule.tag)
       .filter(tag => tag && !tag.startsWith('_')))].sort((a, b) => a.localeCompare(b))
@@ -191,7 +199,7 @@ async function openTagPicker() {
       rule.tag === tag && isExactTargetRule(rule)))
     selectedTags.value = [...existingExactTags.value]
     processHasTagRule.value = tagRules.value.some(rule =>
-      String(rule.process || '').toLocaleLowerCase() === props.processName.toLocaleLowerCase()
+      String(rule.process || '').toLowerCase() === props.processName.toLowerCase()
       && rule.tag && !rule.tag.startsWith('_'))
   } finally {
     tagLoading.value = false
@@ -234,13 +242,14 @@ async function submitQuickTags() {
       })
     }
     const response = await fetch('/api/tags/save', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rules),
+      method: 'PUT', headers: configWriteHeaders(tagRulesLastWrite.value), body: JSON.stringify(rules),
     })
-    if (!response.ok) throw new Error(`API ${response.status}`)
+    await ensureConfigWriteSucceeded(response)
     tagState.value = 'saved'
     emit('tags-saved')
     setTimeout(close, 520)
-  } catch {
+  } catch (error) {
+    inlineError.value = error.message
     tagState.value = 'idle'
   }
 }
@@ -255,7 +264,8 @@ async function submitReplacement() {
     await props.replaceHandler(replacement.value.trim())
     replaceState.value = 'saved'
     setTimeout(close, 520)
-  } catch {
+  } catch (error) {
+    inlineError.value = error.message
     replaceState.value = 'idle'
   }
 }
@@ -269,6 +279,8 @@ watch(() => props.visible, visible => {
   replaceState.value = 'idle'
   selectedTags.value = []
   existingExactTags.value = []
+  tagRulesLastWrite.value = ''
+  inlineError.value = ''
   tagState.value = 'idle'
 })
 useFloatingMenuDismiss({
@@ -349,6 +361,7 @@ useFloatingMenuDismiss({
 .inline-replace input:focus { outline: 2px solid var(--primary-color); outline-offset: -2px; }
 .inline-replace button { border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
 .inline-replace button:disabled { opacity: .45; cursor: not-allowed; }
+.inline-error { grid-column: 1 / -1; color: var(--danger-color); font-size: .72rem; line-height: 1.25; }
 .tag-quick-picker { display: grid; gap: 6px; animation: inlineReveal 180ms ease both; }
 .tag-chip-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; max-height: 158px; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 4px 3px; }
 .tag-chip { position: relative; min-width: 0; min-height: 30px; padding: 4px 5px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); display: grid; grid-template-columns: 14px minmax(0, 1fr); align-items: center; gap: 2px; cursor: pointer; font-size: .76rem; text-align: left; transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 160ms ease; }

@@ -10,6 +10,7 @@ namespace WinActivityTracker.Service.Api;
 
 public static class MediaEndpoints
 {
+    private static readonly SemaphoreSlim _titleRuleSaveGate = new(1, 1);
     private static readonly JsonSerializerOptions _saveOptions = new()
     {
         WriteIndented = true,
@@ -320,9 +321,16 @@ public static class MediaEndpoints
 
             var path = Path.Combine(appPaths.ConfigDir, "title_rules.json");
             var json = JsonSerializer.Serialize(rules, _saveOptions);
-            var tmp = path + ".tmp";
-            await File.WriteAllTextAsync(tmp, json);
-            File.Move(tmp, path, overwrite: true);
+            await _titleRuleSaveGate.WaitAsync(request.HttpContext.RequestAborted);
+            try
+            {
+                if (ConfigWritePrecondition.Validate(request, path) is { } conflict)
+                    return conflict;
+                var tmp = path + ".tmp";
+                await File.WriteAllTextAsync(tmp, json, request.HttpContext.RequestAborted);
+                File.Move(tmp, path, overwrite: true);
+            }
+            finally { _titleRuleSaveGate.Release(); }
 
             return Results.Ok(new { saved = rules.Count });
         }

@@ -22,23 +22,30 @@ public static class TimeAnomalyEndpoints
         app.MapPost("/api/time-anomalies/manual", ApplyManual);
     }
 
-    private static IResult GetList(TimeAnomalyService svc, NtpSyncService ntp, SettingsService settings, int limit = 50)
-        => Results.Ok(new
+    private static IResult GetList(TimeAnomalyService svc, NtpSyncService ntp,
+        SettingsService settings, int limit = 50, string? scope = null)
+    {
+        var attempt = ntp.LastAttemptResult;
+        return Results.Ok(new
         {
-            items = svc.GetAnomalies(Math.Clamp(limit, 1, 500)),
+            items = svc.GetAnomalies(Math.Clamp(limit, 1, 500), scope),
+            total = svc.CountAnomalies(scope),
+            activeCount = svc.CountAnomalies("active"),
+            archivedCount = svc.CountAnomalies("archived"),
             ntp = new
             {
                 useNtp = settings.Settings.UseNtp,
                 lastQueryAt = ntp.LastQueryAt,
-                succeeded = ntp.LastResult?.Succeeded,
-                offsetSeconds = ntp.LastResult?.OffsetSeconds,
-                latencyMs = ntp.LastResult?.LatencyMs,
-                sourceName = ntp.LastResult?.SourceName,
+                succeeded = attempt?.Succeeded,
+                offsetSeconds = attempt is { Succeeded: true } ? attempt.OffsetSeconds : (double?)null,
+                latencyMs = attempt is { Succeeded: true } ? attempt.LatencyMs : (double?)null,
+                sourceName = attempt?.SourceName,
                 toleranceSeconds = settings.Settings.NtpEpsilonSeconds,
-                withinTolerance = ntp.LastResult is { Succeeded: true }
-                    && Math.Abs(ntp.LastResult.OffsetSeconds) <= settings.Settings.NtpEpsilonSeconds
+                withinTolerance = attempt is { Succeeded: true }
+                    && Math.Abs(attempt.OffsetSeconds) <= settings.Settings.NtpEpsilonSeconds
             }
         });
+    }
 
     private static IResult GetOne(long id, TimeAnomalyService svc)
         => svc.Get(id) is { } anomaly ? Results.Ok(anomaly) : Results.NotFound();
