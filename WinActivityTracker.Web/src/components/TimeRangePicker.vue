@@ -6,6 +6,7 @@
         v-model="durationNum"
         :items="durationNumOptions"
         frameless
+        auto-width
         :disabled="disabled"
         class="duration-value-wheel"
         @carry="(d) => carryDuration(d)"
@@ -54,6 +55,13 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from '../i18n/index.js'
 import TimeWheel from './TimeWheel.vue'
+import {
+  DURATION_UNIT_CAPS,
+  DURATION_UNIT_MINS,
+  DURATION_UNIT_ORDER,
+  durationWheelValue,
+  previousDurationValue,
+} from '../utils/durationWheel.js'
 
 const { t } = useI18n()
 
@@ -146,7 +154,7 @@ const endDateTime = computed(() => {
 
 const durationNum = ref(1)
 const durationUnitWheel = ref('Min')
-const durationUnitOptions = ['Min', 'H', 'D']
+const durationUnitOptions = DURATION_UNIT_ORDER
 
 const unitI18nKeys = {
   Min: 'common.minute',
@@ -156,10 +164,9 @@ const unitI18nKeys = {
 
 const durationUnitLabel = computed(() => t(unitI18nKeys[durationUnitWheel.value] || 'common.minute'))
 
-// Options capped at natural carry thresholds — 60m→1h, 24h→1d.
+// Keep three units of headroom before carrying: 180m→3h, 72h→3d.
 // When the user scrolls past the cap, TimeWheel fires @carry;
 // carryDuration then converts to the next-larger unit.
-const UNIT_CAPS = { Min: 60, H: 24, D: 200 }
 const durationNumOptions = computed(() => {
   const earliest = props.earliestDate ? props.earliestDate.getTime() : 0
   const maxMs = now.value.getTime() - earliest
@@ -170,11 +177,12 @@ const durationNumOptions = computed(() => {
     case 'H':   max = Math.floor(maxMs / 3600000); break
     case 'D':   max = Math.floor(maxMs / 86400000); break
   }
-  const cap = UNIT_CAPS[durationUnitWheel.value] || 200
-  const options = range(1, Math.min(cap, Math.max(1, max)))
-  // External timeline ranges can be exact without being representable by the
-  // natural 60m/24h carry thresholds (for example 90m or 25.5h). Keep that
-  // exact value as an extra wheel stop instead of rounding the range.
+  const cap = DURATION_UNIT_CAPS[durationUnitWheel.value] || 200
+  const min = DURATION_UNIT_MINS[durationUnitWheel.value] || 1
+  const options = range(min, Math.min(cap, Math.max(min, max)))
+  // Keep a synchronized value available when the selectable history window is
+  // shorter than the normal cap. The displayed unit may be a floored summary;
+  // synchronizing it never rewrites the exact external start/end timestamps.
   const current = Number(durationNum.value)
   if (Number.isFinite(current) && current > 0 && !options.includes(current)) {
     options.push(current)
@@ -208,22 +216,12 @@ function syncDurationFromDates() {
   const ms = endDateTime.value.getTime() - startDateTime.value.getTime()
   const absMs = Math.max(0, ms)
   const minutes = Math.max(1, Math.round(absMs / 60000))
+  const wheelValue = durationWheelValue(minutes)
 
   carryGuard = true
   syncingDurationFromDates = true
-  if (minutes % 1440 === 0) {
-    durationUnitWheel.value = 'D'
-    durationNum.value = minutes / 1440
-  } else if (minutes % 60 === 0) {
-    durationUnitWheel.value = 'H'
-    durationNum.value = minutes / 60
-  } else if (minutes <= 1440) {
-    durationUnitWheel.value = 'Min'
-    durationNum.value = minutes
-  } else {
-    durationUnitWheel.value = 'H'
-    durationNum.value = Number((minutes / 60).toFixed(2))
-  }
+  durationUnitWheel.value = wheelValue.unit
+  durationNum.value = wheelValue.value
   nextTick(() => {
     carryGuard = false
     syncingDurationFromDates = false
@@ -310,13 +308,9 @@ function carryDuration(direction) {
     // Carry DOWN to next smaller unit
     carryGuard = true
     lastCarryDelta = -1
-    const currentVal = durationNum.value
-    let converted = currentVal
-    if (durationUnitWheel.value === 'D') converted *= 24
-    else if (durationUnitWheel.value === 'H') converted *= 60
-    durationUnitWheel.value = units[idx - 1]
-    const newOpts = durationNumOptions.value
-    durationNum.value = clamp(converted, 1, newOpts[newOpts.length - 1])
+    const previous = previousDurationValue(durationUnitWheel.value)
+    durationUnitWheel.value = previous.unit
+    durationNum.value = previous.value
     nextTick(() => { carryGuard = false })
   }
 }
@@ -329,12 +323,10 @@ watch(durationNum, (newVal) => {
   if (carryGuard) return
   const units = durationUnitOptions
   const idx = units.indexOf(durationUnitWheel.value)
-  const cap = UNIT_CAPS[durationUnitWheel.value]
+  const cap = DURATION_UNIT_CAPS[durationUnitWheel.value]
 
   if (newVal === cap && idx < units.length - 1) {
     carryDuration(1)
-  } else if (newVal === 1 && idx > 0) {
-    carryDuration(-1)
   }
 }, { flush: 'sync' })
 
@@ -525,6 +517,7 @@ function updateArrowWidth() {
 watch([durationNum, durationUnitWheel], updateArrowWidth, { flush: 'post' })
 
 let nowTimer = null
+let durationResizeObserver = null
 function refreshNow() {
   now.value = new Date()
 }
@@ -536,11 +529,16 @@ onMounted(() => {
   refreshNow()
   nowTimer = setInterval(refreshNow, 60_000)
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  if (typeof ResizeObserver !== 'undefined' && durationEl.value) {
+    durationResizeObserver = new ResizeObserver(updateArrowWidth)
+    durationResizeObserver.observe(durationEl.value)
+  }
   nextTick(updateArrowWidth)
 })
 
 onUnmounted(() => {
   if (nowTimer) clearInterval(nowTimer)
+  durationResizeObserver?.disconnect()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 

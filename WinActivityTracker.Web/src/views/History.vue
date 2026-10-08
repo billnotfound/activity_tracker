@@ -274,6 +274,9 @@ const rangeMotionOrigin = ref('50% 50%')
 const timelineDragging = ref(false)
 let rangeMotionTimer = null
 let rangeLoadTimer = null
+const TIMELINE_WHEEL_DEBOUNCE_MS = 140
+let timelineWheelTimer = null
+let pendingTimelineWheelZoom = null
 let dragState = null
 let dragPreviewFrame = null
 let pendingDragPreview = null
@@ -525,6 +528,8 @@ onUnmounted(() => {
   activeLoadController?.abort()
   if (rangeLoadTimer) clearTimeout(rangeLoadTimer)
   if (rangeMotionTimer) clearTimeout(rangeMotionTimer)
+  if (timelineWheelTimer) clearTimeout(timelineWheelTimer)
+  pendingTimelineWheelZoom = null
   if (dragPreviewFrame) cancelAnimationFrame(dragPreviewFrame)
   if (filterLoadTimer) clearTimeout(filterLoadTimer)
   clearRepairAnimation()
@@ -1204,14 +1209,6 @@ function onTimelineWheel(event) {
   const el = timelineChartRef.value
   if (!chart || chart.isDisposed() || !el || (loading.value && !hasRenderedTimeline.value)) return
 
-  const oldStart = startDate.value.getTime()
-  const oldEnd = endDate.value.getTime()
-  const oldSpan = oldEnd - oldStart
-  if (!(oldSpan > 0)) return
-  hoverSuppressedUntilMove = true
-  hoveredProcess.value = null
-  paintDimmer()
-
   const rect = el.getBoundingClientRect()
   const localX = event.clientX - rect.left
   const plotLeft = focusedProcess.value || timelineViewMode.value !== 'process' ? 220 : 20
@@ -1220,15 +1217,61 @@ function onTimelineWheel(event) {
   // Only a wheel gesture over the actual time plot is interpreted as zoom.
   if (localX < plotLeft || localX > plotRight) return
   event.preventDefault()
-  // Match the chart grid's fixed horizontal insets (left 20 / right 40). This
-  // avoids a layout conversion for every high-resolution wheel event.
+
+  const baseStart = startDate.value.getTime()
+  const baseEnd = endDate.value.getTime()
+  if (!(baseEnd > baseStart)) return
   const plotRatio = Math.max(0, Math.min(1, (localX - plotLeft) / Math.max(1, plotRight - plotLeft)))
   const pointerRatio = Math.max(0, Math.min(1, localX / Math.max(1, rect.width)))
-  const anchor = oldStart + oldSpan * plotRatio
+  const deltaScale = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+    ? 16
+    : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? rect.height : 1
+  const deltaY = event.deltaY * deltaScale
 
-  // Wheel up zooms in; wheel down zooms out. Exponential steps feel stable
-  // with both a notched mouse wheel and a high-resolution trackpad.
-  const factor = event.deltaY < 0 ? 0.8 : 1.25
+  // High-resolution wheels and trackpads emit a burst of tiny events. Keep the
+  // gesture cheap here and apply the accumulated zoom once it settles, instead
+  // of synchronizing the picker and repainting ECharts for every event.
+  if (!pendingTimelineWheelZoom
+    || pendingTimelineWheelZoom.baseStart !== baseStart
+    || pendingTimelineWheelZoom.baseEnd !== baseEnd) {
+    pendingTimelineWheelZoom = {
+      baseStart,
+      baseEnd,
+      deltaY: 0,
+      plotRatio,
+      pointerRatio,
+    }
+  }
+  pendingTimelineWheelZoom.deltaY += deltaY
+  pendingTimelineWheelZoom.plotRatio = plotRatio
+  pendingTimelineWheelZoom.pointerRatio = pointerRatio
+
+  if (timelineWheelTimer) clearTimeout(timelineWheelTimer)
+  timelineWheelTimer = setTimeout(flushTimelineWheelZoom, TIMELINE_WHEEL_DEBOUNCE_MS)
+}
+
+function flushTimelineWheelZoom() {
+  timelineWheelTimer = null
+  const pending = pendingTimelineWheelZoom
+  pendingTimelineWheelZoom = null
+  if (!pending
+    || startDate.value.getTime() !== pending.baseStart
+    || endDate.value.getTime() !== pending.baseEnd) return
+
+  const oldStart = pending.baseStart
+  const oldEnd = pending.baseEnd
+  const oldSpan = oldEnd - oldStart
+  if (!(oldSpan > 0) || pending.deltaY === 0) return
+
+  hoverSuppressedUntilMove = true
+  hoveredProcess.value = null
+  paintDimmer()
+
+  const anchor = oldStart + oldSpan * pending.plotRatio
+  // A conventional 100-pixel wheel notch remains a 0.8/1.25 zoom step, while
+  // fractional trackpad deltas combine into the same continuous scale.
+  const zoomSteps = Math.max(-4, Math.min(4, pending.deltaY / 100))
+  const factor = Math.pow(1.25, zoomSteps)
   const { earliest, latest } = getSelectableBounds()
   const minSpan = 2 * 60 * 1000
   const maxSpan = Math.max(minSpan, latest - earliest)
@@ -1258,7 +1301,7 @@ function onTimelineWheel(event) {
   endDate.value = new Date(newEnd)
   timeRangePickerRef.value?.setRange(startDate.value, endDate.value)
   previewRange(newStart, newEnd)
-  playZoomMotion(pointerRatio, factor < 1)
+  playZoomMotion(pending.pointerRatio, factor < 1)
   scheduleLoadData(220)
 }
 

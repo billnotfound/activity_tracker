@@ -1,6 +1,6 @@
 <template>
   <div class="time-wheel">
-    <div class="wheel-frame" :class="{ wide, scrolling, frameless, disabled: props.disabled }" :data-label="label" ref="frameRef">
+    <div class="wheel-frame" :class="{ wide, scrolling, frameless, 'auto-width': autoWidth, disabled: props.disabled }" :style="frameStyle" :data-label="label" ref="frameRef">
       <div
         class="wheel-track"
         ref="trackRef"
@@ -32,6 +32,7 @@ const props = defineProps({
   suffix: { type: String, default: '' },
   wide: { type: Boolean, default: false },
   frameless: { type: Boolean, default: false },
+  autoWidth: { type: Boolean, default: false },
   label: { type: String, default: '' },
   disabled: { type: Boolean, default: false }
 })
@@ -52,6 +53,10 @@ const ITEM_HEIGHT = 44
 const renderValue = ref(props.modelValue)
 let pendingValue = null
 let rafScheduled = false
+
+const frameStyle = computed(() => props.autoWidth
+  ? { '--wheel-character-count': Math.max(1, String(renderValue.value).length) }
+  : {})
 
 function scheduleRender(val) {
   pendingValue = val
@@ -245,6 +250,12 @@ onUnmounted(() => {
       padding-left: 4px;
       padding-right: 4px;
     }
+  }
+
+  &.frameless.auto-width {
+    width: calc(var(--wheel-character-count) * 1ch + 8px);
+    min-width: calc(1ch + 8px);
+    transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   &.wide {

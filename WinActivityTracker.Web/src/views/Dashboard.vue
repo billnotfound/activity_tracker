@@ -634,8 +634,13 @@ function startPolling() {
 
 function schedulePolling() {
   stopPolling()
-  if (period.value === 'today') {
-    timer = setInterval(loadSummary, 2000)
+  if (period.value === 'today' && pickDate.value === toLocalDateString()) {
+    timer = setInterval(() => {
+      // Keep a live dashboard following the calendar across midnight. A date
+      // selected explicitly with the wheels has no timer and is never reset.
+      if (pickDate.value !== toLocalDateString()) resetDateToToday()
+      else loadSummary()
+    }, 2000)
     return
   }
   const [, to] = periodRange()
@@ -818,10 +823,6 @@ function handleResize() {
 }
 
 async function loadSummary() {
-  if (period.value === 'today' && pickDate.value !== toLocalDateString()) {
-    resetDateToToday()
-    return
-  }
   const myLoadId = ++loadId
   await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
   if (myLoadId !== loadId) return
