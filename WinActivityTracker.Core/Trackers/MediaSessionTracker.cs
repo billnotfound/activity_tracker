@@ -14,6 +14,7 @@ public class MediaSessionTracker : BackgroundService
     private readonly SettingsService _settings;
     private readonly IdleDetector _idleDetector;
     private readonly ILogger<MediaSessionTracker> _logger;
+    private readonly MediaSessionReader _mediaReader;
 
     private bool _hasActiveSession;
     private string _currentAppName = string.Empty;
@@ -35,11 +36,18 @@ public class MediaSessionTracker : BackgroundService
 
     public MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
         IdleDetector idleDetector, ILogger<MediaSessionTracker> logger)
+        : this(scopeFactory, settings, idleDetector, logger, new MediaSessionReader())
+    {
+    }
+
+    internal MediaSessionTracker(IServiceScopeFactory scopeFactory, SettingsService settings,
+        IdleDetector idleDetector, ILogger<MediaSessionTracker> logger, MediaSessionReader mediaReader)
     {
         _scopeFactory = scopeFactory;
         _settings = settings;
         _idleDetector = idleDetector;
         _logger = logger;
+        _mediaReader = mediaReader;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -68,6 +76,7 @@ public class MediaSessionTracker : BackgroundService
                 {
                     if (!_settings.Settings.TrackingEnabled)
                     {
+                        _idleDetector.IsMediaPlaying = false;
                         if (_hasActiveSession)
                             await CloseCurrentSessionAsync(DateTime.UtcNow);
                         _lastPollTime = DateTime.UtcNow;
@@ -115,6 +124,8 @@ public class MediaSessionTracker : BackgroundService
         }
         finally
         {
+            _idleDetector.IsMediaPlaying = false;
+            _mediaReader.Reset();
             try
             {
                 using var shutdownScope = _scopeFactory.CreateScope();
@@ -126,7 +137,7 @@ public class MediaSessionTracker : BackgroundService
         }
     }
 
-    private async Task PollMediaSession()
+    internal async Task PollMediaSession()
     {
         _idleDetector.IsMediaPlaying = false;
 
@@ -137,42 +148,17 @@ public class MediaSessionTracker : BackgroundService
             if (!_hasActiveSession)
                 await SeedCurrentSession();
 
-            var manager = await Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            var session = manager.GetCurrentSession();
+            var result = await _mediaReader.ReadAsync(_settings.Settings.ExcludedProcesses);
+            if (!result.IsAvailable) return;
 
-            if (session == null)
+            if (result.Session == null)
             {
                 if (_hasActiveSession)
                     await CloseCurrentSessionAsync(DateTime.UtcNow);
                 return;
             }
 
-            var appName = session.SourceAppUserModelId ?? string.Empty;
-            if (_settings.Settings.ExcludedProcesses.Contains(appName, StringComparer.OrdinalIgnoreCase))
-            {
-                if (_hasActiveSession)
-                    await CloseCurrentSessionAsync(DateTime.UtcNow);
-                return;
-            }
-
-            var props = await session.TryGetMediaPropertiesAsync();
-            if (props == null)
-            {
-                if (_hasActiveSession)
-                    await CloseCurrentSessionAsync(DateTime.UtcNow);
-                return;
-            }
-
-            var title = props.Title ?? string.Empty;
-            var artist = props.Artist ?? string.Empty;
-            var status = session.GetPlaybackInfo().PlaybackStatus.ToString();
-
-            if (string.IsNullOrEmpty(title))
-            {
-                if (_hasActiveSession)
-                    await CloseCurrentSessionAsync(DateTime.UtcNow);
-                return;
-            }
+            var (appName, title, artist, status) = result.Session;
 
             _idleDetector.IsMediaPlaying = status == "Playing";
 
@@ -192,14 +178,9 @@ public class MediaSessionTracker : BackgroundService
 
             _logger.LogDebug("Media: {Artist} - {Title} [{Status}]", artist, title, status);
         }
-        catch (Exception ex) when (ex is InvalidCastException
-            or System.Runtime.InteropServices.InvalidComObjectException
-            or System.Runtime.InteropServices.COMException
-            or System.Runtime.InteropServices.SEHException
-            or TypeLoadException
-            or FileNotFoundException)
+        catch (Exception ex) when (MediaSessionReader.IsWinRtUnavailable(ex))
         {
-            _logger.LogDebug(ex, "MediaSessionTracker: WinRT not ready, retrying next cycle");
+            _logger.LogDebug(ex, "MediaSessionTracker: WinRT not ready, retrying after backoff");
         }
     }
 

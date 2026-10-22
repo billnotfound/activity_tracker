@@ -1,5 +1,5 @@
 export const DURATION_UNIT_ORDER = ['Min', 'H', 'D']
-export const DURATION_UNIT_CAPS = { Min: 180, H: 72, D: 200 }
+export const DURATION_UNIT_CAPS = { Min: 180, H: 72 }
 export const DURATION_UNIT_MINS = { Min: 1, H: 3, D: 3 }
 
 export function durationWheelValue(totalMinutes) {

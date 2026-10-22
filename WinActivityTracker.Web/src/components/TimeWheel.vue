@@ -24,7 +24,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 
 const props = defineProps({
   modelValue: { type: [Number, String], required: true },
@@ -45,6 +45,9 @@ const dragStartY = ref(0)
 const dragAccum = ref(0)
 const scrolling = ref(false)
 let scrollTimer = null
+let pendingSteps = 0
+let applyingSteps = false
+let disposed = false
 
 const ITEM_HEIGHT = 44
 
@@ -102,6 +105,7 @@ function clampIdx(idx) {
 }
 
 function tryChange(delta) {
+  if (!props.items.length) return
   const idx = props.items.indexOf(props.modelValue)
   const newIdx = clampIdx(idx + delta)
   if (newIdx !== idx) {
@@ -113,15 +117,34 @@ function tryChange(delta) {
   }
 }
 
+async function changeSteps(steps) {
+  pendingSteps += steps
+  if (applyingSteps) return
+  applyingSteps = true
+  try {
+    while (pendingSteps !== 0 && !disposed && !props.disabled) {
+      const direction = Math.sign(pendingSteps)
+      pendingSteps -= direction
+      tryChange(direction)
+      // Parent validation and carry can change both the value and the items.
+      // Read the accepted result before consuming the next drag step.
+      await nextTick()
+    }
+  } finally {
+    pendingSteps = 0
+    applyingSteps = false
+  }
+}
+
 function onWheel(event) {
   if (props.disabled) return
   scrolling.value = true
   if (scrollTimer) clearTimeout(scrollTimer)
   scrollTimer = setTimeout(() => { scrolling.value = false }, 150)
   if (event.deltaY > 0) {
-    tryChange(1)
+    changeSteps(1)
   } else if (event.deltaY < 0) {
-    tryChange(-1)
+    changeSteps(-1)
   }
 }
 
@@ -146,9 +169,7 @@ function onDrag(event) {
   const steps = Math.round(dragAccum.value / DRAG_THRESHOLD)
   if (steps !== 0) {
     dragAccum.value -= steps * DRAG_THRESHOLD
-    for (let i = 0; i < Math.abs(steps); i++) {
-      tryChange(steps > 0 ? 1 : -1)
-    }
+    changeSteps(steps)
   }
 }
 
@@ -176,9 +197,7 @@ function onTouchMove(event) {
   const steps = Math.round(dragAccum.value / DRAG_THRESHOLD)
   if (steps !== 0) {
     dragAccum.value -= steps * DRAG_THRESHOLD
-    for (let i = 0; i < Math.abs(steps); i++) {
-      tryChange(steps > 0 ? 1 : -1)
-    }
+    changeSteps(steps)
   }
 }
 
@@ -188,6 +207,8 @@ function stopTouch() {
 }
 
 onUnmounted(() => {
+  disposed = true
+  pendingSteps = 0
   if (scrollTimer) clearTimeout(scrollTimer)
   document.removeEventListener('mousemove', onDrag)
   document.removeEventListener('mouseup', stopDrag)

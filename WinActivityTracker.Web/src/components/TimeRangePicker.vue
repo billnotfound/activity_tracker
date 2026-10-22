@@ -177,13 +177,18 @@ const durationNumOptions = computed(() => {
     case 'H':   max = Math.floor(maxMs / 3600000); break
     case 'D':   max = Math.floor(maxMs / 86400000); break
   }
-  const cap = DURATION_UNIT_CAPS[durationUnitWheel.value] || 200
+  const cap = DURATION_UNIT_CAPS[durationUnitWheel.value] ?? max
   const min = DURATION_UNIT_MINS[durationUnitWheel.value] || 1
-  const options = range(min, Math.min(cap, Math.max(min, max)))
+  const current = Number(durationNum.value)
+  const upper = Math.min(cap, Math.max(min, max))
+  // Days have no unit above them. Keep neighboring days reachable without
+  // rendering an item for every day in decades of history.
+  const options = durationUnitWheel.value === 'D'
+    ? range(Math.max(min, current - 100), Math.min(upper, current + 100))
+    : range(min, upper)
   // Keep a synchronized value available when the selectable history window is
   // shorter than the normal cap. The displayed unit may be a floored summary;
   // synchronizing it never rewrites the exact external start/end timestamps.
-  const current = Number(durationNum.value)
   if (Number.isFinite(current) && current > 0 && !options.includes(current)) {
     options.push(current)
     options.sort((left, right) => left - right)
@@ -293,6 +298,8 @@ function carryDuration(direction) {
   const idx = units.indexOf(durationUnitWheel.value)
 
   if (direction > 0 && idx < units.length - 1) {
+    // Exhausting available history is not a unit boundary (e.g. only 90m exist).
+    if (durationNum.value < DURATION_UNIT_CAPS[durationUnitWheel.value]) return
     // Carry UP to next larger unit
     carryGuard = true
     lastCarryDelta = 1
@@ -302,7 +309,7 @@ function carryDuration(direction) {
     else if (durationUnitWheel.value === 'H') converted = Math.floor(converted / 24)
     durationUnitWheel.value = units[idx + 1]
     const newOpts = durationNumOptions.value
-    durationNum.value = clamp(converted, 1, newOpts[newOpts.length - 1])
+    durationNum.value = clamp(converted, DURATION_UNIT_MINS[durationUnitWheel.value], newOpts[newOpts.length - 1])
     nextTick(() => { carryGuard = false })
   } else if (direction < 0 && idx > 0) {
     // Carry DOWN to next smaller unit
@@ -315,10 +322,8 @@ function carryDuration(direction) {
   }
 }
 
-// Auto-carry when the value reaches the boundary via normal scrolling.
-// flush: 'sync' is essential — without it, rapid drag fires multiple tryChange()
-// calls before the watcher runs, and each call reads stale props.modelValue
-// (parent hasn't re-rendered), so they all compute the same next value.
+// Normalize a unit boundary synchronously before the duration watcher applies
+// it to the range. TimeWheel waits for that accepted value between drag steps.
 watch(durationNum, (newVal) => {
   if (carryGuard) return
   const units = durationUnitOptions

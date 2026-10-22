@@ -221,7 +221,7 @@ const {
   period, isToday, pickDate, earliestDate,
   wheelYear, wheelMonth, wheelDay,
   yearOptions, monthOptions, dayOptions,
-  carryDate, resetDateToToday, periodButtonsRef,
+  carryDate, resetDateToToday, refreshCalendar, periodButtonsRef,
   frameStyle, frameReady, updateFrame, periodRange,
 } = useDashboardPeriod({ onDateChange: onPickDate })
 const mergeSameProcess = ref(true)
@@ -494,6 +494,7 @@ let tagPieRenderId = 0
 let tagPieDrillLocked = false
 let tagPieDrillTimer = null
 let timer = null
+let calendarTimer = null
 let longRangeBasePayload = null
 let longRangeListenBase = null
 // Race guard: each loadSummary() call increments loadId; stale calls
@@ -628,18 +629,19 @@ async function openOverviewProcessTitles(item) {
 
 function startPolling() {
   stopPolling()
+  if (refreshCalendar()) return
   loadSummary()
   schedulePolling()
 }
 
 function schedulePolling() {
   stopPolling()
+  if (document.hidden) return
   if (period.value === 'today' && pickDate.value === toLocalDateString()) {
     timer = setInterval(() => {
       // Keep a live dashboard following the calendar across midnight. A date
       // selected explicitly with the wheels has no timer and is never reset.
-      if (pickDate.value !== toLocalDateString()) resetDateToToday()
-      else loadSummary()
+      if (!refreshCalendar()) loadSummary()
     }, 2000)
     return
   }
@@ -724,6 +726,9 @@ const usageFmt = computed(() => {
 })
 
 onMounted(async () => {
+  calendarTimer = setInterval(() => {
+    if (!document.hidden) refreshCalendar()
+  }, 60_000)
   try {
     const r = await fetch(`${apiBase}/api/settings`, { signal: abortController.signal })
     if (r.ok) {
@@ -771,6 +776,7 @@ watch(isDark, () => {
 
 onUnmounted(() => {
   stopPolling()
+  clearInterval(calendarTimer)
   focusRenderId++
   clearTimeout(pieDrillTimer)
   clearTimeout(tagPieDrillTimer)
@@ -909,8 +915,18 @@ async function applySummaryPayload(res, myLoadId) {
 
 async function refreshLongRangeTail() {
   if (!longRangeBasePayload || document.hidden) return
-  const myLoadId = ++loadId
+  refreshCalendar()
   const today = toLocalDateString()
+  if (periodRange()[1] !== today) {
+    // The selected endpoint is fixed. Finish yesterday's totals once, then
+    // stop polling instead of combining a new day's tail with the old base.
+    stopPolling()
+    longRangeBasePayload = null
+    longRangeListenBase = null
+    await loadSummary()
+    return
+  }
+  const myLoadId = ++loadId
   try {
     const [summaryResponse, mediaResponse, totalResponse] = await Promise.all([
       fetch(`${apiBase}/api/summary/today?date=${today}`, { signal: abortController.signal }),

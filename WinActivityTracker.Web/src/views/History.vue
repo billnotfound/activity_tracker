@@ -1064,6 +1064,10 @@ function onTimelinePointerDown(event) {
   if (event.button !== 0 && event.button !== 1) return
   if (!hasRenderedTimeline.value || !timelineChart || timelineChart.isDisposed()) return
 
+  // Commit any queued wheel gesture before taking the drag's range snapshot.
+  if (timelineWheelTimer) clearTimeout(timelineWheelTimer)
+  flushTimelineWheelZoom()
+
   event.preventDefault()
   if (rangeMotionTimer) clearTimeout(rangeMotionTimer)
   rangeMotionTimer = null
@@ -1205,6 +1209,10 @@ function focusMediaContext(selected) {
 }
 
 function onTimelineWheel(event) {
+  if (dragState) {
+    event.preventDefault()
+    return
+  }
   const chart = timelineChart
   const el = timelineChartRef.value
   if (!chart || chart.isDisposed() || !el || (loading.value && !hasRenderedTimeline.value)) return

@@ -18,13 +18,14 @@ export function useDashboardPeriod({ onDateChange }) {
   const pickDate = ref(toLocalDateString())
   const earliestDate = ref(null)
   const today = new Date()
+  const calendarNow = ref(today)
   const wheelYear = ref(today.getFullYear())
   const wheelMonth = ref(today.getMonth() + 1)
   const wheelDay = ref(today.getDate())
 
   const yearOptions = computed(() => {
-    const from = earliestDate.value ? earliestDate.value.getFullYear() : new Date().getFullYear() - 5
-    return numberRange(from, new Date().getFullYear())
+    const from = earliestDate.value ? earliestDate.value.getFullYear() : calendarNow.value.getFullYear() - 5
+    return numberRange(from, calendarNow.value.getFullYear())
   })
 
   const monthOptions = computed(() => {
@@ -33,7 +34,7 @@ export function useDashboardPeriod({ onDateChange }) {
     if (earliestDate.value && wheelYear.value === earliestDate.value.getFullYear()) {
       min = earliestDate.value.getMonth() + 1
     }
-    if (wheelYear.value === new Date().getFullYear()) max = new Date().getMonth() + 1
+    if (wheelYear.value === calendarNow.value.getFullYear()) max = calendarNow.value.getMonth() + 1
     return numberRange(min, max)
   })
 
@@ -46,9 +47,9 @@ export function useDashboardPeriod({ onDateChange }) {
       && wheelMonth.value === earliestDate.value.getMonth() + 1) {
       min = earliestDate.value.getDate()
     }
-    if (wheelYear.value === new Date().getFullYear()
-      && wheelMonth.value === new Date().getMonth() + 1) {
-      max = Math.min(maxDay, new Date().getDate())
+    if (wheelYear.value === calendarNow.value.getFullYear()
+      && wheelMonth.value === calendarNow.value.getMonth() + 1) {
+      max = Math.min(maxDay, calendarNow.value.getDate())
     }
     return numberRange(min, max)
   })
@@ -85,9 +86,25 @@ export function useDashboardPeriod({ onDateChange }) {
 
   function resetDateToToday() {
     const now = new Date()
+    calendarNow.value = now
     wheelYear.value = now.getFullYear()
     wheelMonth.value = now.getMonth() + 1
     wheelDay.value = now.getDate()
+  }
+
+  // Only a single-day view that followed the previous calendar date follows
+  // midnight. Explicit historical dates and longer ranges keep their endpoint.
+  function refreshCalendar() {
+    const previousToday = toLocalDateString(calendarNow.value)
+    const now = new Date()
+    const nextToday = toLocalDateString(now)
+    const followToday = period.value === 'today' && pickDate.value === previousToday
+    calendarNow.value = now
+    if (followToday && previousToday !== nextToday) {
+      resetDateToToday()
+      return true // The date watcher will perform the load.
+    }
+    return false
   }
 
   watch(yearOptions, options => {
@@ -170,6 +187,7 @@ export function useDashboardPeriod({ onDateChange }) {
     dayOptions,
     carryDate,
     resetDateToToday,
+    refreshCalendar,
     periodButtonsRef,
     frameStyle,
     frameReady,
