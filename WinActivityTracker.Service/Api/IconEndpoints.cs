@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Drawing;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
@@ -97,14 +96,11 @@ public static class IconEndpoints
             string? exePath = null;
             try
             {
-                var runningProc = Process.GetProcessesByName(
-                    processName.EndsWith(".exe")
-                        ? processName[..^4]
-                        : processName
-                ).FirstOrDefault();
-
-                if (runningProc != null)
-                    exePath = IconService.GetProcessImagePath(runningProc.Id);
+                foreach (var pid in IconService.FindProcessIds(processName))
+                {
+                    exePath = IconService.GetProcessImagePath(pid);
+                    if (!string.IsNullOrEmpty(exePath)) break;
+                }
             }
             catch
             {
@@ -276,13 +272,14 @@ public static class IconEndpoints
         }
     }
 
-    private static async Task<IResult> ClearIconCache(AppDbContext db)
+    private static async Task<IResult> ClearIconCache(AppDbContext db, IconService iconService)
     {
         try
         {
             var count = await db.ProcessIcons.CountAsync();
             db.ProcessIcons.RemoveRange(db.ProcessIcons);
             await db.SaveChangesAsync();
+            await iconService.InvalidateCacheAsync();
             return Results.Ok(new { message = $"Cleared {count} icons from cache" });
         }
         catch (Exception ex)

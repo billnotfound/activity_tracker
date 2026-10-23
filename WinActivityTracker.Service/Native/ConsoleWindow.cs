@@ -13,6 +13,7 @@ public class ConsoleWindow : Form
     private readonly TextBox _output;
     private readonly ConsoleMirror _mirror;
     private readonly Action _onTick;
+    private bool _subscribed;
 
     public ConsoleWindow(ConsoleMirror mirror)
     {
@@ -55,11 +56,23 @@ public class ConsoleWindow : Form
             catch { }
         };
 
-        mirror.Subscribe(_onTick);
+        VisibleChanged += (_, _) => UpdateSubscription();
+        Resize += (_, _) => UpdateSubscription();
+    }
+
+    private void UpdateSubscription()
+    {
+        var shouldSubscribe = !IsDisposed && !Disposing && Visible
+            && WindowState != FormWindowState.Minimized;
+        if (shouldSubscribe == _subscribed) return;
+        _subscribed = shouldSubscribe;
+        if (shouldSubscribe) _mirror.Subscribe(_onTick);
+        else _mirror.Unsubscribe(_onTick);
     }
 
     private void SetText(string text)
     {
+        if (_output.IsDisposed || !Visible || WindowState == FormWindowState.Minimized) return;
         if (_output.Text == text) return; // no change, skip flicker
         var wasAtEnd = _output.SelectionStart >= _output.TextLength - 100;
         _output.Text = text;
@@ -73,7 +86,10 @@ public class ConsoleWindow : Form
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
             _mirror.Unsubscribe(_onTick);
+            _subscribed = false;
+        }
         base.Dispose(disposing);
     }
 }

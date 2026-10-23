@@ -11,7 +11,7 @@ using System.Text;
 
 namespace WinActivityTracker.Service.Native;
 
-public class ConsoleMirror : TextWriter, IDisposable
+public class ConsoleMirror : TextWriter
 {
     private const int MaxChars = 80_000;
     private const int NotifyMs = 200;
@@ -20,41 +20,45 @@ public class ConsoleMirror : TextWriter, IDisposable
     private readonly TextWriter _original;
     private readonly object _lock = new();
     private Action? _listener;
-    private volatile bool _dirty;
+    private bool _dirty;
+    private bool _notificationPending;
+    private bool _disposed;
     private string _cached = string.Empty;
-    private readonly System.Timers.Timer _timer;
+    private readonly ITimer _timer;
 
     public override Encoding Encoding => Encoding.UTF8;
 
-    public ConsoleMirror(TextWriter original)
+    public ConsoleMirror(TextWriter original) : this(original, TimeProvider.System) { }
+
+    internal ConsoleMirror(TextWriter original, TimeProvider timeProvider)
     {
         _original = original;
-        _timer = new System.Timers.Timer(NotifyMs) { AutoReset = false };
-        _timer.Elapsed += (_, _) =>
-        {
-            if (_dirty)
-            {
-                _dirty = false;
-                lock (_lock) { _cached = _buffer.ToString(); }
-                _listener?.Invoke();
-            }
-        };
+        _timer = timeProvider.CreateTimer(_ => NotifyListeners(), null,
+            Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
-    void IDisposable.Dispose()
+    protected override void Dispose(bool disposing)
     {
-        _timer.Stop();
-        _timer.Dispose();
+        if (disposing)
+        {
+            lock (_lock)
+            {
+                _disposed = true;
+                _listener = null;
+                _notificationPending = false;
+            }
+            _timer.Dispose();
+        }
+        base.Dispose(disposing);
     }
 
     public void Subscribe(Action listener)
     {
         lock (_lock)
         {
+            if (_disposed) return;
             _listener += listener;
-            if (_buffer.Length > 0) _cached = _buffer.ToString();
         }
-        _timer.Start();
         listener();
     }
 
@@ -63,14 +67,26 @@ public class ConsoleMirror : TextWriter, IDisposable
         lock (_lock)
         {
             _listener -= listener;
-            if (_listener == null) _timer.Stop();
+            if (_listener == null && !_disposed)
+            {
+                _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                _notificationPending = false;
+            }
         }
     }
 
     // Returns a cached string — avoids allocating on every UI refresh.
     public string GetHistory()
     {
-        lock (_lock) { return _cached; }
+        lock (_lock)
+        {
+            if (_dirty)
+            {
+                _cached = _buffer.ToString();
+                _dirty = false;
+            }
+            return _cached;
+        }
     }
 
     public override void Write(char value) => Append(value);
@@ -85,24 +101,51 @@ public class ConsoleMirror : TextWriter, IDisposable
     {
         lock (_lock)
         {
-            _buffer.Append(value);
-            TrimExcessLocked();
+            if (!_disposed)
+            {
+                _buffer.Append(value);
+                OnAppendedLocked();
+            }
         }
         _original.Write(value);
-        _dirty = true;
-        _timer.Stop(); _timer.Start();
     }
 
     private void Append(string text)
     {
         lock (_lock)
         {
-            _buffer.Append(text);
-            TrimExcessLocked();
+            if (!_disposed)
+            {
+                _buffer.Append(text);
+                OnAppendedLocked();
+            }
         }
         _original.Write(text);
+    }
+
+    private void OnAppendedLocked()
+    {
+        TrimExcessLocked();
         _dirty = true;
-        _timer.Stop(); _timer.Start();
+        // No UI subscriber means no timer wakeup and no history-string copy.
+        // Do not restart an armed timer: continuous logging must still refresh.
+        if (_listener != null && !_notificationPending)
+        {
+            _notificationPending = true;
+            _timer.Change(TimeSpan.FromMilliseconds(NotifyMs), Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void NotifyListeners()
+    {
+        Action? listener;
+        lock (_lock)
+        {
+            if (_disposed || !_notificationPending) return;
+            _notificationPending = false;
+            listener = _listener;
+        }
+        listener?.Invoke();
     }
 
     private void TrimExcessLocked()

@@ -49,7 +49,11 @@ public class DashboardServer
 
             _portWatcher.Stop();
 
-            var builder = WebApplication.CreateSlimBuilder([]);
+            var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions
+            {
+                Args = [],
+                ContentRootPath = AppContext.BaseDirectory
+            });
 
         // Forward Host singletons so API endpoints share the same instances.
         builder.Services.AddSingleton(_services.GetRequiredService<AppPaths>());

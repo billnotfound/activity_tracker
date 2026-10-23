@@ -17,6 +17,7 @@ public class MediaSessionTracker : BackgroundService
     private readonly MediaSessionReader _mediaReader;
 
     private bool _hasActiveSession;
+    private bool _sessionSeeded;
     private string _currentAppName = string.Empty;
     private string _currentTitle = string.Empty;
     private string _currentArtist = string.Empty;
@@ -145,7 +146,7 @@ public class MediaSessionTracker : BackgroundService
         {
             await CheckForWakeEvent();
 
-            if (!_hasActiveSession)
+            if (!_sessionSeeded)
                 await SeedCurrentSession();
 
             var result = await _mediaReader.ReadAsync(_settings.Settings.ExcludedProcesses);
@@ -228,6 +229,7 @@ public class MediaSessionTracker : BackgroundService
 
     private void ResetInMemorySessionState()
     {
+        _sessionSeeded = false;
         _hasActiveSession = false;
         _currentAppName = string.Empty;
         _currentTitle = string.Empty;
@@ -308,6 +310,9 @@ public class MediaSessionTracker : BackgroundService
             await db.SaveChangesAsync();
             _logger.LogDebug("MediaTracker: closed {Count} orphan sessions from previous run", orphans.Count);
         }
+        // A successful empty result is also seeded. Repeating this query while
+        // nothing is playing does no useful work; retry only after a DB failure.
+        _sessionSeeded = true;
     }
 
     /// <summary>

@@ -72,7 +72,11 @@ var dbPath = Environment.GetEnvironmentVariable("WTA_DB_PATH")
     ?? Path.Combine(appPaths.DataDir, "activity.db");
 
 // ===== Host — trackers run as HostedServices, always active =====
-var builder = Host.CreateApplicationBuilder(args);
+var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 

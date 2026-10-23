@@ -11,6 +11,8 @@ namespace WinActivityTracker.Service.Native;
 public partial class StatusWindow : Form
 {
     private readonly System.Windows.Forms.Timer _refreshTimer;
+    private CancellationTokenSource? _refreshCts;
+    private bool _refreshInProgress;
 
     private Label _focusLabel = null!;
     private ListView _topList = null!;
@@ -33,9 +35,41 @@ public partial class StatusWindow : Form
 
         _refreshTimer = new System.Windows.Forms.Timer { Interval = 3000 };
         _refreshTimer.Tick += async (_, _) => await RefreshData(services);
-        _refreshTimer.Start();
+        VisibleChanged += (_, _) => UpdateRefreshState(services);
+        Resize += (_, _) => UpdateRefreshState(services);
+    }
 
+    private bool CanRefresh => !IsDisposed && !Disposing && Visible
+        && WindowState != FormWindowState.Minimized;
+
+    private void UpdateRefreshState(IServiceProvider services)
+    {
+        if (!CanRefresh)
+        {
+            _refreshTimer.Stop();
+            _refreshCts?.Cancel();
+            _refreshCts?.Dispose();
+            _refreshCts = null;
+            return;
+        }
+
+        if (_refreshCts != null) return;
+        _refreshCts = new CancellationTokenSource();
+        _refreshTimer.Start();
         _ = RefreshData(services);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _refreshTimer.Stop();
+            _refreshTimer.Dispose();
+            _refreshCts?.Cancel();
+            _refreshCts?.Dispose();
+            _refreshCts = null;
+        }
+        base.Dispose(disposing);
     }
 
     private void BuildUI(IServiceProvider services)
@@ -141,6 +175,9 @@ public partial class StatusWindow : Form
 
     private async Task RefreshData(IServiceProvider services)
     {
+        if (!CanRefresh || _refreshInProgress || _refreshCts == null) return;
+        _refreshInProgress = true;
+        var cancellationToken = _refreshCts.Token;
         try
         {
             var processCache = services.GetRequiredService<ProcessNameCache>();
@@ -173,7 +210,9 @@ public partial class StatusWindow : Form
                 .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
                     && e.Timestamp >= todayStart && e.Timestamp <= todayEnd)
                 .Select(e => new { e.Timestamp, e.DurationSeconds })
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
+
+            if (!CanRefresh || cancellationToken.IsCancellationRequested) return;
 
             var totalSleepSec = offPeriods.Sum(p => p.DurationSeconds);
             _offLabel.Text = totalSleepSec > 0
@@ -186,7 +225,9 @@ public partial class StatusWindow : Form
                 .Where(f => f.Timestamp >= todayStart && f.Timestamp <= todayEnd)
                 .OrderBy(f => f.Timestamp)
                 .Select(f => new { f.ProcessName, f.WindowTitle, f.DurationSeconds, f.Timestamp })
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
+
+            if (!CanRefresh || cancellationToken.IsCancellationRequested) return;
 
             // Exclude off-period, hidden and idle records
             var filtered = changes
@@ -243,12 +284,15 @@ public partial class StatusWindow : Form
                 ? I18nService._("common.pauseTracking")
                 : I18nService._("common.resumeTracking");
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"StatusWindow refresh error: {ex.Message}");
+            if (!CanRefresh || cancellationToken.IsCancellationRequested) return;
             _statusLabel.Text = I18nService._("statusWindow.noResponse");
             _statusLabel.ForeColor = Color.Red;
         }
+        finally { _refreshInProgress = false; }
     }
 
     private void ToggleTracking(IServiceProvider services)
