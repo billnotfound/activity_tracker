@@ -1,6 +1,5 @@
 // Icon cache service — tracks which processes have icons extracted
 // and triggers extraction for new processes automatically.
-using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -18,12 +17,19 @@ public class IconCacheService : BackgroundService
     private readonly SystemPressure _systemPressure;
 
     // In-memory cache of process names that have icons extracted
-    private readonly ConcurrentDictionary<string, bool> _extractedIcons = new(StringComparer.OrdinalIgnoreCase);
+    internal const int CacheCapacity = 1024;
+    internal const int QueueCapacity = 256;
+    private readonly BoundedCache<bool> _extractedIcons = new(CacheCapacity);
 
     // Queue for pending icon extraction
-    private readonly Channel<string> _extractionQueue = Channel.CreateUnbounded<string>(
-        new UnboundedChannelOptions { SingleReader = true, AllowSynchronousContinuations = false });
-    private readonly ConcurrentDictionary<string, byte> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Channel<string> _extractionQueue = Channel.CreateBounded<string>(
+        new BoundedChannelOptions(QueueCapacity)
+        {
+            SingleReader = true, AllowSynchronousContinuations = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+    private readonly HashSet<string> _pending = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _pendingLock = new();
 
     public IconCacheService(
         ILogger<IconCacheService> logger,
@@ -92,12 +98,16 @@ public class IconCacheService : BackgroundService
     /// </summary>
     public void NotifyProcess(string processName)
     {
-        if (_extractedIcons.ContainsKey(processName)) return;
-        if (!_pending.TryAdd(processName, 0)) return;
-        if (!_extractionQueue.Writer.TryWrite(processName))
+        if (_extractedIcons.TryGetValue(processName, out _)) return;
+        lock (_pendingLock)
         {
-            _pending.TryRemove(processName, out _);
-            return;
+            if (!_pending.Add(processName)) return;
+            if (!_extractionQueue.Writer.TryWrite(processName))
+            {
+                // Optional icon work can be retried on the next notification/scan.
+                _pending.Remove(processName);
+                return;
+            }
         }
         _logger.LogDebug("IconCacheService: queued {Process} for icon extraction", processName);
     }
@@ -106,12 +116,12 @@ public class IconCacheService : BackgroundService
     {
         try
         {
-            var existingIcons = await _iconService.GetAllProcessNamesWithIconsAsync();
-            foreach (var processName in existingIcons)
+            var existingIcons = await _iconService.GetAllProcessNamesWithIconsAsync(CacheCapacity);
+            foreach (var processName in existingIcons.AsEnumerable().Reverse())
             {
-                _extractedIcons.TryAdd(processName, true);
+                _extractedIcons.Set(processName, true);
             }
-            _logger.LogInformation("Loaded {Count} existing icons into cache", _extractedIcons.Count);
+            _logger.LogInformation("Loaded {Count} existing icons into cache", existingIcons.Count);
         }
         catch (Exception ex)
         {
@@ -132,15 +142,16 @@ public class IconCacheService : BackgroundService
             return;
         }
 
-        _logger.LogDebug("Hourly icon re-check for {Count} processes", _extractedIcons.Count);
-        foreach (var (processName, hasIcon) in _extractedIcons)
+        var knownProcesses = _extractedIcons.Snapshot();
+        _logger.LogDebug("Hourly icon re-check for {Count} processes", knownProcesses.Length);
+        foreach (var (processName, hasIcon) in knownProcesses)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var success = await _iconService.ExtractAndSaveIconAsync(processName, forceRefresh: true);
                 // A stopped process does not invalidate an existing stored icon.
-                if (success || !hasIcon) _extractedIcons[processName] = success;
+                if (success || !hasIcon) _extractedIcons.Set(processName, success);
             }
             catch (Exception ex)
             {
@@ -162,7 +173,7 @@ public class IconCacheService : BackgroundService
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (_extractedIcons.ContainsKey(processName))
+                if (_extractedIcons.TryGetValue(processName, out _))
                     continue;
 
                 _logger.LogInformation("Extracting icon for new process: {ProcessName}", processName);
@@ -171,12 +182,12 @@ public class IconCacheService : BackgroundService
 
                 if (success)
                 {
-                    _extractedIcons.TryAdd(processName, true);
+                    _extractedIcons.Set(processName, true);
                     _logger.LogInformation("Successfully extracted icon for {ProcessName}", processName);
                 }
                 else
                 {
-                    _extractedIcons.TryAdd(processName, false);
+                    _extractedIcons.Set(processName, false);
                     _logger.LogWarning("Failed to extract icon for {ProcessName}", processName);
                 }
             }
@@ -184,7 +195,7 @@ public class IconCacheService : BackgroundService
             {
                 _logger.LogError(ex, "Error processing icon extraction for {ProcessName}", processName);
             }
-            finally { _pending.TryRemove(processName, out _); }
+            finally { lock (_pendingLock) _pending.Remove(processName); }
         }
     }
 
@@ -207,9 +218,8 @@ public class IconCacheService : BackgroundService
 
     public (int Total, int WithIcons, int Failed) GetCacheStats()
     {
-        var total = _extractedIcons.Count;
-        var withIcons = _extractedIcons.Count(kvp => kvp.Value);
-        var failed = _extractedIcons.Count(kvp => !kvp.Value);
-        return (total, withIcons, failed);
+        var entries = _extractedIcons.Snapshot();
+        var withIcons = entries.Count(kvp => kvp.Value);
+        return (entries.Length, withIcons, entries.Length - withIcons);
     }
 }

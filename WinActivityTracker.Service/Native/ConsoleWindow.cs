@@ -14,6 +14,7 @@ public class ConsoleWindow : Form
     private readonly ConsoleMirror _mirror;
     private readonly Action _onTick;
     private bool _subscribed;
+    private int _refreshPending;
 
     public ConsoleWindow(ConsoleMirror mirror)
     {
@@ -44,20 +45,31 @@ public class ConsoleWindow : Form
         // timer thread; BeginInvoke marshals to the UI thread.
         _onTick = () =>
         {
-            if (_output.IsDisposed) return;
-            var text = mirror.GetHistory();
+            if (_output.IsDisposed || Interlocked.Exchange(ref _refreshPending, 1) != 0) return;
             try
             {
                 if (_output.InvokeRequired)
-                    _output.BeginInvoke(() => SetText(text));
+                    _output.BeginInvoke(RefreshOutput);
                 else
-                    SetText(text);
+                    RefreshOutput();
             }
-            catch { }
+            catch { Interlocked.Exchange(ref _refreshPending, 0); }
         };
 
         VisibleChanged += (_, _) => UpdateSubscription();
         Resize += (_, _) => UpdateSubscription();
+    }
+
+    private void RefreshOutput()
+    {
+        // A busy UI gets one pending callback, without retaining an 80K snapshot
+        // for every log tick. Read the newest history only when it can be shown.
+        try
+        {
+            if (!IsDisposed && Visible && WindowState != FormWindowState.Minimized)
+                SetText(_mirror.GetHistory());
+        }
+        finally { Interlocked.Exchange(ref _refreshPending, 0); }
     }
 
     private void UpdateSubscription()

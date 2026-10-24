@@ -413,6 +413,7 @@ function setCachedColor(key, color) {
 // Remembers the last daily row used by each process across range reloads, so
 // dragging a day-sized view does not reshuffle unchanged applications.
 const stableDailyProcessRows = new Map()
+const PROCESS_ROW_CACHE_LIMIT = 500
 
 // Handle time change from picker
 function handleTimeChange({ start, end, valid, easterEgg }) {
@@ -434,7 +435,9 @@ function handleTimeChange({ start, end, valid, easterEgg }) {
 }
 
 onMounted(async () => {
+  window.addEventListener('resize', handleResize)
   await loadTagRules()
+  if (lifetimeController.signal.aborted) return
   try {
     const r = await fetch(`${apiBase}/api/settings`, { signal: lifetimeController.signal })
     if (r.ok) {
@@ -442,9 +445,10 @@ onMounted(async () => {
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
     }
   } catch (e) {
-    console.error('Failed to load settings:', e)
+    if (e.name !== 'AbortError') console.error('Failed to load settings:', e)
   }
 
+  if (lifetimeController.signal.aborted) return
   // Fetch oldest record to constrain time picker (async, non-blocking)
   try {
     const r = await fetch(`${apiBase}/api/db/stats`, { signal: lifetimeController.signal })
@@ -466,6 +470,7 @@ onMounted(async () => {
     // Fall back to 3h default on failure
   }
 
+  if (lifetimeController.signal.aborted) return
   const queryStart = route.query.from ? new Date(String(route.query.from)) : null
   const queryEnd = route.query.to ? new Date(String(route.query.to)) : null
   if (queryStart && queryEnd && !Number.isNaN(queryStart.getTime()) && !Number.isNaN(queryEnd.getTime()) && queryEnd > queryStart) {
@@ -478,6 +483,7 @@ onMounted(async () => {
   }
 
   await loadData()
+  if (lifetimeController.signal.aborted) return
   if (route.query.timeSelect === '1') {
     let requestedAnomaly = null
     if (route.query.anomalyId) {
@@ -490,6 +496,7 @@ onMounted(async () => {
         if (error.name !== 'AbortError') console.warn('Failed to load requested time anomaly:', error)
       }
     }
+    if (lifetimeController.signal.aborted) return
     beginTimeSelection({
       processName: route.query.process ? String(route.query.process) : '',
       timeAnomaly: requestedAnomaly,
@@ -497,8 +504,6 @@ onMounted(async () => {
     router.replace({ query: { ...route.query, timeSelect: undefined, anomalyId: undefined } })
   }
 
-  // Add window resize listener for chart responsiveness
-  window.addEventListener('resize', handleResize)
 })
 
 // Watch for theme changes and re-render timeline
@@ -532,6 +537,8 @@ onUnmounted(() => {
   pendingTimelineWheelZoom = null
   if (dragPreviewFrame) cancelAnimationFrame(dragPreviewFrame)
   if (filterLoadTimer) clearTimeout(filterLoadTimer)
+  clearTimeout(resizeTimer)
+  clearTimeout(clearTimer)
   clearRepairAnimation()
   if (repairCaptureFrame) cancelAnimationFrame(repairCaptureFrame)
   disposeTimelineChart()
@@ -1315,6 +1322,7 @@ function flushTimelineWheelZoom() {
 
 
 async function loadData() {
+  if (lifetimeController.signal.aborted) return
   const myLoadId = ++loadId
   activeLoadController?.abort()
   const loadController = new AbortController()
@@ -1857,7 +1865,10 @@ async function renderTimeline(myLoadId) {
       }
 
       for (const [proc, row] of assignment) {
+        rememberedRows.delete(proc)
         rememberedRows.set(proc, row)
+        if (rememberedRows.size > PROCESS_ROW_CACHE_LIMIT)
+          rememberedRows.delete(rememberedRows.keys().next().value)
         allProcs.add(proc)
         rowCount = Math.max(rowCount, row + 1)
       }

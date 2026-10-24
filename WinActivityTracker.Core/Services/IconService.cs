@@ -21,8 +21,9 @@ public class IconService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SystemPressure _systemPressure;
     private readonly ILogger<IconService> _logger;
-    private readonly Dictionary<string, string> _cache = new(StringComparer.OrdinalIgnoreCase); // path → hash
-    private readonly HashSet<string> _mappedPaths = new(StringComparer.OrdinalIgnoreCase);
+    internal const int CacheCapacity = 1024;
+    private readonly BoundedCache<string> _cache = new(CacheCapacity); // path → hash
+    private readonly BoundedCache<bool> _mappedPaths = new(CacheCapacity);
     private readonly SemaphoreSlim _extractionGate = new(1, 1);
     private readonly SemaphoreSlim _scanGate = new(1, 1);
     private readonly Func<int, string?> _getImagePath;
@@ -120,7 +121,7 @@ public class IconService
         await _extractionGate.WaitAsync();
         try
         {
-            if (!forceRefresh && _mappedPaths.Contains(mappingKey)) return true;
+            if (!forceRefresh && _mappedPaths.TryGetValue(mappingKey, out _)) return true;
 
             IconImage? image = null;
             if (forceRefresh || !_cache.TryGetValue(path, out var hash))
@@ -192,8 +193,8 @@ public class IconService
             // Publish the cache entry only after both the icon and mapping commit.
             // A failed write must remain retryable, not leave a permanent pending hit.
             await db.SaveChangesAsync();
-            _cache[path] = hash;
-            _mappedPaths.Add(mappingKey);
+            _cache.Set(path, hash);
+            _mappedPaths.Set(mappingKey, true);
             return true;
         }
         finally { _extractionGate.Release(); }
@@ -273,16 +274,18 @@ public class IconService
     /// Gets all process names that have icons extracted.
     /// Used by IconCacheService to populate the cache on startup.
     /// </summary>
-    public async Task<List<string>> GetAllProcessNamesWithIconsAsync()
+    public async Task<List<string>> GetAllProcessNamesWithIconsAsync(int? limit = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        return await (from mapping in db.ProcessIconMappings
+        var query = (from mapping in db.ProcessIconMappings
             join icon in db.ProcessIcons on mapping.IconHash equals icon.IconHash
-            select mapping.ProcessName)
-            .Distinct()
-            .ToListAsync();
+            select mapping)
+            .GroupBy(mapping => mapping.ProcessName)
+            .OrderByDescending(group => group.Max(mapping => mapping.LastSeen))
+            .Select(group => group.Key);
+        return await (limit.HasValue ? query.Take(limit.Value) : query).ToListAsync();
     }
 
     /// <summary>

@@ -504,6 +504,14 @@ let loadId = 0
 // view is gone (their result writes would be dropped by loadId anyway,
 // but this saves the bandwidth/CPU).
 const abortController = new AbortController()
+let activeSummaryController = null
+let pollingGeneration = 0
+
+function beginSummaryLoad() {
+  activeSummaryController?.abort()
+  activeSummaryController = new AbortController()
+  return AbortSignal.any([abortController.signal, activeSummaryController.signal])
+}
 
 function setPeriod(p) {
   piePageOffset.value = 0
@@ -629,35 +637,48 @@ async function openOverviewProcessTitles(item) {
 
 function startPolling() {
   stopPolling()
-  if (refreshCalendar()) return
-  loadSummary()
-  schedulePolling()
+  if (abortController.signal.aborted || refreshCalendar()) return
+  const generation = pollingGeneration
+  loadSummary().finally(() => {
+    if (generation === pollingGeneration) schedulePolling()
+  })
 }
 
 function schedulePolling() {
   stopPolling()
-  if (document.hidden) return
+  if (document.hidden || abortController.signal.aborted) return
+  const generation = pollingGeneration
   if (period.value === 'today' && pickDate.value === toLocalDateString()) {
-    timer = setInterval(() => {
+    timer = setTimeout(async () => {
       // Keep a live dashboard following the calendar across midnight. A date
       // selected explicitly with the wheels has no timer and is never reset.
-      if (!refreshCalendar()) loadSummary()
+      if (refreshCalendar()) return
+      await loadSummary()
+      if (generation === pollingGeneration) schedulePolling()
     }, 2000)
     return
   }
   const [, to] = periodRange()
-  if (to === toLocalDateString()) timer = setInterval(refreshLongRangeTail, 10000)
+  if (to === toLocalDateString()) timer = setTimeout(async () => {
+    await refreshLongRangeTail()
+    if (generation === pollingGeneration) schedulePolling()
+  }, 10000)
 }
 
 function stopPolling() {
+  pollingGeneration++
   if (timer) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
 }
 
 function handleVisibility() {
-  if (document.hidden) stopPolling()
+  if (document.hidden) {
+    stopPolling()
+    activeSummaryController?.abort()
+    loadId++
+  }
   else startPolling()
 }
 
@@ -726,6 +747,9 @@ const usageFmt = computed(() => {
 })
 
 onMounted(async () => {
+  // Register before the first await so unmount always removes these listeners.
+  window.addEventListener('resize', handleResize)
+  document.addEventListener('visibilitychange', handleVisibility)
   calendarTimer = setInterval(() => {
     if (!document.hidden) refreshCalendar()
   }, 60_000)
@@ -736,14 +760,12 @@ onMounted(async () => {
       mergeSameProcess.value = s.mergeSameProcessSwitches ?? true
     }
   } catch (e) {
-    console.error('Failed to load settings:', e)
+    if (e.name !== 'AbortError') console.error('Failed to load settings:', e)
   }
+  if (abortController.signal.aborted) return
   await loadSummary()
+  if (abortController.signal.aborted) return
   schedulePolling()
-
-  // Add window listeners
-  window.addEventListener('resize', handleResize)
-  document.addEventListener('visibilitychange', handleVisibility)
 
   // Fetch earliest record to constrain date wheels
   try {
@@ -755,11 +777,11 @@ onMounted(async () => {
       }
     }
   } catch (e) {
-    console.error('Failed to fetch DB stats:', e)
+    if (e.name !== 'AbortError') console.error('Failed to fetch DB stats:', e)
   }
 
   // Position the sliding frame on the initially active button
-  updateFrame()
+  if (!abortController.signal.aborted) updateFrame()
 })
 
 // Watch for theme changes and re-render charts
@@ -829,8 +851,10 @@ function handleResize() {
 }
 
 async function loadSummary() {
+  if (abortController.signal.aborted) return
+  const signal = beginSummaryLoad()
   const myLoadId = ++loadId
-  await Promise.all([fetchSummary(myLoadId), fetchMedia(myLoadId)])
+  await Promise.all([fetchSummary(myLoadId, signal), fetchMedia(myLoadId, signal)])
   if (myLoadId !== loadId) return
   if (summary.value) await renderPieChart(summary.value)
   await renderTagPieChart(tagDurations.value)
@@ -914,7 +938,7 @@ async function applySummaryPayload(res, myLoadId) {
 }
 
 async function refreshLongRangeTail() {
-  if (!longRangeBasePayload || document.hidden) return
+  if (!longRangeBasePayload || document.hidden || abortController.signal.aborted) return
   refreshCalendar()
   const today = toLocalDateString()
   if (periodRange()[1] !== today) {
@@ -926,26 +950,32 @@ async function refreshLongRangeTail() {
     await loadSummary()
     return
   }
+  const signal = beginSummaryLoad()
   const myLoadId = ++loadId
   try {
     const [summaryResponse, mediaResponse, totalResponse] = await Promise.all([
-      fetch(`${apiBase}/api/summary/today?date=${today}`, { signal: abortController.signal }),
-      fetch(`${apiBase}/api/media/history?limit=100&from=${today}&to=${today}`, { signal: abortController.signal }),
-      fetch(`${apiBase}/api/media/listen-total?from=${today}&to=${today}`, { signal: abortController.signal }),
+      fetch(`${apiBase}/api/summary/today?date=${today}`, { signal }),
+      fetch(`${apiBase}/api/media/history?limit=100&from=${today}&to=${today}`, { signal }),
+      fetch(`${apiBase}/api/media/listen-total?from=${today}&to=${today}`, { signal }),
     ])
     if (!summaryResponse.ok) throw new Error(`API ${summaryResponse.status}`)
     const tail = await summaryResponse.json()
+    if (myLoadId !== loadId) return
     const combined = combineSummaryPayload(longRangeBasePayload, tail)
     await applySummaryPayload(combined, myLoadId)
     if (myLoadId !== loadId) return
     if (mediaResponse.ok) {
       const latest = await mediaResponse.json()
+      if (myLoadId !== loadId) return
       const merged = new Map(media.value.map(item => [`${item.id || ''}:${item.startTime}`, item]))
       for (const item of latest) merged.set(`${item.id || ''}:${item.startTime}`, item)
-      media.value = [...merged.values()].sort((a, b) => parseUtcTs(a.startTime) - parseUtcTs(b.startTime))
+      // Match the history API's display limit; listen totals use a separate query.
+      media.value = [...merged.values()]
+        .sort((a, b) => parseUtcTs(a.startTime) - parseUtcTs(b.startTime)).slice(-1000)
     }
     if (totalResponse.ok && longRangeListenBase != null) {
       const total = await totalResponse.json()
+      if (myLoadId !== loadId) return
       totalListenSeconds.value = Math.max(0, longRangeListenBase + Number(total.totalSeconds || 0))
     }
     await renderPieChart(summary.value)
@@ -955,21 +985,22 @@ async function refreshLongRangeTail() {
   }
 }
 
-async function fetchSummary(myLoadId) {
+async function fetchSummary(myLoadId, signal) {
   try {
     const [from, to] = periodRange()
     const url =
       period.value === 'today'
         ? `${apiBase}/api/summary/today?date=${pickDate.value}`
         : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
-    const r = await fetch(url, { signal: abortController.signal })
+    const r = await fetch(url, { signal })
     if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
     if (myLoadId !== loadId) return  // stale, newer call in flight
     if (period.value !== 'today' && to === toLocalDateString() && !Array.isArray(res)) {
-      const tailResponse = await fetch(`${apiBase}/api/summary/today?date=${to}`, { signal: abortController.signal })
+      const tailResponse = await fetch(`${apiBase}/api/summary/today?date=${to}`, { signal })
       if (tailResponse.ok) {
         const tail = await tailResponse.json()
+        if (myLoadId !== loadId) return
         longRangeBasePayload = combineSummaryPayload(res, tail, -1)
       }
     } else {
@@ -977,14 +1008,14 @@ async function fetchSummary(myLoadId) {
     }
     await applySummaryPayload(res, myLoadId)
   } catch (e) {
-    if (myLoadId !== loadId) return
+    if (myLoadId !== loadId || e.name === 'AbortError') return
     console.error(e)
     error.value = t('dashboard.error.loadSummaryFailed', { message: e.message })
     loading.value = false
   }
 }
 
-async function fetchMedia(myLoadId) {
+async function fetchMedia(myLoadId, signal) {
   try {
     const [fromDate, toDate] = periodRange()
     const limits = { today: 2000, week: 500, month: 2000, halfYear: 5000, year: 5000 }
@@ -992,10 +1023,10 @@ async function fetchMedia(myLoadId) {
     listenTotalLoading.value = true
     const needsTailBase = period.value !== 'today' && toDate === toLocalDateString()
     const [historyResponse, totalResponse, tailTotalResponse] = await Promise.all([
-      fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal: abortController.signal }),
-      fetch(`${apiBase}/api/media/listen-total?from=${fromDate}&to=${toDate}`, { signal: abortController.signal }),
+      fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal }),
+      fetch(`${apiBase}/api/media/listen-total?from=${fromDate}&to=${toDate}`, { signal }),
       needsTailBase
-        ? fetch(`${apiBase}/api/media/listen-total?from=${toDate}&to=${toDate}`, { signal: abortController.signal })
+        ? fetch(`${apiBase}/api/media/listen-total?from=${toDate}&to=${toDate}`, { signal })
         : Promise.resolve(null),
     ])
     if (!historyResponse.ok) throw new Error(`API ${historyResponse.status}`)
@@ -1006,13 +1037,14 @@ async function fetchMedia(myLoadId) {
     totalListenSeconds.value = Math.max(0, Number(total.totalSeconds) || 0)
     if (needsTailBase && tailTotalResponse?.ok) {
       const tailTotal = await tailTotalResponse.json()
+      if (myLoadId !== loadId) return
       longRangeListenBase = Math.max(0,
         totalListenSeconds.value - Number(tailTotal.totalSeconds || 0))
     } else {
       longRangeListenBase = null
     }
   } catch (e) {
-    console.error(e)
+    if (e.name !== 'AbortError') console.error(e)
   } finally {
     if (myLoadId === loadId) listenTotalLoading.value = false
   }

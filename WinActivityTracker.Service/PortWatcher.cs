@@ -29,21 +29,34 @@ public class PortWatcher
         {
             if (IsListening) return;
 
-            _cts = new CancellationTokenSource();
-            _listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            _listener.Bind(new IPEndPoint(IPAddress.Loopback, _port));
-            _listener.Listen(1);
+            var cts = new CancellationTokenSource();
+            var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            try
+            {
+                listener.Bind(new IPEndPoint(IPAddress.Loopback, _port));
+                listener.Listen(1);
+            }
+            catch
+            {
+                listener.Dispose();
+                cts.Dispose();
+                throw;
+            }
+            _cts = cts;
+            _listener = listener;
             IsListening = true;
+            _ = AcceptLoop(listener, cts.Token);
         }
-        _ = AcceptLoop(_cts.Token);
     }
 
-    public void Stop()
+    public void Stop() => Stop(null);
+
+    private bool Stop(Socket? expectedListener)
     {
         CancellationTokenSource? cts;
         lock (_lock)
         {
-            if (!IsListening) return;
+            if (!IsListening || (expectedListener != null && _listener != expectedListener)) return false;
 
             cts = _cts;
             _cts = null;
@@ -54,14 +67,12 @@ public class PortWatcher
             IsListening = false;
         }
         cts?.Dispose();
+        return true;
     }
 
-    private async Task AcceptLoop(CancellationToken ct)
+    private async Task AcceptLoop(Socket listener, CancellationToken ct)
     {
-        Socket? listener;
-        lock (_lock) { listener = _listener; }
-
-        while (!ct.IsCancellationRequested && listener != null)
+        while (!ct.IsCancellationRequested)
         {
             Socket client;
             try
@@ -84,8 +95,13 @@ public class PortWatcher
             try { client.Dispose(); } catch { }
 
             // Free the port, then wake Kestrel.
-            Stop();
-            await _onWake();
+            if (ct.IsCancellationRequested || !Stop(listener)) break;
+            try { await _onWake(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Dashboard wake failed: {ex.Message}");
+                try { Start(); } catch { /* A busy port remains retryable. */ }
+            }
             break;
         }
     }

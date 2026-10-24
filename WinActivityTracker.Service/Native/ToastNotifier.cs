@@ -16,29 +16,44 @@ namespace WinActivityTracker.Service.Native;
 /// <summary>Windows toast 通知：确认异常立即弹一条 + 2 分钟后第二条，共 2 次。</summary>
 public sealed class ToastNotifier : ITimeAnomalyNotifier
 {
-    private readonly Dictionary<long, ScheduledToastNotification> _scheduled = new();
+    private readonly Dictionary<long, (ScheduledToastNotification Notification, DateTimeOffset DeliveryTime)> _scheduled = new();
     private readonly object _lock = new();
 
     public void NotifyConfirmed(TimeAnomaly anomaly)
     {
-        try
+        lock (_lock)
         {
-            var title = I18nService._("timeAnomaly.toastTitle");
-            var body = I18nService._("timeAnomaly.toastBody", anomaly.OffsetSeconds.ToString("F0"));
-            var builder = new ToastContentBuilder()
-                .AddText(title)
-                .AddText(body)
-                .AddArgument("action", "open-time")
-                .AddArgument("anomalyId", anomaly.Id);
-
-            ShowNow(builder);
-            var reminder = ScheduleReminder(builder, anomaly.Id);
-            if (reminder != null)
+            try
             {
-                lock (_lock) _scheduled[anomaly.Id] = reminder;
+                PruneExpiredReminders(DateTimeOffset.Now);
+                CancelReminder(anomaly.Id);
+                var title = I18nService._("timeAnomaly.toastTitle");
+                var body = I18nService._("timeAnomaly.toastBody", anomaly.OffsetSeconds.ToString("F0"));
+                var builder = new ToastContentBuilder()
+                    .AddText(title)
+                    .AddText(body)
+                    .AddArgument("action", "open-time")
+                    .AddArgument("anomalyId", anomaly.Id);
+
+                ShowNow(builder);
+                var reminder = ScheduleReminder(builder, anomaly.Id);
+                if (reminder != null)
+                {
+                    _scheduled[anomaly.Id] = (reminder, reminder.DeliveryTime);
+                }
             }
+            catch { /* 通知失败静默：追踪主流程不得受影响 */ }
         }
-        catch { /* 通知失败静默：追踪主流程不得受影响 */ }
+    }
+
+    internal void PruneExpiredReminders(DateTimeOffset now)
+    {
+        lock (_lock)
+        {
+            foreach (var id in _scheduled.Where(pair => pair.Value.DeliveryTime <= now)
+                         .Select(pair => pair.Key).ToArray())
+                _scheduled.Remove(id);
+        }
     }
 
     public void CancelReminder(long anomalyId)
@@ -46,7 +61,7 @@ public sealed class ToastNotifier : ITimeAnomalyNotifier
         ScheduledToastNotification? reminder = null;
         lock (_lock)
         {
-            if (_scheduled.Remove(anomalyId, out var r)) reminder = r;
+            if (_scheduled.Remove(anomalyId, out var r)) reminder = r.Notification;
         }
         if (reminder != null)
         {

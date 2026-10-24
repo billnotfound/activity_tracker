@@ -83,13 +83,23 @@ public class SystemTimeChangeReader
         {
             try
             {
-                var change = ParseEventXml(e.EventRecord.ToXml());
+                using var record = e.EventRecord;
+                if (record == null) return;
+                var change = ParseEventXml(record.ToXml());
                 if (change != null) onChange(change);
             }
             catch { }
         };
-        watcher.Enabled = true;
-        return watcher;
+        try
+        {
+            watcher.Enabled = true;
+            return watcher;
+        }
+        catch
+        {
+            watcher.Dispose();
+            throw;
+        }
     }
 
     /// <summary>纯解析方法，可单测。事件 ID 非 1 或 Data 缺失返回 null。</summary>
