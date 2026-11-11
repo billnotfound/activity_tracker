@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <title>Memphis rotating arc — static phase zero</title>
+  <desc>A 270 degree arc. Set the motion group's transform to rotate(360*p 64 64), where p is elapsed time divided by 6 seconds, modulo 1.</desc>
+  <metadata>{"version":1,"durationSeconds":6,"phaseRange":[0,1],"target":"[data-motion]","transform":"rotate(360*p 64 64)","center":[64,64],"radius":40,"loop":"rotation","reducedMotionPhase":0}</metadata>
+  <g data-motion="rotate" transform="rotate(0 64 64)">
+    <path d="M64 24 A40 40 0 1 1 24 64" stroke="var(--primary-color, #F4A261)" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="64" cy="24" r="5" fill="var(--text-color, #000000)"/>
+  </g>
+</svg>

@@ -12,7 +12,7 @@
             <span v-html="brandIconRaw" class="brand-icon"></span>
           </router-link>
         </div>
-        <div class="navbar-menu" ref="navMenuRef" @pointerleave="releaseNavAttraction">
+        <div class="navbar-menu" ref="navMenuRef" @pointermove="onNavMouseMove" @pointerleave="releaseNavAttraction">
           <div class="nav-frame" :style="navFrameStyle" :class="{ moving: navMoving, attracted: navAttracted }"></div>
           <router-link class="nav-item" data-nav-key="dashboard" to="/" :class="{ active: $route.path === '/', magnetic: navMagneticKey === 'dashboard' }" @focus="focusNavItem($event.currentTarget)">
             {{ t('nav.dashboard') }}
@@ -53,6 +53,7 @@
 <script setup>
 import { useI18n } from './i18n/index.js'
 import { useTheme } from './composables/useTheme.js'
+import { useSelectionFrame } from './composables/useSelectionFrame.js'
 import { useRoute } from 'vue-router'
 import { watch, onMounted, onBeforeUnmount, nextTick, ref, computed } from 'vue'
 import PageTransition from './components/PageTransition.vue'
@@ -61,7 +62,7 @@ import timerIconRaw from './ico/timer.svg?raw'
 import settingsIconRaw from './ico/settings.svg?raw'
 
 const { t } = useI18n()
-const { isDark, toggleDark } = useTheme()
+const { isDark, toggleDark, activeTheme, overrides } = useTheme()
 const route = useRoute()
 
 // Brand icon raw SVG content changes based on current route
@@ -98,112 +99,16 @@ function updateFavicon(path) {
 }
 
 // Dynamic favicon based on route and dark mode
-watch([() => route.path, isDark], () => {
+watch([() => route.path, isDark, activeTheme, overrides], () => {
   updateFavicon(route.path)
-}, { immediate: true })
-
-// Update on mount to ensure initial state is correct
-onMounted(() => {
-  initNavFrame()
-  window.addEventListener('pointermove', onNavMouseMove, { passive: true })
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', onNavMouseMove)
-  if (moveTimer) clearTimeout(moveTimer)
-})
-
-// ── Nav sliding frame ──
-// Each item owns a magnetic capture area. Pointer movement only retargets the
-// frame inside that area; CSS keeps the current velocity visually continuous
-// when the target changes while a previous slide is still running.
+}, { immediate: true, flush: 'post' })
 
 const navMenuRef = ref(null)
-const navFrameStyle = ref({})
+const { style: navFrameStyle, hover: onNavMouseMove, reset: releaseNavAttraction, select: focusNavItem } = useSelectionFrame(navMenuRef, '.nav-item', '.nav-item.active')
 const navMoving = ref(false)
 const navAttracted = ref(false)
 const navMagneticKey = ref('')
-let moveTimer = null
-let navTargetEl = null
-const NAV_ATTRACTION_RADIUS = 12
-
-function startNavAnim(el) {
-  if (!el) return
-  navTargetEl = el
-  navMoving.value = true
-  navFrameStyle.value = {
-    left: el.offsetLeft + 'px',
-    width: el.offsetWidth + 'px',
-  }
-  if (moveTimer) clearTimeout(moveTimer)
-  // Match the longest position transition (0.34s) + a small buffer.
-  moveTimer = setTimeout(() => { navMoving.value = false }, 380)
-}
-
-function onNavMouseMove(e) {
-  if (e.pointerType === 'touch') return
-  const menu = navMenuRef.value
-  if (!menu) return
-  const items = menu.querySelectorAll('.nav-item')
-  let nearest = null, minDist = Infinity, nearestRadius = 0
-  for (const item of items) {
-    const r = item.getBoundingClientRect()
-    const dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right)
-    const dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom)
-    const dist = Math.hypot(dx, dy)
-    if (dist < minDist) {
-      minDist = dist
-      nearest = item
-      nearestRadius = Math.min(NAV_ATTRACTION_RADIUS, r.height)
-    }
-  }
-  if (nearest && minDist <= nearestRadius) {
-    navAttracted.value = true
-    navMagneticKey.value = nearest.dataset.navKey || ''
-    if (nearest !== navTargetEl) startNavAnim(nearest)
-    return
-  }
-  releaseNavAttraction()
-}
-
-function releaseNavAttraction() {
-  if (!navAttracted.value) return
-  navAttracted.value = false
-  navMagneticKey.value = ''
-  const menu = navMenuRef.value
-  if (!menu) return
-  const active = menu.querySelector('.nav-item.active')
-  if (active && active !== navTargetEl) startNavAnim(active)
-}
-
-function focusNavItem(element) {
-  if (!navAttracted.value) navMagneticKey.value = ''
-  startNavAnim(element)
-}
-
-function initNavFrame() {
-  nextTick(() => {
-    const menu = navMenuRef.value
-    if (!menu) return
-    const active = menu.querySelector('.nav-item.active')
-    if (active) {
-      navTargetEl = active
-      navFrameStyle.value = {
-        left: active.offsetLeft + 'px',
-        width: active.offsetWidth + 'px',
-      }
-    }
-  })
-}
-
-watch(() => route.path, () => {
-  nextTick(() => {
-    const menu = navMenuRef.value
-    if (!menu) return
-    const active = menu.querySelector('.nav-item.active')
-    if (active) startNavAnim(active)
-  })
-})
+watch(() => route.path, releaseNavAttraction)
 </script>
 
 <style lang="scss" scoped>

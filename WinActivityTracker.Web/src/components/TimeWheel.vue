@@ -2,6 +2,9 @@
   <div class="time-wheel">
     <div class="wheel-frame" :class="{ wide, scrolling, frameless, 'auto-width': autoWidth, disabled: props.disabled }" :style="frameStyle" :data-label="label" ref="frameRef">
       <div
+        role="spinbutton" :tabindex="disabled ? -1 : 0" :aria-label="label" :aria-valuenow="Number.isFinite(Number(modelValue)) ? Number(modelValue) : undefined" :aria-valuetext="String(modelValue)" :aria-disabled="disabled"
+        @keydown.up.prevent="!disabled && changeSteps(1)" @keydown.down.prevent="!disabled && changeSteps(-1)"
+        @keydown.home.prevent="selectItem(items[0])" @keydown.end.prevent="selectItem(items[items.length - 1])"
         class="wheel-track"
         ref="trackRef"
         :style="trackStyle"

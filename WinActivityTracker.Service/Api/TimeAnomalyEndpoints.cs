@@ -104,19 +104,25 @@ public static class TimeAnomalyEndpoints
         if (to <= from || request.ShiftSeconds == 0 || !double.IsFinite(request.ShiftSeconds)
             || Math.Abs(request.ShiftSeconds) > TimeSpan.FromDays(365).TotalSeconds)
             return Results.BadRequest(new { error = "invalid manual time correction" });
+        try { _ = from.AddSeconds(request.ShiftSeconds); _ = to.AddSeconds(request.ShiftSeconds); }
+        catch (ArgumentOutOfRangeException) { return Results.BadRequest(new { error = "invalid manual time correction" }); }
 
         if (preview)
         {
             var result = await apply.PreviewManualRangeAsync(from, to, request.ShiftSeconds);
             return result == null
                 ? Results.BadRequest(new { error = "invalid manual time correction" })
-                : Results.Ok(new { tableCounts = result.TableCounts });
+                : Results.Ok(new { tableCounts = result.TableCounts, targetOccupied = result.TargetOccupied });
         }
 
-        var applied = await apply.ApplyManualRangeAsync(from, to, request.ShiftSeconds, request.Note);
-        return applied == null
-            ? Results.NotFound(new { error = "no rows in selected range" })
-            : Results.Ok(applied);
+        try
+        {
+            var applied = await apply.ApplyManualRangeAsync(from, to, request.ShiftSeconds, request.Note, request.AllowOverlap);
+            return applied == null
+                ? Results.NotFound(new { error = "no rows in selected range" })
+                : Results.Ok(applied);
+        }
+        catch (ManualTimeOverlapException) { return Results.Conflict(new { code = "targetOccupied" }); }
     }
 
     private static DateTime NormalizeToUtc(DateTime value) => value.Kind switch
@@ -128,4 +134,4 @@ public static class TimeAnomalyEndpoints
 }
 
 public sealed record ManualTimeCorrection(
-    DateTime From, DateTime To, double ShiftSeconds, string? Note);
+    DateTime From, DateTime To, double ShiftSeconds, string? Note, bool AllowOverlap = false);

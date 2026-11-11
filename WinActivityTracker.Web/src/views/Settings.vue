@@ -11,6 +11,7 @@
       <span v-if="saving" class="spinner">⏳</span>
     </div>
 
+    <UiNotice v-if="feedback" :tone="feedbackTone">{{ feedback }}</UiNotice>
     <!-- Tabs -->
     <div
       ref="settingsTabsRef"
@@ -41,7 +42,7 @@
 
           <h3 class="section-title">{{ t('settings.appearance.themeColors') }}</h3>
           <div class="palette-controls">
-          <div class="palette-controls-content" :class="{ blurred: autoColor }">
+          <div class="palette-controls-content" :class="{ blurred: autoColor }" :inert="autoColor">
             <div class="theme-groups">
               <div v-for="mode in customModes" :key="mode" class="theme-group">
                 <span class="theme-group-label">{{ t(`settings.appearance.${mode}`) }}</span>
@@ -99,7 +100,7 @@
             </div>
           </div>
           <div v-if="autoColor" class="auto-palette-lock">
-            <span>{{ t('settings.appearance.autoColorEnabled') }}</span>
+            <span>{{ t(`settings.auto.${theme.autoColorStatus.value}`) }}</span>
           </div>
           </div>
 
@@ -158,6 +159,7 @@
               <X v-else :size="18" />
             </button>
             <span class="toggle-label">{{ t('settings.appearance.autoColorHelp') }}</span>
+            <button v-if="autoColor" class="p-button p-button-secondary" @click="theme.refreshAutoColor()">{{ t('common.retry') }}</button>
           </div>
         </MemphisCard>
       </TabPanel>
@@ -284,8 +286,8 @@
             </button>
             <span class="toggle-label"><strong>{{ t('settings.useNtp') }}</strong></span>
           </div>
-          <div class="input-grid">
-            <div class="input-field"><label>{{ t('settings.timeServer') }}</label><input v-model="form.timeServer" type="text" class="memphis-text-input" placeholder="pool.ntp.org" /></div>
+          <div class="input-grid time-reference-grid">
+            <div class="input-field"><label>{{ t('settings.timeServer') }} <SettingHelp :text="t('settings.timeServerHelp')" /></label><input v-model="form.timeServer" type="text" class="memphis-text-input" :placeholder="form.timeSourceMode === 'Http' ? 'https://…' : 'pool.ntp.org'" /></div>
             <div class="input-field">
               <label>{{ t('settings.timeSourceMode') }}</label>
               <select v-model="form.timeSourceMode" class="memphis-select"><option v-for="m in timeSourceModes" :key="m.value" :value="m.value">{{ m.label }}</option></select>
@@ -293,6 +295,14 @@
             <div class="input-field"><label>{{ t('settings.timeAnomalyThresholdSeconds') }} <SettingHelp :text="t('settings.timeAnomalyThresholdHelp')" /></label><div class="unit-control"><InputNumber v-model="form.timeAnomalyThresholdSeconds" :min="30" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
             <div class="input-field"><label>{{ t('settings.ntpEpsilonSeconds') }} <SettingHelp :text="t('settings.ntpEpsilonHelp')" /></label><div class="unit-control"><InputNumber v-model="form.ntpEpsilonSeconds" :min="1" /><span>{{ t('time.seconds.suffix') }}</span></div></div>
           </div>
+        </MemphisCard>
+        <MemphisCard class="mb-3">
+          <h3 class="section-title">{{ t('settings.nightOwl') }}</h3>
+          <div class="toggle-row night-owl-row">
+            <button type="button" class="icon-toggle" :class="{ on: nightOwl }" :aria-pressed="nightOwl" :aria-label="t('settings.nightOwl')" :disabled="!activityDayLoaded || activityDaySaving" @click="saveActivityDay({ nightOwlMode: !nightOwl })"><Check v-if="nightOwl" :size="18" /><X v-else :size="18" /></button>
+            <label for="night-owl-day-start">{{ t('settings.dayStart') }}</label><input id="night-owl-day-start" :value="dayStartTime" type="time" step="60" :disabled="!nightOwl || activityDaySaving" class="memphis-text-input" data-testid="day-start" @change="saveDayStart" />
+          </div>
+          <UiNotice v-if="activityDayError" tone="error">{{ t('settings.operationFailed', { message: activityDayError }) }} <button class="p-button p-button-secondary" @click="loadActivityDay">{{ t('common.retry') }}</button></UiNotice>
         </MemphisCard>
         <TimeAnomalyView embedded />
       </TabPanel>
@@ -312,7 +322,9 @@
           <div class="divider"></div>
 
           <h3 class="section-title">{{ t('settings.database.operations') }}</h3>
+          <UiNotice tone="warning">{{ t('settings.resetHelp') }}</UiNotice>
           <div class="button-row">
+            <LegacyDatabaseImport @imported="loadDbStats" />
             <button class="icon-btn" @click="loadDbStats" :title="t('settings.refreshStats')" :aria-label="t('settings.refreshStats')">
               <RefreshCw :size="18" />
             </button>
@@ -328,7 +340,7 @@
             <button
               class="icon-btn warning"
               @click="runCleanup"
-              :disabled="cleaning"
+              :disabled="cleaning || !loaded"
               :title="t('settings.cleanupNow')"
               :aria-label="t('settings.cleanupNow')"
             >
@@ -338,7 +350,7 @@
               v-if="!resetConfirm"
               :label="t('settings.deleteAll')"
               severity="danger"
-              @click="resetConfirm = true"
+              :disabled="!loaded || form.trackingEnabled" @click="resetConfirm = true"
             >
               <template #icon><Trash2 :size="16" /></template>
             </Button>
@@ -371,7 +383,7 @@
             </div>
           </div>
 
-          <div v-if="iconCacheResult" class="alert-banner success mt-3">
+          <div v-if="iconCacheResult" class="ui-notice mt-3" :class="iconCacheTone">
             {{ iconCacheResult }}
           </div>
           <div v-if="cleanupResult" class="alert-banner success mt-3">
@@ -410,12 +422,12 @@
     </div>
 
     <!-- Save Button -->
-    <div class="save-section">
+    <div v-if="['tracking', 'time', 'database'].includes(activeTab)" class="save-section">
       <Button
         :label="t('settings.saveSettings')"
         size="large"
         @click="saveSettings"
-        :loading="saving"
+        :loading="saving" :disabled="!loaded"
       >
         <template #icon><Check :size="16" /></template>
       </Button>
@@ -424,7 +436,11 @@
 </template>
 
 <script setup>
-import { ref, inject, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { useActivityDay } from '../composables/useActivityDay.js'
+import UiNotice from '../components/UiNotice.vue'
+import LegacyDatabaseImport from '../components/LegacyDatabaseImport.vue'
+import { useSelectionFrame } from '../composables/useSelectionFrame.js'
+import { ref, inject, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
@@ -448,6 +464,18 @@ import { ArrowRight, Grid, RefreshCw, Image, Trash2, X, Check, Plus } from '@luc
 const apiBase = inject('apiBase')
 const { t, locale, setLocale } = useI18n()
 const theme = useTheme()
+const {
+  nightOwl, dayStartTime, effectiveDayStart, activityDayLoaded, activityDaySaving,
+  activityDayError, saveActivityDay, loadActivityDay,
+} = useActivityDay()
+async function saveDayStart(event) {
+  const value = event.target.value
+  if (/^\d{2}:\d{2}$/.test(value)) {
+    const [hours, minutes] = value.split(':').map(Number)
+    await saveActivityDay({ dayStartMinutes: hours * 60 + minutes })
+  }
+  event.target.value = dayStartTime.value
+}
 const route = useRoute()
 const router = useRouter()
 const {
@@ -456,19 +484,18 @@ const {
   languages, lightThemes, darkThemes, selectTheme, themePreviewColors,
   customDraftValid, customPreview, saveCustomScheme,
 } = useSettingsTheme(theme)
+watch(effectiveDayStart, () => { if (autoColor.value) theme.refreshAutoColor() })
 const validTabs = new Set(['appearance', 'tracking', 'tags', 'time', 'database', 'licenses'])
 const activeTab = ref(validTabs.has(String(route.query.section)) ? String(route.query.section) : 'appearance')
 const settingsTabsRef = ref(null)
-const settingsTabFrameStyle = ref({ opacity: 0 })
+const { style: settingsTabFrameStyle, hover: onSettingsTabMouseMove, reset: onSettingsTabMouseLeave } = useSelectionFrame(settingsTabsRef, '.p-tab', '.p-tab[aria-selected="true"]')
 const settingsTabMoving = ref(false)
-let settingsTabTarget = null
-let settingsTabTimer = null
 
 watch(activeTab, value => {
   const nextQuery = { ...route.query, section: value === 'appearance' ? undefined : value }
   const currentSection = validTabs.has(String(route.query.section)) ? String(route.query.section) : 'appearance'
   if (currentSection !== value) router.replace({ query: nextQuery })
-  nextTick(() => moveSettingsTabFrame(activeSettingsTab()))
+  nextTick(onSettingsTabMouseLeave)
 })
 
 watch(() => route.query.section, section => {
@@ -476,60 +503,8 @@ watch(() => route.query.section, section => {
   if (activeTab.value !== nextTab) activeTab.value = nextTab
 })
 
-function settingsTabItems() {
-  return Array.from(settingsTabsRef.value?.querySelectorAll('.p-tab') || [])
-}
-
-function activeSettingsTab() {
-  return settingsTabsRef.value?.querySelector('.p-tab[aria-selected="true"]') || settingsTabItems()[0]
-}
-
-function moveSettingsTabFrame(element) {
-  const host = settingsTabsRef.value
-  if (!host || !element) return
-  settingsTabTarget = element
-  const hostRect = host.getBoundingClientRect()
-  const itemRect = element.getBoundingClientRect()
-  settingsTabMoving.value = true
-  settingsTabFrameStyle.value = {
-    opacity: 1,
-    left: `${itemRect.left - hostRect.left}px`,
-    top: `${itemRect.top - hostRect.top}px`,
-    width: `${itemRect.width}px`,
-    height: `${itemRect.height}px`,
-  }
-  clearTimeout(settingsTabTimer)
-  settingsTabTimer = setTimeout(() => { settingsTabMoving.value = false }, 320)
-}
-
-function onSettingsTabMouseMove(event) {
-  const tabList = settingsTabsRef.value?.querySelector('.p-tablist')
-  if (!tabList?.contains(event.target)) {
-    const active = activeSettingsTab()
-    if (active && active !== settingsTabTarget) moveSettingsTabFrame(active)
-    return
-  }
-  const items = settingsTabItems()
-  if (!items.length) return
-  let nearest = items[0]
-  let distance = Infinity
-  for (const item of items) {
-    const rect = item.getBoundingClientRect()
-    const nextDistance = Math.abs(event.clientX - (rect.left + rect.width / 2))
-    if (nextDistance < distance) {
-      nearest = item
-      distance = nextDistance
-    }
-  }
-  if (nearest !== settingsTabTarget) moveSettingsTabFrame(nearest)
-}
-
-function onSettingsTabMouseLeave() {
-  moveSettingsTabFrame(activeSettingsTab())
-}
-
 const {
-  form, timeSourceModes, excludeText, saving, cleaning, clearingIcons,
+  loaded, feedback, feedbackTone, iconCacheTone, form, timeSourceModes, excludeText, saving, cleaning, clearingIcons,
   dbStats, cleanupResult, iconCacheResult, resetConfirm, resetting, resetResult,
   statusClass, statusText, loadSettings, saveSettings, loadDbStats,
   runCleanup, clearIconCache, runReset,
@@ -538,15 +513,14 @@ const initialRenderReady = ref(false)
 
 onMounted(async () => {
   await nextTick()
-  moveSettingsTabFrame(activeSettingsTab())
+  onSettingsTabMouseLeave()
+  if (autoColor.value) theme.refreshAutoColor()
   await loadSettings()
   await loadDbStats()
   initialRenderReady.value = true
 })
 
-onBeforeUnmount(() => {
-  clearTimeout(settingsTabTimer)
-})
+
 </script>
 
 <style lang="scss" scoped src="../styles/views/settings.scss"></style>

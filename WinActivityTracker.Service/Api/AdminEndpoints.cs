@@ -19,6 +19,8 @@ public static class AdminEndpoints
         app.MapPost("/api/db/cleanup", RunCleanup);
         app.MapPost("/api/db/reset", RunReset);
         app.MapPost("/api/db/vacuum", RunVacuum);
+        app.MapPost("/api/db/import/preview", LegacyDatabaseImport.PreviewAsync);
+        app.MapPost("/api/db/import", LegacyDatabaseImport.ImportAsync);
     }
 
     private static IResult GetStatus(SettingsService settings) =>

@@ -5,6 +5,7 @@ using WinActivityTracker.Core.Data;
 using WinActivityTracker.Core.Models;
 using WinActivityTracker.Core.Services;
 using WinActivityTracker.Core.Trackers;
+using WinActivityTracker.Service.Api;
 
 namespace WinActivityTracker.Service.Native;
 
@@ -201,16 +202,12 @@ public partial class StatusWindow : Form
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var settings = services.GetRequiredService<SettingsService>();
 
-            var todayStart = DateTime.UtcNow.Date;
-            var todayEnd = todayStart.AddDays(1);
+            var localStart = settings.Settings.GetActivityDayStart(DateTime.Now);
+            var todayStart = localStart.ToUniversalTime();
+            var todayEnd = localStart.AddDays(1).ToUniversalTime();
 
             // Off periods (sleep/shutdown)
-            var offPeriods = await db.SystemEvents
-                .AsNoTracking()
-                .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
-                    && e.Timestamp >= todayStart && e.Timestamp <= todayEnd)
-                .Select(e => new { e.Timestamp, e.DurationSeconds })
-                .ToListAsync(cancellationToken);
+            var offPeriods = await FocusEndpoints.GetOffPeriods(db, todayStart, todayEnd, cancellationToken);
 
             if (!CanRefresh || cancellationToken.IsCancellationRequested) return;
 
@@ -220,19 +217,12 @@ public partial class StatusWindow : Form
                 : "";
 
             // Focus changes for today
-            var changes = await db.FocusChanges
-                .AsNoTracking()
-                .Where(f => f.Timestamp >= todayStart && f.Timestamp <= todayEnd)
-                .OrderBy(f => f.Timestamp)
-                .Select(f => new { f.ProcessName, f.WindowTitle, f.DurationSeconds, f.Timestamp })
-                .ToListAsync(cancellationToken);
+            var changes = await LoadFocusRangeAsync(db, todayStart, todayEnd, offPeriods, cancellationToken);
 
             if (!CanRefresh || cancellationToken.IsCancellationRequested) return;
 
-            // Exclude off-period, hidden and idle records
+            // Off periods have been removed from durations. Filter hidden and idle records.
             var filtered = changes
-                .Where(f => !offPeriods.Any(p =>
-                    f.Timestamp >= p.Timestamp && f.Timestamp < p.Timestamp.AddSeconds(p.DurationSeconds)))
                 .Where(f => !TagService.MatchesHidden(hiddenRules, f.ProcessName, f.WindowTitle))
                 .Where(f => !TagService.MatchesIdle(idleRules, f.ProcessName, f.WindowTitle))
                 .ToList();
@@ -293,6 +283,31 @@ public partial class StatusWindow : Form
             _statusLabel.ForeColor = Color.Red;
         }
         finally { _refreshInProgress = false; }
+    }
+
+    internal static async Task<List<FocusChange>> LoadFocusRangeAsync(
+        AppDbContext db, DateTime start, DateTime end, IReadOnlyList<TimeInterval> offPeriods,
+        CancellationToken cancellationToken = default)
+    {
+        var focus = db.FocusChanges.AsNoTracking().Where(f => f.ProcessName != SystemMarkers.SystemSleepProcess);
+        var changes = await focus
+            .Where(f => f.Timestamp >= start && f.Timestamp < end)
+            .OrderBy(f => f.Timestamp).ToListAsync(cancellationToken);
+        var preceding = await focus
+            .Where(f => f.Timestamp < start).OrderByDescending(f => f.Timestamp)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (preceding != null && IntervalMath.SafeAddSeconds(preceding.Timestamp, preceding.DurationSeconds) > start)
+            changes.Insert(0, preceding);
+
+        // Clip sessions to this activity day and subtract sleep/shutdown spans.
+        foreach (var row in changes)
+        {
+            var rowEnd = IntervalMath.SafeAddSeconds(row.Timestamp, row.DurationSeconds);
+            if (rowEnd > end) rowEnd = end;
+            var rowStart = row.Timestamp < start ? start : row.Timestamp;
+            row.DurationSeconds = IntervalMath.Subtract(rowStart, rowEnd, offPeriods).Sum(segment => segment.DurationSeconds);
+        }
+        return changes.Where(row => row.DurationSeconds > 0).ToList();
     }
 
     private void ToggleTracking(IServiceProvider services)

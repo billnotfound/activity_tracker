@@ -56,7 +56,7 @@ useFloatingMenuDismiss({
 .media-menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-color-secondary); font-size: .78rem; }
 .media-menu-actions { display: grid; grid-template-columns: 1fr 1.35fr; gap: 6px; }
 .media-menu-actions button { min-height: 34px; padding: 5px 8px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color); font: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 5px; cursor: pointer; }
-.media-menu-actions .confirm { border-color: var(--primary-color); background: var(--primary-color); color: white; }
+.media-menu-actions .confirm { border-color: var(--primary-color); background: var(--primary-color); color: var(--on-primary); }
 @keyframes mediaLine { from { transform: scaleX(0); } }
 @keyframes mediaPanel { from { opacity: 0; transform: scaleY(.05); } }
 .media-menu-leave-active { pointer-events: none; animation: mediaHold 260ms linear both; }

@@ -6,9 +6,12 @@
 // persisted to localStorage under `theme-settings`.
 //
 // To change theme colors, edit theme.config.js — no rebuild needed.
+import { useActivityDay } from './useActivityDay.js'
+import { activityDayStart, summaryQuery } from '../utils/activityDay.js'
 import { ref, computed, watch } from 'vue'
 import {
   THEMES,
+  STATUS_COLORS,
   DEFAULT_LIGHT_THEME,
   DEFAULT_DARK_THEME,
 } from '../styles/theme.config.js'
@@ -20,6 +23,9 @@ const isDark = ref(false)
 const lightTheme = ref(DEFAULT_LIGHT_THEME)
 const darkTheme = ref(DEFAULT_DARK_THEME)
 const autoColor = ref(false)
+const autoColorStatus = ref('idle')
+let autoRevision = 0
+let autoController = null
 const pageTransition = ref('slide')          // 'slide' | 'geometric'
 // User overrides keyed by CSS variable name, e.g. { 'primary-color': '#abcdef' }
 const overrides = ref({})
@@ -87,10 +93,25 @@ function applyTheme() {
 
   // Apply user overrides on top
   for (const [key, value] of Object.entries(overrides.value)) {
-    if (value) root.style.setProperty(`--${key}`, value)
+    if (value && ['primary-color','secondary-color','accent-color'].includes(key)) root.style.setProperty(`--${key}`, value)
   }
+  const tokens = {
+    'text-color-secondary': theme.isDark ? '#B8B8B8' : '#595959',
+    'surface-500': theme.isDark ? '#B8B8B8' : '#595959',
+    ...STATUS_COLORS[theme.isDark ? 'dark' : 'light'],
+    'focus-ring': theme.isDark ? '#91BFFF' : '#234F9D',
+    'on-primary': foreground(root.style.getPropertyValue('--primary-color')),
+    'on-secondary': foreground(root.style.getPropertyValue('--secondary-color')),
+  }
+  for (const [key, value] of Object.entries(tokens)) root.style.setProperty(`--${key}`, value)
+
 }
 
+function foreground(color) {
+  const rgb = /^#[0-9a-f]{6}$/i.test(color || '') ? [1,3,5].map(i => parseInt(color.slice(i,i+2),16)/255) : [0,0,0]
+  const l = rgb.map(x => x <= .04045 ? x/12.92 : ((x+.055)/1.055)**2.4).reduce((a,x,i) => a+x*[.2126,.7152,.0722][i],0)
+  return l > .179 ? '#000000' : '#FFFFFF'
+}
 // ---------- persistence ----------
 function saveSettings() {
   if (typeof localStorage === 'undefined') return
@@ -126,9 +147,6 @@ function paletteOverrides(colors) {
     'primary-color': colors[0],
     'secondary-color': colors[1],
     'accent-color': colors[2],
-    'success-color': colors[0],
-    'warning-color': colors[2],
-    'danger-color': colors[1],
   }
 }
 
@@ -230,8 +248,12 @@ export function useTheme() {
   const setColorScheme = setLightTheme
 
   const setAutoColor = (v) => {
+    autoRevision++
+    autoController?.abort()
     autoColor.value = v
+    autoColorStatus.value = v ? 'loading' : 'idle'
     if (!v) overrides.value = {}
+    else refreshAutoColor()
   }
   const setPageTransition = (v) => { pageTransition.value = v }
 
@@ -267,8 +289,15 @@ export function useTheme() {
   // Pick the first distinct three-color palette from at most the five most-used
   // processes. Near-identical hues or RGB positions are skipped; if none of the
   // first five works, remove overrides and return to the selected theme.
-  const applyAutoColor = async (candidates) => {
+  const applyAutoColor = async (candidates, expectedRevision) => {
     if (!autoColor.value) return false
+    if (expectedRevision !== undefined) {
+      if (expectedRevision !== autoRevision) return false
+    } else {
+      autoRevision++
+      autoController?.abort()
+    }
+    const revision = autoRevision
     let palettes = Array.isArray(candidates) ? candidates : []
 
     // Backwards compatibility for callers that pass one process name.
@@ -281,19 +310,45 @@ export function useTheme() {
       }
     }
 
+    if (!autoColor.value || revision !== autoRevision) return false
     for (const palette of palettes.slice(0, 5)) {
       const colors = [palette.colorPrimary, palette.colorSecondary, palette.colorAccent]
       if (!hasDistinctColors(colors)) continue
       const next = paletteOverrides(colors)
       if (JSON.stringify(next) !== JSON.stringify(overrides.value)) overrides.value = next
+      autoColorStatus.value = 'applied'
       return true
     }
 
+    autoColorStatus.value = 'fallback'
     if (Object.keys(overrides.value).length) overrides.value = {}
     return false
   }
 
+  const refreshAutoColor = async () => {
+    if (!autoColor.value) return
+    const revision = ++autoRevision
+    autoController?.abort()
+    const controller = new AbortController()
+    autoController = controller
+    autoColorStatus.value = 'loading'
+    try {
+      const now = new Date()
+      const start = activityDayStart(now, useActivityDay().effectiveDayStart.value)
+      const response = await fetch(`/api/summary/range?${summaryQuery(start,now)}`, { signal: controller.signal })
+      if (!response.ok) throw new Error('summary')
+      const summary = await response.json()
+      const items = (summary.items || []).slice().sort((a,b) => b.totalSeconds-a.totalSeconds).slice(0,5)
+      const palettes = await Promise.all(items.map(async item => {
+        const r = await fetch(`/api/icons/${encodeURIComponent(item.processName)}`, { signal: controller.signal })
+        if (!r.ok) throw new Error('icon')
+        return r.json()
+      }))
+      if (revision === autoRevision && autoColor.value) await applyAutoColor(palettes, revision)
+    } catch (e) { if (e.name !== 'AbortError' && revision === autoRevision) autoColorStatus.value = 'error' }
+  }
   return {
+    autoColorStatus, refreshAutoColor,
     // state
     isDark,
     lightTheme,

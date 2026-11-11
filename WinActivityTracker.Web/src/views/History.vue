@@ -42,8 +42,7 @@
         <div class="easter-egg-chart-text">{{ t('history.tooShort') }}</div>
       </div>
       <template v-else>
-        <MemphisSkeleton v-if="loading && !hasRenderedTimeline" :lines="6" />
-        <div v-else>
+        <div :aria-busy="loading" :style="{ visibility: loading && !hasRenderedTimeline ? 'hidden' : undefined }">
           <div
             class="timeline-chart-wrap"
             :class="[rangeMotionClass, { 'is-dragging': timelineDragging }]"
@@ -64,11 +63,11 @@
                  echarts.init() wipes the container's existing children. -->
             <canvas ref="hoverDimmerRef" class="hover-dimmer"
                     :class="{ visible: !!hoveredProcess }"></canvas>
-            <div v-if="loading" class="timeline-loading" aria-hidden="true"></div>
             <div
               v-if="timeSelection.active"
               ref="timeSelectionLayerRef"
               class="time-selection-layer"
+              :style="repairPlotStyle"
               :class="{ 'repair-animating': timeSelection.animating }"
               @pointerdown.self="onSelectionPointerDown($event, 'create')"
               @pointermove="onSelectionPointerMove"
@@ -77,11 +76,12 @@
             >
               <div class="selection-mask mask-left" :style="selectionLeftMaskStyle"></div>
               <div class="selection-mask mask-right" :style="selectionRightMaskStyle"></div>
+              <div v-if="showMovedSlice && timeSelection.animationPhase !== 'source'" class="repair-source-cutout" :style="selectedRangeStyle" aria-hidden="true"></div>
               <div class="target-range" :style="targetRangeStyle" @pointerdown.stop="onSelectionPointerDown($event, 'target')">
                 <span>{{ t('history.time.target') }}</span>
               </div>
               <div
-                v-if="timeSelection.animationPhase"
+                v-if="showMovedSlice"
                 class="repair-preview-slice"
                 :class="timeSelection.animationPhase"
                 :style="repairPreviewStyle"
@@ -137,7 +137,7 @@
                 <span>{{ t('history.time.kicker') }}</span>
                 <h4>{{ t('history.time.title') }}</h4>
               </div>
-              <button type="button" @click="cancelTimeSelection"><X :size="17" /> {{ t('common.cancel') }}</button>
+              <button type="button" :disabled="timeSelection.applying" @click="cancelTimeSelection"><X :size="17" /> {{ t('common.cancel') }}</button>
             </header>
             <p>{{ t('history.time.help') }}</p>
             <div class="time-correction-summary">
@@ -150,19 +150,19 @@
             <div class="shift-controls">
               <label>
                 <span>{{ t('history.time.shiftMinutes') }}</span>
-                <input v-model.number="timeSelection.shiftMinutes" type="number" step="1" />
+                <input v-model.number="timeSelection.shiftMinutes" type="number" step="1" :disabled="timeSelection.applying" />
               </label>
-              <button v-for="amount in [-60, -5, 5, 60]" :key="amount" type="button" @click="timeSelection.shiftMinutes += amount">
+              <button v-for="amount in [-60, -5, 5, 60]" :key="amount" type="button" :disabled="timeSelection.applying" @click="timeSelection.shiftMinutes += amount">
                 {{ amount > 0 ? '+' : '' }}{{ amount }}m
               </button>
             </div>
             <div v-if="timeSelection.preview" class="time-preview-result">
               {{ t('timeAnomaly.applyPreview', { total: timeSelection.preview.total, tables: timeSelection.preview.tables.join(listSeparator) }) }}
             </div>
-            <button v-if="!timeSelection.preview" type="button" class="preview-button" :disabled="!timeSelection.shiftMinutes || !targetInRange || timeSelection.animating" @click="previewManualTime">
+            <button v-if="!timeSelection.preview" type="button" class="preview-button" :disabled="!timeSelection.shiftMinutes || !targetInRange || timeSelection.animating || timeSelection.previewing" @click="previewManualTime">
               <ScanSearch :size="17" /> {{ t('history.time.preview') }}
             </button>
-            <button v-else type="button" class="apply-time-button" @click="applyManualTime">
+            <button v-else type="button" class="apply-time-button" :disabled="timeSelection.applying || !timeSelection.preview.total" @click="applyManualTime">
               <Check :size="17" /> {{ t('history.time.apply') }}
             </button>
           </section>
@@ -170,6 +170,7 @@
       </template>
     </MemphisCard>
 
+    <ProgramUsageDialog v-model:visible="usageVisible" :process="selectedProcess" :title-scope="contextScope === 'title'" :range-start="startDate" :range-end="endDate" />
     <ProcessActionDrawer
       v-model:visible="actionDrawerVisible"
       :process="selectedProcess"
@@ -178,7 +179,7 @@
       :process-color="selectedProcessColor"
       :initial-view="drawerView"
       :initial-tag-names="drawerTagNames"
-      tag-scope="process-title"
+      :tag-scope="contextScope === 'title' ? 'process-title' : 'process'"
       allow-isolate
       return-to-popup
       @isolate="isolateProcess"
@@ -193,6 +194,7 @@
       :process-name="selectedProcess.processName || ''"
       :window-title="selectedProcess.windowTitle || ''"
       :raw-window-title="selectedProcess.rawWindowTitle || selectedProcess.windowTitle || ''"
+      :title-scope="contextScope === 'title'"
       :x="contextPoint.x"
       :y="contextPoint.y"
       @choose="chooseContextAction"
@@ -215,9 +217,9 @@ import { useI18n } from '../i18n/index.js'
 import { useTheme } from '../composables/useTheme.js'
 import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
-import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
+import { chartTooltip, useChartTooltipAvoidance } from '../utils/chartTooltip.js'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
 import { Check, ChevronLeft, ChevronRight, Focus, ScanSearch, X } from '@lucide/vue'
 
@@ -282,12 +284,14 @@ let dragPreviewFrame = null
 let pendingDragPreview = null
 let lastDragPreviewAt = 0
 
+const usageVisible = ref(false)
 const actionDrawerVisible = ref(false)
 const contextMenuVisible = ref(false)
+const contextScope = ref('process')
+useChartTooltipAvoidance(() => contextMenuVisible.value)
 const drawerView = ref('normalize')
 const drawerTagNames = ref([])
 const contextPoint = ref({ x: 0, y: 0 })
-let contextClosedAt = 0
 const selectedProcess = ref({})
 const selectedProcessColor = ref('var(--primary-color)')
 const focusedProcess = ref('')
@@ -312,6 +316,7 @@ const timeSelection = reactive({
   end: 0,
   shiftMinutes: 60,
   preview: null,
+  previewing: false,
   applying: false,
   animating: false,
   animationPhase: '',
@@ -331,19 +336,21 @@ const selectionLeft = computed(() => percentInRange(timeSelection.start))
 const selectionRight = computed(() => percentInRange(timeSelection.end))
 const selectionLeftMaskStyle = computed(() => ({ width: `${selectionLeft.value}%` }))
 const selectionRightMaskStyle = computed(() => ({ left: `${selectionRight.value}%`, width: `${100 - selectionRight.value}%` }))
-const selectedRangeStyle = computed(() => ({ left: `${selectionLeft.value}%`, width: `${Math.max(.5, selectionRight.value - selectionLeft.value)}%` }))
+const selectedRangeStyle = computed(() => ({ left: `${selectionLeft.value}%`, width: `${selectionRight.value - selectionLeft.value}%` }))
 const targetStart = computed(() => timeSelection.start + timeSelection.shiftMinutes * 60000)
 const targetEnd = computed(() => timeSelection.end + timeSelection.shiftMinutes * 60000)
 const targetLeft = computed(() => percentInRange(targetStart.value))
 const targetRight = computed(() => percentInRange(targetEnd.value))
 const targetRangeStyle = computed(() => {
-  return { left: `${targetLeft.value}%`, width: `${Math.max(.5, targetRight.value - targetLeft.value)}%` }
+  return { left: `${targetLeft.value}%`, width: `${targetRight.value - targetLeft.value}%` }
 })
 const repairPreviewStyle = computed(() => ({
   '--repair-source-left': `${selectionLeft.value}%`,
   '--repair-target-left': `${targetLeft.value}%`,
-  width: `${Math.max(.5, selectionRight.value - selectionLeft.value)}%`,
+  width: `${selectionRight.value - selectionLeft.value}%`,
 }))
+const repairPlotStyle = ref(null)
+const showMovedSlice = computed(() => Boolean(timeSelection.animationPhase && timeSelection.shiftMinutes && targetInRange.value))
 const selectionRangeLabel = computed(() => timeSelection.active
   ? `${new Date(timeSelection.start).toLocaleString()} — ${new Date(timeSelection.end).toLocaleString()}` : '')
 const targetRangeLabel = computed(() => {
@@ -355,19 +362,7 @@ const offsetDurationLabel = computed(() => {
   return `${sign}${fmtShortDur(seconds)}`
 })
 const targetInRange = computed(() => targetStart.value >= startDate.value.getTime() && targetEnd.value <= endDate.value.getTime())
-const targetHasRecords = computed(() => {
-  if (!timeSelection.active || !targetInRange.value) return false
-  const start = targetStart.value
-  const end = targetEnd.value
-  const overlapsTarget = item => {
-    const itemStart = parseUtcTs(item.timestamp || item.openTime || item.startTime)?.getTime()
-    if (itemStart == null) return false
-    const explicitEnd = parseUtcTs(item.closeTime || item.endTime)?.getTime()
-    const itemEnd = explicitEnd ?? itemStart + Math.max(0, Number(item.durationSeconds || 0)) * 1000
-    return itemEnd > start && itemStart < end
-  }
-  return timeline.value.some(overlapsTarget) || windowSessions.value.some(overlapsTarget)
-})
+const targetHasRecords = computed(() => Boolean(timeSelection.preview?.targetOccupied))
 
 // Hover-dim state: while hovering a process, a canvas layer is painted with
 // the background color over every bar EXCEPT that process's bars, which stay
@@ -615,13 +610,8 @@ function disposeTimelineChart() {
   barGeometryDirty = true
 }
 
-function openProcessActions(data, point = null) {
-  if (contextMenuVisible.value) {
-    setContextMenuVisible(false)
-    return
-  }
-  if (performance.now() - contextClosedAt < 320) return
-  const processName = data?.processName || data?._bgSession?.processName
+function openProcessActions(data, point = null, scope = null) {
+  const processName = data?.processName || data?._bgSession?.processName || data?._processSession?.processName
   if (!processName) return
   selectedProcess.value = {
     processName,
@@ -631,6 +621,7 @@ function openProcessActions(data, point = null) {
     timestamp: data.timestamp || data._bgSession?.openTime || data._processSession?.startTime || null,
     durationSeconds: data.durationSeconds || 0,
   }
+  contextScope.value = scope || (selectedProcess.value.rawWindowTitle || selectedProcess.value.windowTitle ? 'title' : 'process')
   selectedProcessColor.value = data.itemColor || data.itemStyle?.color || 'var(--primary-color)'
   showActionHint.value = false
   localStorage.setItem('wta-process-actions-seen', '1')
@@ -639,11 +630,11 @@ function openProcessActions(data, point = null) {
 }
 
 function setContextMenuVisible(value) {
-  if (!value && contextMenuVisible.value) contextClosedAt = performance.now()
   contextMenuVisible.value = value
 }
 
 function chooseContextAction(action) {
+  if (action === 'overview') { usageVisible.value = true; return }
   if (action === 'isolate') {
     isolateProcess(selectedProcess.value.processName)
     return
@@ -767,34 +758,31 @@ function scheduleRepairCapture() {
 }
 
 function captureRepairPreview() {
+  const plot = timelineChart?.getModel().getComponent('grid', 0)?.coordinateSystem?.getRect()
+  if (!plot || plot.width <= 0 || plot.height <= 0) return
+  repairPlotStyle.value = { inset: 'auto', left: `${plot.x}px`, top: `${plot.y}px`, width: `${plot.width}px`, height: `${plot.height}px` }
   const output = repairPreviewCanvasRef.value
-  const layer = timeSelectionLayerRef.value
-  const chartHost = timelineChartRef.value
-  if (!output || !layer || !chartHost) return
-  const sourceCanvases = [...chartHost.querySelectorAll('canvas')]
-  if (!sourceCanvases.length) return
-  const layerRect = layer.getBoundingClientRect()
-  const sliceX = layerRect.left + layerRect.width * selectionLeft.value / 100
-  const sliceWidth = Math.max(2, layerRect.width * (selectionRight.value - selectionLeft.value) / 100)
+  if (!output) return
+  const sliceX = plot.x + plot.width * selectionLeft.value / 100
+  const sliceWidth = plot.width * (selectionRight.value - selectionLeft.value) / 100
+  if (sliceWidth <= 0) return
   const dpr = window.devicePixelRatio || 1
   output.width = Math.max(1, Math.round(sliceWidth * dpr))
-  output.height = Math.max(1, Math.round(layerRect.height * dpr))
+  output.height = Math.max(1, Math.round(plot.height * dpr))
   const context = output.getContext('2d')
-  context.clearRect(0, 0, output.width, output.height)
-  for (const source of sourceCanvases) {
-    const sourceRect = source.getBoundingClientRect()
-    if (!sourceRect.width || !sourceRect.height) continue
-    const scaleX = source.width / sourceRect.width
-    const scaleY = source.height / sourceRect.height
-    const sx = (sliceX - sourceRect.left) * scaleX
-    const sy = (layerRect.top - sourceRect.top) * scaleY
-    const sw = sliceWidth * scaleX
-    const sh = layerRect.height * scaleY
-    try {
-      context.drawImage(source, sx, sy, sw, sh, 0, 0, output.width, output.height)
-    } catch {
-      // A transient zero-sized renderer during resize should not cancel repair selection.
-    }
+  if (!context) return
+  context.scale(output.width / sliceWidth, output.height / plot.height)
+  // Paint the activity bars only. A screenshot of the whole plot would also
+  // move its opaque background and hide the records already at the target.
+  for (const item of timelineChart.getZr().storage.getDisplayList()) {
+    if (item.name !== 'repair-data-bar' || item.ignore || item.invisible) continue
+    const { x, y, width, height } = item.shape
+    const left = Math.max(x, sliceX)
+    const right = Math.min(x + width, sliceX + sliceWidth)
+    if (right <= left || !item.style?.fill) continue
+    context.globalAlpha = item.style.opacity ?? 1
+    context.fillStyle = item.style.fill
+    context.fillRect(left - sliceX, y - plot.y, right - left, height)
   }
 }
 
@@ -864,7 +852,7 @@ function cancelTimeSelection() {
 }
 
 function onSelectionPointerDown(event, edge) {
-  if (timeSelection.animating) return
+  if (event.button !== 0 || timeSelection.animating || timeSelection.applying) return
   const rect = timeSelectionLayerRef.value?.getBoundingClientRect()
   if (!rect) return
   event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -934,37 +922,57 @@ watch(() => timeSelection.shiftMinutes, () => {
   if (!timeSelection.active || timeSelection.animating) return
   timeSelection.preview = null
   timeSelection.animationPhase = 'settled'
+  nextTick(scheduleRepairCapture)
 })
 
 function manualTimeBody() {
   return {
-    from: toLocalDatetimeString(new Date(timeSelection.start)),
-    to: toLocalDatetimeString(new Date(timeSelection.end)),
+    from: new Date(timeSelection.start).toISOString(),
+    to: new Date(timeSelection.end).toISOString(),
     shiftSeconds: Number(timeSelection.shiftMinutes) * 60,
     note: t('history.time.userNote'),
   }
 }
 
 async function previewManualTime() {
-  timeSelection.preview = null
-  const r = await fetch(`${apiBase}/api/time-anomalies/manual?preview=true`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(manualTimeBody()),
-  })
-  if (!r.ok) return
-  const result = await r.json()
-  const counts = result.tableCounts || {}
-  timeSelection.preview = { total: Object.values(counts).reduce((sum, value) => sum + value, 0), tables: Object.keys(counts) }
+  if (timeSelection.previewing || !targetInRange.value) return
+  const body = JSON.stringify(manualTimeBody())
+  timeSelection.previewing = true
+  try {
+    const r = await fetch(`${apiBase}/api/time-anomalies/manual?preview=true`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    })
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
+    const result = await r.json()
+    if (!timeSelection.active || body !== JSON.stringify(manualTimeBody())) return
+    const counts = result.tableCounts || {}
+    timeSelection.preview = { total: Object.values(counts).reduce((sum, value) => sum + value, 0), tables: Object.keys(counts), targetOccupied: result.targetOccupied }
+  } catch (e) {
+    error.value = t('settings.operationFailed', { message: e.message })
+  } finally { timeSelection.previewing = false }
 }
 
 async function applyManualTime() {
+  if (timeSelection.applying || !timeSelection.preview?.total || !targetInRange.value) return
+  const allowOverlap = targetHasRecords.value
+  if (allowOverlap && !window.confirm(t('history.time.confirmOverlap'))) return
   timeSelection.applying = true
   try {
     const r = await fetch(`${apiBase}/api/time-anomalies/manual`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(manualTimeBody()),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...manualTimeBody(), allowOverlap }),
     })
-    if (!r.ok) return
+    if (r.status === 409) {
+      const result = await r.json()
+      if (result.code === 'targetOccupied' && timeSelection.preview) {
+        timeSelection.preview.targetOccupied = true
+        return
+      }
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`)
     cancelTimeSelection()
     await loadData()
+  } catch (e) {
+    error.value = t('settings.operationFailed', { message: e.message })
   } finally { timeSelection.applying = false }
 }
 
@@ -1069,13 +1077,14 @@ function queueDragPreview(min, max) {
 
 function onTimelinePointerDown(event) {
   if (event.button !== 0 && event.button !== 1) return
+  if (timeSelection.active) return
   if (!hasRenderedTimeline.value || !timelineChart || timelineChart.isDisposed()) return
 
   // Commit any queued wheel gesture before taking the drag's range snapshot.
   if (timelineWheelTimer) clearTimeout(timelineWheelTimer)
   flushTimelineWheelZoom()
 
-  event.preventDefault()
+  if (event.button === 1) event.preventDefault()
   if (rangeMotionTimer) clearTimeout(rangeMotionTimer)
   rangeMotionTimer = null
   rangeMotionClass.value = ''
@@ -1094,18 +1103,9 @@ function onTimelinePointerDown(event) {
     rangeChanged: false,
     lastStart: startDate.value.getTime(),
     lastEnd: endDate.value.getTime(),
-    clickData: hoveredTimelineData,
     element: event.currentTarget,
   }
-  timelineDragging.value = true
-  hoverSuppressedUntilMove = true
-  hoveredProcess.value = null
-  paintDimmer()
-  try {
-    event.currentTarget.setPointerCapture(event.pointerId)
-  } catch {
-    // Pointer capture is an enhancement; window-local dragging still works.
-  }
+  hoverSuppressedUntilMove = false
 }
 
 function onTimelinePointerMove(event) {
@@ -1122,6 +1122,17 @@ function onTimelinePointerMove(event) {
   if (!drag.moved && Math.abs(dx) < 3) return
 
   event.preventDefault()
+  if (!drag.moved) {
+    timelineDragging.value = true
+    hoverSuppressedUntilMove = true
+    hoveredProcess.value = null
+    paintDimmer()
+    try {
+      drag.element.setPointerCapture(event.pointerId)
+    } catch {
+      // Continue panning within the chart when capture is unavailable.
+    }
+  }
   drag.moved = true
   const span = drag.endRange - drag.startRange
   const shift = -(dx / drag.plotWidth) * span
@@ -1167,9 +1178,6 @@ function onTimelinePointerUp(event) {
     timeRangePickerRef.value?.setRange(startDate.value, endDate.value)
     previewRange(drag.lastStart, drag.lastEnd)
     scheduleLoadData(220)
-  } else if (drag.clickData) {
-    if (drag.clickData._mediaSession) focusMediaContext(drag.clickData._mediaSession)
-    else openProcessActions(drag.clickData, { x: event.clientX, y: event.clientY })
   }
   dragState = null
   timelineDragging.value = false
@@ -2438,8 +2446,10 @@ async function renderTimeline(myLoadId) {
     timelineChart = echarts.init(timelineChartRef.value, null, { renderer: 'canvas', useDirtyRect: false })
     timelineChart.on('mouseover', onTimelineMouseOver)
     timelineChart.on('mouseout', onTimelineMouseOut)
-    timelineChart.on('click', params => {
-      if (params.seriesName !== 'windows') return
+    const openBarMenu = (params, scope = null) => {
+      if (params.seriesName !== 'windows' || timeSelection.active) return
+      params.event?.event?.preventDefault?.()
+      if (contextMenuVisible.value) return
       if (params.data?._mediaSession) {
         focusMediaContext(params.data._mediaSession)
         return
@@ -2447,8 +2457,12 @@ async function renderTimeline(myLoadId) {
       openProcessActions(params.data, {
           x: params.event?.event?.clientX ?? window.innerWidth / 2,
           y: params.event?.event?.clientY ?? window.innerHeight / 2,
-        })
+        }, scope)
+    }
+    timelineChart.on('click', params => {
+      if (!hoverSuppressedUntilMove) openBarMenu(params)
     })
+    timelineChart.on('contextmenu', params => openBarMenu(params, 'process'))
     // DOM mouseleave is the reliable way to clear hover state — ECharts'
     // series mouseout may not fire when the cursor leaves the canvas.
     timelineChartRef.value.addEventListener('mouseleave', onTimelineMouseLeave)
@@ -2686,6 +2700,7 @@ async function renderTimeline(myLoadId) {
       },
     ],
     tooltip: {
+      ...chartTooltip(timelineChartRef),
       backgroundColor: tooltipBg,
       borderColor: tooltipBorder,
       borderWidth: 2,
@@ -2743,6 +2758,7 @@ async function renderTimeline(myLoadId) {
   renderedRangeMax = xAxisMax
   timelineChart.setOption(option, { notMerge: true, lazyUpdate: false })
   timelineChart.getZr().refreshImmediately()
+  scheduleRepairCapture()
   // Geometry for the hover dimmer is derived lazily on first hover instead of
   // doing thousands of coordinate conversions on every range render.
   barGeometryDirty = true
@@ -2797,7 +2813,22 @@ function renderBar(params, api) {
     height: params.coordSys.height,
   })
   if (!clippedShape) return null
-  return { type: 'rect', shape: clippedShape, style: api.style() }
+  if (isBackground) {
+    // A fine line needs a wider transparent hit area for pointer input.
+    const hitArea = echarts.graphic.clipRectByRect({
+      ...rectShape,
+      y: rectShape.y + rectShape.height / 2 - 6,
+      height: 12,
+    }, params.coordSys)
+    return {
+      type: 'group',
+      children: [
+        { type: 'rect', shape: hitArea, style: { fill: 'rgba(0,0,0,0)' } },
+        { type: 'rect', name: 'repair-data-bar', shape: clippedShape, style: api.style(), silent: true },
+      ],
+    }
+  }
+  return { type: 'rect', name: 'repair-data-bar', shape: clippedShape, style: api.style() }
 }
 </script>
 

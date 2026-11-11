@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <title>Memphis breathing dots — static phase zero</title>
+  <desc>Keep the outer translation fixed. Scale the motion group by 1+0.12*sin(2*pi*p) over 4 seconds. Use transform attributes rather than CSS transform-origin.</desc>
+  <metadata>{"version":1,"durationSeconds":4,"phaseRange":[0,1],"target":"[data-motion]","transform":"scale(1+0.12*sin(2*pi*p))","center":[64,64],"scaleAmplitude":0.12,"loop":"sinusoidal-scale","reducedMotionPhase":0}</metadata>
+  <g transform="translate(64 64)">
+    <g data-motion="scale" transform="scale(1)">
+      <circle cx="-17" cy="-17" r="10" fill="var(--primary-color, #F4A261)"/>
+      <circle cx="17" cy="-17" r="10" fill="var(--secondary-color, #E76F51)"/>
+      <circle cx="-17" cy="17" r="10" fill="var(--accent-color, #2A9D8F)"/>
+      <circle cx="17" cy="17" r="10" stroke="var(--text-color, #000000)" stroke-width="3"/>
+    </g>
+  </g>
+</svg>

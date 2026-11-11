@@ -2,25 +2,9 @@
   width: 100%;
 }
 
-.error-banner {
-  padding: 12px 16px;
-  background: var(--danger-color);
-  color: white;
-  border: 2px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-}
 
-.close-btn {
-  background: transparent;
-  border: none;
-  color: white;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0 8px;
-}
+
+
 
 .focus-banner {
   min-height: 48px;
@@ -176,19 +160,6 @@
   }
 }
 
-.timeline-loading {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 6;
-  width: 28%;
-  height: 3px;
-  pointer-events: none;
-  background: var(--primary-color);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface-card) 65%, transparent);
-  animation: timelineLoading 0.85s ease-in-out infinite alternate;
-}
-
 .time-selection-layer {
   position: absolute;
   z-index: 8;
@@ -203,19 +174,24 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  background: color-mix(in srgb, var(--surface-ground) 72%, transparent);
-  backdrop-filter: grayscale(1);
+  background: color-mix(in srgb, var(--surface-ground) 42%, transparent);
   pointer-events: none;
 }
 .mask-left { left: 0; }
 
+.repair-source-cutout {
+  position: absolute;
+  inset-block: 0;
+  background: var(--surface-card);
+  pointer-events: none;
+}
+
 .target-range {
   position: absolute;
   z-index: 2;
-  top: 6%;
-  bottom: 6%;
+  top: 0;
+  bottom: 0;
   border: 3px dashed var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 7%, transparent);
   pointer-events: auto;
   cursor: grab;
   transition: left 160ms ease, width 160ms ease;
@@ -232,10 +208,7 @@
   min-width: 2px;
   overflow: hidden;
   pointer-events: none;
-  border: 2px solid color-mix(in srgb, var(--accent-color) 82%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--surface-card) 66%, transparent);
-
-  canvas { width: 100%; height: 100%; opacity: .72; display: block; }
+  canvas { width: 100%; height: 100%; opacity: .88; display: block; }
   &.moving {
     left: var(--repair-target-left);
     transition: left 2.2s cubic-bezier(.36,.02,.18,1);
@@ -248,9 +221,8 @@
   z-index: 4;
   top: 0;
   bottom: 0;
-  min-width: 8px;
-  border: 3px solid var(--primary-color);
-  background: color-mix(in srgb, var(--primary-color) 10%, transparent);
+  outline: 2px dashed var(--primary-color);
+  outline-offset: -2px;
   cursor: grab;
 
   > span { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--primary-color); color: white; padding: 4px 7px; font-size: .72rem; font-weight: 700; white-space: nowrap; }
@@ -312,19 +284,13 @@
 .time-preview-result { padding: 10px; border-left: 4px solid var(--accent-color); background: var(--surface-card); }
 .time-target-warning { padding: 9px 10px; border: 2px solid var(--warning-color); background: color-mix(in srgb, var(--warning-color) 10%, var(--surface-card)); color: var(--text-color); font-size: .82rem; font-weight: 700; }
 .preview-button, .apply-time-button { min-height: 42px; padding: 8px 12px; border: 2px solid var(--primary-color); background: var(--primary-color); color: white; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
-.preview-button:disabled { opacity: .45; cursor: not-allowed; }
+.preview-button:disabled, .apply-time-button:disabled { opacity: .45; cursor: not-allowed; }
 .apply-time-button { border-color: var(--success-color); background: var(--success-color); }
-
-@keyframes timelineLoading {
-  from { transform: translateX(0); }
-  to { transform: translateX(257%); }
-}
 
 @media (prefers-reduced-motion: reduce) {
   .timeline-chart-wrap.range-retreating,
   .timeline-chart-wrap.range-zooming-in,
-  .timeline-chart-wrap.range-zooming-out,
-  .timeline-loading {
+  .timeline-chart-wrap.range-zooming-out {
     animation: none;
   }
   .repair-preview-slice.moving { transition-duration: .01ms; }

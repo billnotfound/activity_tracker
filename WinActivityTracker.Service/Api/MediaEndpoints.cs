@@ -34,11 +34,21 @@ public static class MediaEndpoints
     }
 
     private static async Task<IResult> GetMediaHistory(
-        int? limit, string? from, string? to, AppDbContext db, TagService tagService)
+        int? limit, string? from, string? to, DateTime? fromAt, DateTime? toAt, AppDbContext db, TagService tagService)
     {
+        if (fromAt.HasValue != toAt.HasValue || (fromAt.HasValue && toAt <= fromAt))
+            return Results.BadRequest(new { error = "invalid instant range" });
         var query = db.MediaSessionRecords.AsNoTracking();
+        if (fromAt.HasValue && toAt.HasValue)
+        {
+            var instantStart = NormalizeInstant(fromAt.Value);
+            var instantEnd = NormalizeInstant(toAt.Value);
+            query = query.Where(m => m.StartTime < instantEnd
+                && (m.StartTime >= instantStart || m.EndTime == null || m.EndTime > instantStart));
+        }
 
-        if (from != null && DateOnly.TryParse(from, out var fromDate))
+
+        if (!fromAt.HasValue && from != null && DateOnly.TryParse(from, out var fromDate))
         {
             var start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
             // Include sessions that began before the selected day but overlap it.
@@ -46,7 +56,7 @@ public static class MediaEndpoints
             query = query.Where(m => m.StartTime >= start
                 || m.EndTime == null || m.EndTime >= start);
         }
-        if (to != null && DateOnly.TryParse(to, out var toDate))
+        if (!toAt.HasValue && to != null && DateOnly.TryParse(to, out var toDate))
         {
             var end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
             query = query.Where(m => m.StartTime <= end);
@@ -74,15 +84,22 @@ public static class MediaEndpoints
     }
 
     private static async Task<IResult> GetListenTotal(
-        string? from, string? to, AppDbContext db, TagService tagService)
+        string? from, string? to, DateTime? fromAt, DateTime? toAt, AppDbContext db, TagService tagService)
     {
-        if (from == null || to == null
-            || !DateOnly.TryParse(from, out var fromDate)
-            || !DateOnly.TryParse(to, out var toDate))
-            return Results.BadRequest(new { error = "from and to must use yyyy-MM-dd" });
-
-        var start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
-        var end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
+        DateTime start, end;
+        if (fromAt.HasValue && toAt.HasValue)
+        {
+            start = NormalizeInstant(fromAt.Value);
+            end = NormalizeInstant(toAt.Value);
+        }
+        else
+        {
+            if (fromAt.HasValue || toAt.HasValue || !DateOnly.TryParse(from, out var fromDate)
+                || !DateOnly.TryParse(to, out var toDate))
+                return Results.BadRequest(new { error = "Supply from/to dates or fromAt/toAt timestamps" });
+            start = fromDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Local).ToUniversalTime();
+            end = toDate.ToDateTime(TimeOnly.MaxValue, DateTimeKind.Local).ToUniversalTime();
+        }
         if (end <= start) return Results.BadRequest(new { error = "invalid range" });
 
         var records = await HiddenFilter.ExcludeHidden(
@@ -115,6 +132,9 @@ public static class MediaEndpoints
             intervalCount = CountMergedIntervals(intervals)
         });
     }
+
+    private static DateTime NormalizeInstant(DateTime value) => value.Kind == DateTimeKind.Utc
+        ? value : DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime();
 
     internal static double MergeListeningSeconds(
         IEnumerable<(DateTime Start, DateTime End)> source)

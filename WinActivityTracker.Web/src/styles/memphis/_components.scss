@@ -106,36 +106,6 @@
   }
 }
 
-// Memphis Skeleton
-.memphis-skeleton {
-  display: flex;
-  gap: $memphis-spacing-md;
-  padding: $memphis-spacing-lg;
-  
-  .shape {
-    @include memphis-shimmer(
-      var(--surface-100, #E0E0E0),
-      var(--surface-200, #CCCCCC)
-    );
-    
-    &.shape-triangle {
-      @include memphis-triangle(transparent, 40px);
-      flex-shrink: 0;
-    }
-    
-    &.shape-circle {
-      @include memphis-circle(transparent, 40px);
-      flex-shrink: 0;
-    }
-    
-    &.shape-rect {
-      width: 100%;
-      height: 16px;
-      margin: 4px 0;
-    }
-  }
-}
-
 // Memphis Tag
 .memphis-tag {
   display: inline-flex;

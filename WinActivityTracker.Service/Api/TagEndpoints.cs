@@ -25,13 +25,15 @@ public static class TagEndpoints
 
     private static IResult GetTagStatus(TagService tagService,
         [FromServices] TitleNormalizer titleNormalizer,
-        [FromServices] AppPaths appPaths)
+        [FromServices] AppPaths appPaths, string? process = null, string? title = null)
     {
         var tagsPath = Path.Combine(appPaths.ConfigDir, "tags.json");
         var titleRulesPath = Path.Combine(appPaths.ConfigDir, "title_rules.json");
 
         return Results.Ok(new
         {
+            processTags = string.IsNullOrWhiteSpace(process) ? [] : tagService.ResolveTags(process, null),
+            matchedTags = string.IsNullOrWhiteSpace(process) ? [] : tagService.ResolveTags(process, title),
             tags = new
             {
                 rules = tagService.GetRules(),

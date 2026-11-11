@@ -8,7 +8,7 @@
       @click.stop.prevent="togglePinned"
       @pointerenter="scheduleOpen"
       @pointerleave="scheduleClose"
-      @focus="show"
+      @focus="show" @blur="scheduleClose"
       @keydown.esc.stop="close"
     >
       <CircleHelp :size="14" aria-hidden="true" />

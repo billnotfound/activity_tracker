@@ -45,6 +45,13 @@ public class SettingsService
         ["MergeSameProcessSwitches"] = new[] {
             "// 同进程连续切换是否合并计数。浏览器 切 3 个 tab 只算 1 次切换。"
         },
+        ["NightOwlMode"] = new[] {
+            "// ===== 统计日界线 =====",
+            "// 夜猫子模式：日界线前的活动计入前一天。网页与原生今日排行共用。默认 false。"
+        },
+        ["DayStartMinutes"] = new[] {
+            "// 新一天开始时间，距本地午夜的分钟数。范围 0-1439，默认 240（04:00）。"
+        },
         ["ExcludedProcesses"] = new[] {
             "// ===== 进程排除 =====",
             "// 不区分大小写。排除的进程不会出现在焦点记录/窗口快照/后台进程/媒体记录中。",
@@ -112,6 +119,7 @@ public class SettingsService
         ["PressureCriticalLatencySec"] = (5, int.MaxValue),
         ["TimeAnomalyThresholdSeconds"] = (30, int.MaxValue),
         ["NtpEpsilonSeconds"] = (1, int.MaxValue),
+        ["DayStartMinutes"] = (0, 1439),
     };
 
     private static readonly PropertyInfo[] SettingProperties = typeof(TrackerSettings)

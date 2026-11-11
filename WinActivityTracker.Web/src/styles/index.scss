@@ -4,6 +4,7 @@
 @use './memphis/animations';
 @use './memphis/components';
 @use './memphis/themes';
+@use './controls';
 
 // Ubuntu Font Family
 @import '../fonts/ubuntu/ubuntu.css';
@@ -251,7 +252,7 @@ html.dark-mode {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 2px solid transparent;
+  border: 2px solid var(--border-color);
   background: transparent;
   color: var(--surface-400);
   cursor: pointer;
@@ -451,7 +452,7 @@ html.dark-mode {
 
 // Honor the user's reduced-motion preference: disable all animations and
 // transitions site-wide (nav frame slide, card hover lifts, page transitions,
-// flicker effects, skeleton shimmer).
+// flicker effects).
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

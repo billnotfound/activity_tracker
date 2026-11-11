@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <title>Memphis orbiting dot — static phase zero</title>
+  <desc>Rotate the motion group by 360*p about (64,64) over 8 seconds. Dot center is (64+38*sin(2*pi*p),64-38*cos(2*pi*p)).</desc>
+  <metadata>{"version":1,"durationSeconds":8,"phaseRange":[0,1],"target":"[data-motion]","transform":"rotate(360*p 64 64)","center":[64,64],"orbitRadius":38,"dotRadius":9,"loop":"rotation","reducedMotionPhase":0}</metadata>
+  <circle cx="64" cy="64" r="38" stroke="var(--text-color, #000000)" stroke-width="3"/>
+  <path d="M58 64 h12 M64 58 v12" stroke="var(--secondary-color, #E76F51)" stroke-width="4"/>
+  <g data-motion="rotate" transform="rotate(0 64 64)">
+    <circle cx="64" cy="26" r="9" fill="var(--accent-color, #2A9D8F)" stroke="var(--text-color, #000000)" stroke-width="3"/>
+  </g>
+</svg>

@@ -1,4 +1,5 @@
 import { computed, reactive, ref } from 'vue'
+import { initializeActivityDay } from './useActivityDay.js'
 
 export function useSettingsData({ apiBase, t }) {
   const form = reactive({
@@ -22,6 +23,10 @@ export function useSettingsData({ apiBase, t }) {
     { value: 'Http', label: 'Http' },
   ]
   const excludeText = ref('')
+  const loaded = ref(false)
+  const feedback = ref('')
+  const feedbackTone = ref('info')
+  const iconCacheTone = ref('success')
   const saving = ref(false)
   const cleaning = ref(false)
   const clearingIcons = ref(false)
@@ -38,6 +43,7 @@ export function useSettingsData({ apiBase, t }) {
     : t('settings.connectionStatus.disconnected'))
 
   async function loadSettings() {
+    loaded.value = false
     try {
       const response = await fetch(`${apiBase}/api/status`)
       if (response.ok) {
@@ -58,6 +64,7 @@ export function useSettingsData({ apiBase, t }) {
         return
       }
       const settings = await response.json()
+      initializeActivityDay(settings)
       Object.assign(form, {
         trackingEnabled: settings.trackingEnabled,
         fullscreenBypassIdle: settings.fullscreenBypassIdle ?? true,
@@ -76,12 +83,15 @@ export function useSettingsData({ apiBase, t }) {
       })
       excludeText.value = (settings.excludedProcesses || []).join(', ')
       statusOk.value = true
+      loaded.value = true
     } catch {
       statusOk.value = false
     }
   }
 
   async function saveSettings() {
+    if (!loaded.value || saving.value) return
+    feedback.value = ''
     saving.value = true
     try {
       const body = {
@@ -95,13 +105,17 @@ export function useSettingsData({ apiBase, t }) {
       })
       if (response.ok) {
         const settings = await response.json()
+        for (const key of Object.keys(form)) if (settings[key] !== undefined) form[key] = settings[key]
+        feedbackTone.value = 'success'
+        feedback.value = t('settings.saved')
         excludeText.value = (settings.excludedProcesses || []).join(', ')
         statusOk.value = true
       } else {
-        console.error('Save failed:', response.status)
+        throw new Error(`HTTP ${response.status}`)
       }
     } catch (error) {
-      console.error('Save error:', error)
+      feedbackTone.value = 'error'
+      feedback.value = t('settings.operationFailed', { message: error.message })
     }
     saving.value = false
   }
@@ -116,13 +130,16 @@ export function useSettingsData({ apiBase, t }) {
   }
 
   async function runCleanup() {
+    if (!loaded.value || !window.confirm(t('settings.cleanupConfirm', { days: form.dataRetentionDays }))) return
     cleaning.value = true
     cleanupResult.value = null
     try {
       const response = await fetch(`${apiBase}/api/db/cleanup?days=${form.dataRetentionDays}`, { method: 'POST' })
-      if (response.ok) cleanupResult.value = await response.json()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      cleanupResult.value = await response.json()
     } catch (error) {
-      console.error('Cleanup failed:', error)
+      feedbackTone.value = 'error'
+      feedback.value = t('settings.operationFailed', { message: error.message })
     }
     cleaning.value = false
     await loadDbStats()
@@ -133,24 +150,32 @@ export function useSettingsData({ apiBase, t }) {
     iconCacheResult.value = null
     try {
       const response = await fetch(`${apiBase}/api/icons/cache`, { method: 'DELETE' })
+      iconCacheTone.value = response.ok ? 'success' : 'error'
       iconCacheResult.value = response.ok
         ? t('settings.database.iconCacheCleared')
         : t('settings.database.iconCacheClearFailed')
     } catch (error) {
-      console.error('Clear icon cache failed:', error)
+      iconCacheTone.value = 'error'
       iconCacheResult.value = t('settings.database.iconCacheClearFailed')
     }
     clearingIcons.value = false
   }
 
   async function runReset() {
+    if (!loaded.value || resetting.value) return
     resetting.value = true
     resetResult.value = null
     try {
+      const status = await fetch(`${apiBase}/api/status`)
+      if (!status.ok || (await status.json()).trackingEnabled) throw new Error(t('settings.resetHelp'))
       const response = await fetch(`${apiBase}/api/db/reset?confirm=true`, { method: 'POST' })
-      if (response.ok) resetResult.value = await response.json()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      resetResult.value = await response.json()
+      feedbackTone.value = 'warning'
+      feedback.value = t('settings.resetDone')
     } catch (error) {
-      console.error('Reset failed:', error)
+      feedbackTone.value = 'error'
+      feedback.value = t('settings.operationFailed', { message: error.message })
     }
     resetting.value = false
     resetConfirm.value = false
@@ -158,7 +183,7 @@ export function useSettingsData({ apiBase, t }) {
   }
 
   return {
-    form,
+    loaded, feedback, feedbackTone, iconCacheTone, form,
     timeSourceModes,
     excludeText,
     saving,

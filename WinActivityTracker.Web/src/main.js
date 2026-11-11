@@ -9,6 +9,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router.js'
 import { initI18n } from './i18n/index.js'
+import { loadActivityDay } from './composables/useActivityDay.js'
 
 // PrimeVue imports
 import PrimeVue from 'primevue/config'
@@ -24,6 +25,7 @@ const apiBase = ''
 
 async function boot() {
   await initI18n()
+  await loadActivityDay()
 
   // Apply theme BEFORE mounting so the first paint already has correct colors
   const { applyTheme } = useTheme()

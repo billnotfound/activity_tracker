@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" width="160" height="80" fill="none" overflow="hidden">
+  <title>Memphis travelling zigzag — static phase zero</title>
+  <desc>Repeated angular wave with a 40 unit wavelength. Translate the group right by 40*p over 5 seconds. The viewport clips identical repeated geometry at the seam.</desc>
+  <metadata>{"version":1,"durationSeconds":5,"phaseRange":[0,1],"target":"[data-motion]","transform":"translate(40*p 0)","wavelength":40,"baseline":40,"amplitude":14,"loop":"periodic-translation","reducedMotionPhase":0}</metadata>
+  <g data-motion="translate" transform="translate(0 0)">
+    <path d="M-80 54 l20-28 20 28 20-28 20 28 20-28 20 28 20-28 20 28 20-28 20 28 20-28 20 28 20-28 20 28 20-28 20 28" stroke="var(--secondary-color, #E76F51)" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
+  </g>
+</svg>

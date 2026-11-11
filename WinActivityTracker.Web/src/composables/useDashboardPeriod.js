@@ -1,3 +1,6 @@
+import { useActivityDay } from './useActivityDay.js'
+import { activityDayLabel, activityBounds } from '../utils/activityDay.js'
+import { useSelectionFrame } from './useSelectionFrame.js'
 import { computed, nextTick, ref, watch } from 'vue'
 import {
   addLocalDays,
@@ -13,11 +16,13 @@ function numberRange(from, to) {
 }
 
 export function useDashboardPeriod({ onDateChange }) {
+  const { effectiveDayStart } = useActivityDay()
+  const currentCalendar = () => new Date(`${activityDayLabel(new Date(), effectiveDayStart.value)}T00:00:00`)
   const period = ref('today')
   const isToday = computed(() => period.value === 'today')
-  const pickDate = ref(toLocalDateString())
+  const pickDate = ref(toLocalDateString(currentCalendar()))
   const earliestDate = ref(null)
-  const today = new Date()
+  const today = currentCalendar()
   const calendarNow = ref(today)
   const wheelYear = ref(today.getFullYear())
   const wheelMonth = ref(today.getMonth() + 1)
@@ -75,7 +80,7 @@ export function useDashboardPeriod({ onDateChange }) {
       earliest.setHours(0, 0, 0, 0)
       if (+next < +earliest) return
     }
-    const todayEnd = new Date()
+    const todayEnd = currentCalendar()
     todayEnd.setHours(23, 59, 59, 999)
     if (+next > +todayEnd) return
 
@@ -85,7 +90,7 @@ export function useDashboardPeriod({ onDateChange }) {
   }
 
   function resetDateToToday() {
-    const now = new Date()
+    const now = currentCalendar()
     calendarNow.value = now
     wheelYear.value = now.getFullYear()
     wheelMonth.value = now.getMonth() + 1
@@ -96,7 +101,7 @@ export function useDashboardPeriod({ onDateChange }) {
   // midnight. Explicit historical dates and longer ranges keep their endpoint.
   function refreshCalendar() {
     const previousToday = toLocalDateString(calendarNow.value)
-    const now = new Date()
+    const now = currentCalendar()
     const nextToday = toLocalDateString(now)
     const followToday = period.value === 'today' && pickDate.value === previousToday
     calendarNow.value = now
@@ -127,22 +132,8 @@ export function useDashboardPeriod({ onDateChange }) {
   })
 
   const periodButtonsRef = ref(null)
-  const frameStyle = ref({})
-  const frameReady = ref(false)
-
-  function updateFrame() {
-    nextTick(() => {
-      const element = periodButtonsRef.value
-      if (!element) return
-      const active = element.querySelector('.period-btn.active')
-      if (!active) return
-      frameStyle.value = {
-        width: `${active.offsetWidth}px`,
-        left: `${active.offsetLeft}px`,
-      }
-      frameReady.value = true
-    })
-  }
+  const { style: frameStyle, reset: updateFrame } = useSelectionFrame(periodButtonsRef, '.period-btn', '.period-btn.active')
+  const frameReady = ref(true)
 
   watch(period, updateFrame)
 
@@ -174,7 +165,13 @@ export function useDashboardPeriod({ onDateChange }) {
     return [toLocalDateString(startDate), to]
   }
 
+  function periodBounds() {
+    const [from, to] = periodRange()
+    return activityBounds(from, to, effectiveDayStart.value)
+  }
+  watch(effectiveDayStart, () => { refreshCalendar(); onDateChange() })
   return {
+    periodBounds,
     period,
     isToday,
     pickDate,

@@ -51,7 +51,7 @@ public static class FocusEndpoints
 
     private static async Task<IResult> GetTitleBreakdown(
         DateTime from, DateTime to, string process, string? tag,
-        AppDbContext db, TagService tagService, TitleNormalizer normalizer)
+        AppDbContext db, TagService tagService, TitleNormalizer normalizer, string? titlePattern = null)
     {
         if (string.IsNullOrWhiteSpace(process))
             return Results.BadRequest(new { error = "process is required" });
@@ -95,6 +95,7 @@ public static class FocusEndpoints
         var tagSnapshot = tagService.CreateSnapshot();
         var titleSnapshot = normalizer.CreateSnapshot();
         var titles = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        var matchingTags = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in rows)
         {
             if (TagService.MatchesHidden(hiddenRules, row.ProcessName, row.WindowTitle)
@@ -113,13 +114,20 @@ public static class FocusEndpoints
             var normalized = titleSnapshot.Apply(row.ProcessName, row.WindowTitle);
             var groupedTitle = NormalizeChangingNumbers(
                 string.IsNullOrWhiteSpace(normalized) ? row.ProcessName : normalized);
+            if (!string.IsNullOrEmpty(titlePattern)
+                && !TagService.WildcardMatch(titlePattern, row.WindowTitle)
+                && !TagService.WildcardMatch(titlePattern, groupedTitle))
+                continue;
             titles[groupedTitle] = titles.GetValueOrDefault(groupedTitle) + seconds;
+            matchingTags.UnionWith(tagSnapshot.ResolveTags(row.ProcessName, row.WindowTitle));
         }
 
         return Results.Ok(new
         {
             processName = process,
             tag = tag ?? string.Empty,
+            processTags = tagSnapshot.ResolveTags(process, null),
+            matchedTags = matchingTags.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
             titles = titles.OrderByDescending(item => item.Value)
                 .ThenBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(item => new { title = item.Key, totalSeconds = item.Value })
@@ -250,19 +258,19 @@ public static class FocusEndpoints
     }
 
     internal static async Task<List<TimeInterval>> GetOffPeriods(
-        AppDbContext db, DateTime start, DateTime end)
+        AppDbContext db, DateTime start, DateTime end, CancellationToken cancellationToken = default)
     {
         var events = await db.SystemEvents
             .AsNoTracking()
             .Where(e => (e.EventType == SystemEventTypes.Sleep || e.EventType == SystemEventTypes.Shutdown)
                 && e.Timestamp >= start && e.Timestamp < end)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
         foreach (var eventType in new[] { SystemEventTypes.Sleep, SystemEventTypes.Shutdown })
         {
             var preceding = await db.SystemEvents.AsNoTracking()
                 .Where(e => e.EventType == eventType && e.Timestamp < start)
                 .OrderByDescending(e => e.Timestamp)
-                .FirstOrDefaultAsync();
+                .FirstOrDefaultAsync(cancellationToken);
             if (preceding != null) events.Add(preceding);
         }
 

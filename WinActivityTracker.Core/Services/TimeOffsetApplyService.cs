@@ -6,7 +6,12 @@ using WinActivityTracker.Core.Trackers;
 
 namespace WinActivityTracker.Core.Services;
 
-public sealed class ApplyPreview { public Dictionary<string, int> TableCounts { get; set; } = new(); }
+public sealed class ApplyPreview
+{
+    public Dictionary<string, int> TableCounts { get; set; } = new();
+    public bool TargetOccupied { get; set; }
+}
+public sealed class ManualTimeOverlapException : Exception { }
 public sealed class ApplyResult
 {
     public long AnomalyId { get; set; }
@@ -478,18 +483,46 @@ public class TimeOffsetApplyService
         }
         return new ApplyPreview
         {
-            TableCounts = BuildTableCounts(perTable)
+            TableCounts = BuildTableCounts(perTable),
+            TargetOccupied = perTable.Count > 0 && await HasTargetRecordsAsync(db, from, to, shiftSeconds)
         };
     }
 
+    private static async Task<bool> HasTargetRecordsAsync(AppDbContext db, DateTime from, DateTime to, double shiftSeconds)
+    {
+        var start = from.AddSeconds(shiftSeconds);
+        var end = to.AddSeconds(shiftSeconds);
+        // Ignore records selected to move. Check unsampled data so a short bar
+        // omitted from the chart still requires confirmation.
+        return await db.FocusChanges.AnyAsync(f =>
+            f.ProcessName != SystemMarkers.SystemSleepProcess && f.DurationSeconds > 0 &&
+            f.Timestamp < end && (f.Timestamp < from || f.Timestamp > to) &&
+            f.Timestamp.AddSeconds(f.DurationSeconds) > start)
+            || await db.WindowSessions.AnyAsync(s =>
+                s.OpenTime < end && (s.CloseTime == null || s.CloseTime > start) &&
+                (s.OpenTime < from || s.OpenTime > to) &&
+                (s.CloseTime == null || s.CloseTime < from || s.CloseTime > to))
+            || await db.ProcessSessions.AnyAsync(s =>
+                s.StartTime < end && (s.EndTime == null || s.EndTime > start) &&
+                (s.StartTime < from || s.StartTime > to) &&
+                (s.EndTime == null || s.EndTime < from || s.EndTime > to))
+            || await db.MediaSessionRecords.AnyAsync(s =>
+                s.PlaybackStatus != SystemMarkers.SystemSleepStatus &&
+                s.StartTime < end && (s.EndTime == null || s.EndTime > start) &&
+                (s.StartTime < from || s.StartTime > to) &&
+                (s.EndTime == null || s.EndTime < from || s.EndTime > to));
+    }
+
     public async Task<ApplyResult?> ApplyManualRangeAsync(
-        DateTime from, DateTime to, double shiftSeconds, string? note = null)
+        DateTime from, DateTime to, double shiftSeconds, string? note = null, bool allowOverlap = false)
     {
         if (to <= from || shiftSeconds == 0 || !double.IsFinite(shiftSeconds)) return null;
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await using var tx = await db.Database.BeginTransactionAsync();
+        if (!allowOverlap && await HasTargetRecordsAsync(db, from, to, shiftSeconds))
+            throw new ManualTimeOverlapException();
         await db.Database.ExecuteSqlRawAsync(
             $"PRAGMA journal_size_limit={SqliteMaintenance.JournalSizeLimitBytes}");
 

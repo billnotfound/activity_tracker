@@ -216,3 +216,9 @@ export const THEMES = {
 
 export const DEFAULT_LIGHT_THEME = 'memphis-80s'
 export const DEFAULT_DARK_THEME = 'memphis-dark'
+
+// Feedback colors are independent of the user's decorative three-color palette.
+export const STATUS_COLORS = {
+  light: { 'success-color': '#176348', 'warning-color': '#805000', 'danger-color': '#AE2034' },
+  dark: { 'success-color': '#16654A', 'warning-color': '#845000', 'danger-color': '#A92838' },
+}

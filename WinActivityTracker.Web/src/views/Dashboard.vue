@@ -37,7 +37,7 @@
           {{ t('dashboard.card.focusDurationTop10') }}
           <small v-if="showActionHint" class="chart-action-hint">{{ t('processActions.chartHint') }}</small>
         </h3>
-        <MemphisSkeleton v-if="loading" :lines="5" />
+        <div v-if="loading" class="chart-container" aria-hidden="true"></div>
         <div v-else ref="focusChartRef" class="chart-container"></div>
       </MemphisCard>
 
@@ -49,8 +49,7 @@
             <LoaderCircle v-if="listenTotalLoading" :size="13" class="listen-refresh-spinner spin" />
           </small>
         </h3>
-        <MemphisSkeleton v-if="loading" :lines="8" />
-        <div v-else class="table-wrapper">
+        <div v-if="!loading" class="table-wrapper">
           <table class="media-table">
             <thead>
               <tr>
@@ -102,7 +101,7 @@
             <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
           </button>
         </div>
-        <MemphisSkeleton v-if="loading" :lines="4" />
+        <div v-if="loading" class="pie-chart-wrapper" aria-hidden="true"></div>
         <div v-else class="pie-chart-wrapper">
           <div ref="pieChartRef" class="pie-chart-container"></div>
           <LoaderCircle v-if="overviewTitleLoading" :size="24" class="overview-title-loading spin" />
@@ -126,7 +125,7 @@
             <ArrowLeft :size="16" /> {{ t('dashboard.pie.back') }}
           </button>
         </div>
-        <MemphisSkeleton v-if="loading" :lines="4" />
+        <div v-if="loading" class="tag-pie-wrapper" aria-hidden="true"></div>
         <div v-else class="tag-pie-wrapper">
           <div ref="tagPieChartRef" class="tag-pie-chart"></div>
           <LoaderCircle v-if="tagTitleLoading" :size="24" class="tag-pie-loading spin" />
@@ -136,6 +135,7 @@
       </MemphisCard>
     </div>
 
+    <ProgramUsageDialog v-model:visible="usageVisible" :process="selectedProcess" :title-scope="contextSource === 'title'" :range-start="actionRange.start" :range-end="actionRange.end" :programs="summary || []" />
     <ProcessActionDrawer
       v-model:visible="actionDrawerVisible"
       :process="selectedProcess"
@@ -158,6 +158,7 @@
       :process-name="selectedProcess.processName || ''"
       :window-title="selectedProcess.windowTitle || ''"
       :raw-window-title="selectedProcess.rawWindowTitle || selectedProcess.windowTitle || ''"
+      :title-scope="contextSource === 'title'"
       :x="contextPoint.x"
       :y="contextPoint.y"
       :replace-handler="replaceDashboardTitle"
@@ -176,6 +177,9 @@
 </template>
 
 <script setup>
+import { useActivityDay } from '../composables/useActivityDay.js'
+import { activityDayLabel, activityBounds, summaryQuery } from '../utils/activityDay.js'
+import ProgramUsageDialog from '../components/ProgramUsageDialog.vue'
 import { ref, inject, onMounted, onUnmounted, computed, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { fmtShortDur, parseUtcTs, toLocalDateString, toLocalDatetimeString } from '../utils/time.js'
@@ -188,9 +192,9 @@ import { buildDisplayMedia, buildMediaRing } from '../utils/dashboardMedia.js'
 import { escapeHtml } from '../utils/html.js'
 import { configWriteHeaders, ensureConfigWriteSucceeded } from '../utils/configVersion.js'
 import MemphisCard from '../components/MemphisCard.vue'
-import MemphisSkeleton from '../components/MemphisSkeleton.vue'
 import TimeWheel from '../components/TimeWheel.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
+import { chartTooltip, useChartTooltipAvoidance } from '../utils/chartTooltip.js'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
 import MediaJumpMenu from '../components/MediaJumpMenu.vue'
 import { ArrowLeft, LoaderCircle, Play, Pause, X } from '@lucide/vue'
@@ -198,6 +202,16 @@ import { ArrowLeft, LoaderCircle, Play, Pause, X } from '@lucide/vue'
 const apiBase = inject('apiBase')
 const { t } = useI18n()
 const { isDark, applyAutoColor } = useTheme()
+const { effectiveDayStart } = useActivityDay()
+const todayLabel = () => activityDayLabel(new Date(), effectiveDayStart.value)
+function summaryUrl(from, to = from) {
+  const [start,end] = activityBounds(from,to,effectiveDayStart.value)
+  return `${apiBase}/api/summary/range?${summaryQuery(start,end)}`
+}
+function mediaQuery(from,to=from) {
+  const [start,end] = activityBounds(from,to,effectiveDayStart.value)
+  return new URLSearchParams({fromAt:start.toISOString(),toAt:end.toISOString()}).toString()
+}
 const router = useRouter()
 
 // Cache icon data to avoid re-fetching every refresh (2s interval)
@@ -213,8 +227,7 @@ const periods = [
 ]
 
 function dashboardIconAtTime() {
-  const [, toDate] = periodRange()
-  return new Date(`${toDate}T23:59:59`).toISOString()
+  return new Date(periodBounds()[1].getTime() - 1).toISOString()
 }
 
 const {
@@ -222,7 +235,7 @@ const {
   wheelYear, wheelMonth, wheelDay,
   yearOptions, monthOptions, dayOptions,
   carryDate, resetDateToToday, refreshCalendar, periodButtonsRef,
-  frameStyle, frameReady, updateFrame, periodRange,
+  frameStyle, frameReady, updateFrame, periodRange, periodBounds,
 } = useDashboardPeriod({ onDateChange: onPickDate })
 const mergeSameProcess = ref(true)
 const summary = ref([])
@@ -246,21 +259,20 @@ const mediaMenuPoint = ref({ x: 0, y: 0 })
 const error = ref('')
 const loading = ref(true)
 const initialRenderReady = ref(false)
+const usageVisible = ref(false)
 const actionDrawerVisible = ref(false)
 const contextMenuVisible = ref(false)
 const drawerView = ref('replace')
 const drawerTagNames = ref([])
 const contextPoint = ref({ x: 0, y: 0 })
 const contextSource = ref('focus')
-let contextClosedAt = 0
-let contextOpenedAt = 0
 const selectedProcess = ref({})
 const selectedProcessColor = ref('var(--primary-color)')
 const selectedProcessIcon = ref('')
 const showActionHint = ref(localStorage.getItem('wta-process-actions-seen') !== '1')
 const actionRange = computed(() => {
-  const [from, to] = periodRange()
-  return { start: new Date(`${from}T00:00:00`), end: new Date(`${to}T23:59:59`) }
+  const [start, end] = periodBounds()
+  return { start, end }
 })
 const tagPieHeading = computed(() => {
   if (selectedTagProcess.value)
@@ -271,96 +283,9 @@ const overviewPieHeading = computed(() => selectedOverviewProcess.value
   ? selectedOverviewProcess.value.displayName || selectedOverviewProcess.value.processName
   : t('dashboard.card.overviewPie'))
 
-const TOOLTIP_GAP = 18
-const TOOLTIP_RIGHT_GUARD = 64
-const TOOLTIP_EDGE_GUARD = 12
-
-function visibleFloatingMenuRect() {
-  for (const selector of ['.context-anchor', '.media-menu-anchor']) {
-    const element = document.querySelector(selector)
-    if (element && element.getClientRects().length) return element.getBoundingClientRect()
-  }
-  return null
-}
-
-function overlaps(a, b) {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
-}
-
-function smartTooltipPosition(point, _params, dom, _rect, size) {
-  const [viewWidth, viewHeight] = size.viewSize
-  const [contentWidth, contentHeight] = size.contentSize
-  dom.dataset.cursorX = String(point[0])
-  dom.dataset.cursorY = String(point[1])
-  let x = point[0] + TOOLTIP_GAP
-  const leftX = point[0] - contentWidth - TOOLTIP_GAP
-  if (x + contentWidth > viewWidth - TOOLTIP_RIGHT_GUARD) x = leftX
-  x = Math.max(TOOLTIP_EDGE_GUARD,
-    Math.min(x, viewWidth - contentWidth - TOOLTIP_RIGHT_GUARD))
-  let y = Math.max(TOOLTIP_EDGE_GUARD,
-    Math.min(point[1] - contentHeight / 2, viewHeight - contentHeight - TOOLTIP_EDGE_GUARD))
-
-  const hostRect = dom.offsetParent?.getBoundingClientRect?.()
-  const menuRect = visibleFloatingMenuRect()
-  if (hostRect && menuRect) {
-    const candidate = {
-      left: hostRect.left + x, top: hostRect.top + y,
-      right: hostRect.left + x + contentWidth, bottom: hostRect.top + y + contentHeight,
-    }
-    if (overlaps(candidate, menuRect)) {
-      const opposite = x > point[0] ? leftX : point[0] + TOOLTIP_GAP
-      if (opposite >= TOOLTIP_EDGE_GUARD
-        && opposite + contentWidth <= viewWidth - TOOLTIP_RIGHT_GUARD) x = opposite
-      else y = menuRect.top > hostRect.top + point[1]
-        ? Math.max(TOOLTIP_EDGE_GUARD, point[1] - contentHeight - TOOLTIP_GAP)
-        : Math.min(viewHeight - contentHeight - TOOLTIP_EDGE_GUARD, point[1] + TOOLTIP_GAP)
-    }
-  }
-  return [x, y]
-}
-
-function repositionVisibleTooltips() {
-  const menuRect = visibleFloatingMenuRect()
-  if (!menuRect) return
-  for (const tooltip of document.querySelectorAll('.wta-chart-tooltip')) {
-    if (getComputedStyle(tooltip).display === 'none' || !tooltip.offsetWidth) continue
-    const tooltipRect = tooltip.getBoundingClientRect()
-    if (!overlaps(tooltipRect, menuRect)) continue
-    const hostRect = tooltip.offsetParent?.getBoundingClientRect?.()
-    if (!hostRect) continue
-    const cursorX = Number(tooltip.dataset.cursorX)
-    const leftOfCursor = hostRect.left + cursorX - tooltipRect.width - TOOLTIP_GAP
-    const rightOfMenu = menuRect.right + TOOLTIP_GAP
-    let viewportLeft = leftOfCursor >= TOOLTIP_EDGE_GUARD
-      ? leftOfCursor : rightOfMenu
-    viewportLeft = Math.max(TOOLTIP_EDGE_GUARD,
-      Math.min(viewportLeft, window.innerWidth - tooltipRect.width - TOOLTIP_RIGHT_GUARD))
-    const localLeft = viewportLeft - hostRect.left
-    const localTop = tooltipRect.top - hostRect.top
-    // ECharts positions HTML tooltips with translate3d rather than `left`, so
-    // update the transform used by its renderer instead of a shadowed property.
-    tooltip.style.left = '0px'
-    tooltip.style.top = '0px'
-    tooltip.style.transform = `translate3d(${localLeft}px, ${localTop}px, 0)`
-  }
-}
-
-watch([contextMenuVisible, mediaMenuVisible], ([processOpen, mediaOpen]) => {
-  if (!processOpen && !mediaOpen) return
-  nextTick(() => {
-    repositionVisibleTooltips()
-    requestAnimationFrame(repositionVisibleTooltips)
-    setTimeout(repositionVisibleTooltips, 100)
-  })
-})
+useChartTooltipAvoidance(() => contextMenuVisible.value || mediaMenuVisible.value)
 
 function openProcessActions(processName, color, nativeEvent = null, source = 'focus', displayName = '', details = {}) {
-  if (contextMenuVisible.value) {
-    if (performance.now() - contextOpenedAt < 260) return
-    setContextMenuVisible(false)
-    return
-  }
-  if (performance.now() - contextClosedAt < 320) return
   if (!processName || processName === t('dashboard.pie.other')) return
   mediaMenuVisible.value = false
   selectedProcess.value = { processName, displayName: displayName || processName, ...details }
@@ -375,15 +300,14 @@ function openProcessActions(processName, color, nativeEvent = null, source = 'fo
   }
   contextSource.value = source
   contextMenuVisible.value = true
-  contextOpenedAt = performance.now()
 }
 
 function setContextMenuVisible(value) {
-  if (!value && contextMenuVisible.value) contextClosedAt = performance.now()
   contextMenuVisible.value = value
 }
 
 function chooseContextAction(action) {
+  if (action === 'overview') { usageVisible.value = true; return }
   if (contextSource.value === 'title' && action === 'isolate') {
     const [from, to] = periodRange()
     router.push({
@@ -391,8 +315,8 @@ function chooseContextAction(action) {
       query: {
         process: selectedProcess.value.processName,
         isolate: '1',
-        from: `${from}T00:00`,
-        to: `${to}T23:59`,
+        from: periodBounds()[0].toISOString(),
+        to: periodBounds()[1].toISOString(),
       },
     })
     return
@@ -447,7 +371,7 @@ async function replaceDashboardTitle(replacement) {
 
 function openTimeSelection(item) {
   const [from, to] = periodRange()
-  router.push({ path: '/history', query: { process: item.processName, timeSelect: '1', from: `${from}T00:00`, to: `${to}T23:59` } })
+  router.push({ path: '/history', query: { process: item.processName, timeSelect: '1', from: periodBounds()[0].toISOString(), to: periodBounds()[1].toISOString() } })
 }
 
 function openMediaJump(item, event) {
@@ -607,8 +531,8 @@ async function openTagProcessTitles(item) {
 async function fetchTitleBreakdown(processName, tag = '') {
   const [from, to] = periodRange()
   const query = new URLSearchParams({
-    from: `${from}T00:00:00`,
-    to: `${to}T23:59:59`,
+    from: periodBounds()[0].toISOString(),
+    to: periodBounds()[1].toISOString(),
     process: processName,
   })
   if (tag) query.set('tag', tag)
@@ -648,7 +572,7 @@ function schedulePolling() {
   stopPolling()
   if (document.hidden || abortController.signal.aborted) return
   const generation = pollingGeneration
-  if (period.value === 'today' && pickDate.value === toLocalDateString()) {
+  if (period.value === 'today' && pickDate.value === todayLabel()) {
     timer = setTimeout(async () => {
       // Keep a live dashboard following the calendar across midnight. A date
       // selected explicitly with the wheels has no timer and is never reset.
@@ -659,7 +583,7 @@ function schedulePolling() {
     return
   }
   const [, to] = periodRange()
-  if (to === toLocalDateString()) timer = setTimeout(async () => {
+  if (to === todayLabel()) timer = setTimeout(async () => {
     await refreshLongRangeTail()
     if (generation === pollingGeneration) schedulePolling()
   }, 10000)
@@ -773,7 +697,7 @@ onMounted(async () => {
     if (r.ok) {
       const stats = await r.json()
       if (stats.oldestRecord) {
-        earliestDate.value = parseUtcTs(stats.oldestRecord)
+        earliestDate.value = new Date(`${activityDayLabel(parseUtcTs(stats.oldestRecord), effectiveDayStart.value)}T00:00:00`)
       }
     }
   } catch (e) {
@@ -940,7 +864,7 @@ async function applySummaryPayload(res, myLoadId) {
 async function refreshLongRangeTail() {
   if (!longRangeBasePayload || document.hidden || abortController.signal.aborted) return
   refreshCalendar()
-  const today = toLocalDateString()
+  const today = todayLabel()
   if (periodRange()[1] !== today) {
     // The selected endpoint is fixed. Finish yesterday's totals once, then
     // stop polling instead of combining a new day's tail with the old base.
@@ -954,9 +878,9 @@ async function refreshLongRangeTail() {
   const myLoadId = ++loadId
   try {
     const [summaryResponse, mediaResponse, totalResponse] = await Promise.all([
-      fetch(`${apiBase}/api/summary/today?date=${today}`, { signal }),
-      fetch(`${apiBase}/api/media/history?limit=100&from=${today}&to=${today}`, { signal }),
-      fetch(`${apiBase}/api/media/listen-total?from=${today}&to=${today}`, { signal }),
+      fetch(summaryUrl(today), { signal }),
+      fetch(`${apiBase}/api/media/history?limit=100&${mediaQuery(today,today)}`, { signal }),
+      fetch(`${apiBase}/api/media/listen-total?${mediaQuery(today,today)}`, { signal }),
     ])
     if (!summaryResponse.ok) throw new Error(`API ${summaryResponse.status}`)
     const tail = await summaryResponse.json()
@@ -988,16 +912,13 @@ async function refreshLongRangeTail() {
 async function fetchSummary(myLoadId, signal) {
   try {
     const [from, to] = periodRange()
-    const url =
-      period.value === 'today'
-        ? `${apiBase}/api/summary/today?date=${pickDate.value}`
-        : `${apiBase}/api/summary/range?from=${from}&to=${to}T23:59:59`
+    const url = summaryUrl(from,to)
     const r = await fetch(url, { signal })
     if (!r.ok) throw new Error(`API ${r.status}`)
     const res = await r.json()
     if (myLoadId !== loadId) return  // stale, newer call in flight
-    if (period.value !== 'today' && to === toLocalDateString() && !Array.isArray(res)) {
-      const tailResponse = await fetch(`${apiBase}/api/summary/today?date=${to}`, { signal })
+    if (period.value !== 'today' && to === todayLabel() && !Array.isArray(res)) {
+      const tailResponse = await fetch(summaryUrl(to), { signal })
       if (tailResponse.ok) {
         const tail = await tailResponse.json()
         if (myLoadId !== loadId) return
@@ -1021,12 +942,12 @@ async function fetchMedia(myLoadId, signal) {
     const limits = { today: 2000, week: 500, month: 2000, halfYear: 5000, year: 5000 }
     const limit = limits[period.value] || 50
     listenTotalLoading.value = true
-    const needsTailBase = period.value !== 'today' && toDate === toLocalDateString()
+    const needsTailBase = period.value !== 'today' && toDate === todayLabel()
     const [historyResponse, totalResponse, tailTotalResponse] = await Promise.all([
-      fetch(`${apiBase}/api/media/history?limit=${limit}&from=${fromDate}&to=${toDate}`, { signal }),
-      fetch(`${apiBase}/api/media/listen-total?from=${fromDate}&to=${toDate}`, { signal }),
+      fetch(`${apiBase}/api/media/history?limit=${limit}&${mediaQuery(fromDate,toDate)}`, { signal }),
+      fetch(`${apiBase}/api/media/listen-total?${mediaQuery(fromDate,toDate)}`, { signal }),
       needsTailBase
-        ? fetch(`${apiBase}/api/media/listen-total?from=${toDate}&to=${toDate}`, { signal })
+        ? fetch(`${apiBase}/api/media/listen-total?${mediaQuery(toDate,toDate)}`, { signal })
         : Promise.resolve(null),
     ])
     if (!historyResponse.ok) throw new Error(`API ${historyResponse.status}`)
@@ -1100,7 +1021,9 @@ async function renderCharts(data) {
   // Fetch icons and colors for all processes (cached by process+atTime)
   const iconDataList = await Promise.all(labels.map(processName => getProcessIcon(processName, atTime)))
   if (renderId !== focusRenderId || !focusChartRef.value) return
-  await applyAutoColor(iconDataList.map(item => item.hasExtractedPalette ? item : {}))
+  if (period.value === 'today' && pickDate.value === todayLabel()) {
+    await applyAutoColor(iconDataList.map(item => item.hasExtractedPalette ? item : {}))
+  }
   if (renderId !== focusRenderId || !focusChartRef.value) return
   const icons = iconDataList.map(d => d.icon)
   const colors = iconDataList.map(d => d.colorPrimary)
@@ -1121,22 +1044,29 @@ async function renderCharts(data) {
   // Focus duration chart
   if (!focusChart) {
     focusChart = echarts.init(focusChartRef.value)
-    focusChart.getZr().on('click', event => {
+    const openColumnMenu = event => {
       const meta = focusChart?._columnActions
       if (!meta?.labels?.length) return
       const point = [event.offsetX, event.offsetY]
-      if (!focusChart.containPixel({ gridIndex: 0 }, point)) return
+      const plot = focusChart.getModel().getComponent('grid', 0).coordinateSystem.getRect()
+      const iconStrip = event.offsetX >= plot.x && event.offsetX <= plot.x + plot.width
+        && event.offsetY >= plot.y + plot.height
+        && event.offsetY <= plot.y + plot.height + meta.iconSize + 16
+      if (!iconStrip && !focusChart.containPixel({ gridIndex: 0 }, point)) return
       const centers = meta.labels.map(label => focusChart.convertToPixel({ xAxisIndex: 0 }, label))
       let nearest = 0
       for (let index = 1; index < centers.length; index++) {
         if (Math.abs(centers[index] - event.offsetX) < Math.abs(centers[nearest] - event.offsetX)) nearest = index
       }
+      event.event?.preventDefault?.()
       const rect = focusChartRef.value.getBoundingClientRect()
       openProcessActions(meta.labels[nearest], meta.colors[nearest], {
         clientX: event.event?.clientX ?? rect.left + event.offsetX,
         clientY: event.event?.clientY ?? rect.top + event.offsetY,
       }, 'focus', meta.displayNames[nearest])
-    })
+    }
+    focusChart.getZr().on('click', openColumnMenu)
+    focusChart.getZr().on('contextmenu', openColumnMenu)
   }
   focusChart.setOption({
     grid: { left: 60, right: 20, top: 20, bottom: Math.max(68, iconSize + 42) },
@@ -1192,8 +1122,7 @@ async function renderCharts(data) {
       },
     ],
     tooltip: {
-      className: 'wta-chart-tooltip',
-      position: smartTooltipPosition,
+      ...chartTooltip(focusChartRef),
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       backgroundColor: surfaceCard,
@@ -1208,7 +1137,7 @@ async function renderCharts(data) {
       },
     },
   })
-  focusChart._columnActions = { labels, colors, displayNames }
+  focusChart._columnActions = { labels, colors, displayNames, iconSize }
 }
 async function renderPieChart(data) {
   if (!pieChartRef.value) return
@@ -1270,12 +1199,12 @@ async function renderPieChart(data) {
   }
 
   const ringData = !selectedOverviewProcess.value && period.value === 'today'
-    ? buildMediaRing(media.value, fromDate, toDate, successColor, period.value === 'today') : []
+    ? buildMediaRing(media.value, ...periodBounds(), successColor, period.value === 'today') : []
 
   if (!pieChart) {
     pieChart = echarts.init(pieChartRef.value)
     pieChart._firstRender = true
-    pieChart.on('click', params => {
+    const selectOverviewItem = params => {
       if (params.data?._type === 'other') {
         if (pieDrillLocked || piePageOffset.value + 5 >= summary.value.length) return
         piePageOffset.value += 5
@@ -1287,6 +1216,17 @@ async function renderPieChart(data) {
         openOverviewProcessTitles(params.data)
       } else if (params.data?._type === 'overviewTitle') {
         openTitleActions(params.data, params.event?.event, 'overviewTitle')
+      }
+    }
+    pieChart.on('click', selectOverviewItem)
+    pieChart.on('contextmenu', params => {
+      params.event?.event?.preventDefault?.()
+      if (['focus', 'overviewTitle'].includes(params.data?._type)) {
+        const item = params.data
+        const displayName = item._displayName || item.name
+        openProcessActions(item._processName, item.itemStyle?.color, params.event?.event, 'pie', displayName)
+      } else {
+        selectOverviewItem(params)
       }
     })
   }
@@ -1302,8 +1242,7 @@ async function renderPieChart(data) {
     animationEasingUpdate: 'cubicInOut',
     color: focusData.map(d => d.itemStyle.color),
     tooltip: {
-      className: 'wta-chart-tooltip',
-      position: smartTooltipPosition,
+      ...chartTooltip(pieChartRef),
       trigger: 'item',
       backgroundColor: surfaceCard,
       borderColor: primaryColor,
@@ -1431,7 +1370,7 @@ async function renderTagPieChart(items) {
 
   if (!tagPieChart) {
     tagPieChart = echarts.init(tagPieChartRef.value)
-    tagPieChart.on('click', params => {
+    const selectTagItem = params => {
       const item = params.data
       if (!item || tagPieDrillLocked) return
       if (item._type === 'tag') {
@@ -1447,6 +1386,17 @@ async function renderTagPieChart(items) {
         openTagProcessTitles(item)
       } else if (item._type === 'tagTitle') {
         openTitleActions(item, params.event?.event, 'tagTitle')
+      }
+    }
+    tagPieChart.on('click', selectTagItem)
+    tagPieChart.on('contextmenu', params => {
+      params.event?.event?.preventDefault?.()
+      if (['tagProcess', 'tagTitle'].includes(params.data?._type)) {
+        const item = params.data
+        const displayName = item._displayName || selectedTagProcess.value?.displayName || item.name
+        openProcessActions(item._processName, item.itemStyle?.color, params.event?.event, 'tagPie', displayName)
+      } else {
+        selectTagItem(params)
       }
     })
   }
@@ -1465,8 +1415,7 @@ async function renderTagPieChart(items) {
       formatter: name => name.length > 16 ? `${name.slice(0, 15)}…` : name,
     },
     tooltip: {
-      className: 'wta-chart-tooltip',
-      position: smartTooltipPosition,
+      ...chartTooltip(tagPieChartRef),
       trigger: 'item',
       backgroundColor: surfaceCard,
       borderColor,

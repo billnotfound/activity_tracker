@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="drawer-fade">
       <div v-if="visible" class="action-shell" @pointerdown.self="close">
-        <aside class="action-drawer" role="dialog" aria-modal="true" :aria-label="t('processActions.title')">
+        <aside ref="drawerRef" class="action-drawer" tabindex="-1" role="dialog" aria-modal="true" :aria-label="t('processActions.title')">
           <div class="origin-line" aria-hidden="true"><span></span></div>
           <header class="drawer-header">
             <div class="process-mark" :style="{ '--process-color': processColor }">
@@ -12,6 +12,7 @@
             <div class="drawer-heading">
               <h2>{{ displayName }}</h2>
               <small v-if="displayName !== processName">{{ processName }}</small>
+              <small v-if="tagScope === 'process-title'">{{ windowTitle }}</small>
             </div>
             <button class="drawer-close" type="button" :aria-label="t('common.close')" @click="close">
               <X :size="20" />
@@ -55,7 +56,7 @@
               </button>
               <button type="button" class="danger-action" :data-hint="t('processActions.hideHelp')" @click="view = 'hide'">
                 <EyeOff :size="20" />
-                <span><b>{{ t('processActions.hide') }}</b></span>
+                <span><b>{{ t(tagScope === 'process-title' ? 'processActions.hideTitle' : 'processActions.hide') }}</b></span>
                 <ChevronRight :size="18" />
               </button>
             </div>
@@ -141,9 +142,9 @@
                     </label>
                     <label>
                       <span>{{ t('tags.column.mode') }}</span>
-                      <span class="mode-toggle" role="radiogroup">
-                        <button type="button" :class="{ active: draft.mode === 'Coexist' }" @click="setDraftMode(draft, 'Coexist')">{{ t('processActions.mode.coexist') }}</button>
-                        <button type="button" :class="{ active: draft.mode === 'Overwrite' }" @click="setDraftMode(draft, 'Overwrite')">{{ t('processActions.mode.overwrite') }}</button>
+                      <span class="mode-toggle" role="group">
+                        <button type="button" :class="{ active: draft.mode === 'Coexist' }" :aria-pressed="draft.mode === 'Coexist'" @click="setDraftMode(draft, 'Coexist')">{{ t('processActions.mode.coexist') }}</button>
+                        <button type="button" :class="{ active: draft.mode === 'Overwrite' }" :aria-pressed="draft.mode === 'Overwrite'" @click="setDraftMode(draft, 'Overwrite')">{{ t('processActions.mode.overwrite') }}</button>
                       </span>
                     </label>
                   </div>
@@ -188,12 +189,12 @@
                 <TriangleAlert :size="30" />
                 <div>
                   <b>{{ t('processActions.hideWarningTitle') }}</b>
-                  <p>{{ t('processActions.hideWarningBody', { process: processName }) }}</p>
+                  <p>{{ t(tagScope === 'process-title' ? 'processActions.hideTitleWarning' : 'processActions.hideWarningBody', { process: processName, title: windowTitle }) }}</p>
                 </div>
               </div>
               <label class="confirm-check">
                 <input v-model="hideConfirmed" type="checkbox" />
-                <span>{{ t('processActions.hideConfirm') }}</span>
+                <span>{{ t(tagScope === 'process-title' ? 'processActions.hideTitleConfirm' : 'processActions.hideConfirm') }}</span>
               </label>
               <button type="button" class="danger-confirm" :disabled="saving || !hideConfirmed" @click="hideProcess">
                 <EyeOff :size="17" /> {{ t('processActions.hide') }}
@@ -213,10 +214,11 @@ import {
   ArrowLeft, CaseUpper, ChevronRight, CircleCheck, Clock3, EyeOff, Focus,
   History, ListTree, MousePointer2, Plus, Save, Tags, TriangleAlert, X,
 } from '@lucide/vue'
+import { useModalFocus } from '../composables/useModalFocus.js'
 import RegexBuilder from './RegexBuilder.vue'
 import { useI18n } from '../i18n/index.js'
 import { fmtShortDur, parseUtcTs, toLocalDatetimeString } from '../utils/time.js'
-import { escapeRegex } from '../utils/tagRules.js'
+import { escapeRegex, exactTagTitlePattern, isExactTagTarget } from '../utils/tagRules.js'
 import { configWriteHeaders, ensureConfigWriteSucceeded } from '../utils/configVersion.js'
 
 const props = defineProps({
@@ -329,8 +331,8 @@ function onKeydown(event) {
   if (view.value !== 'menu') goBack()
   else close()
 }
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+const drawerRef = ref(null)
+useModalFocus(drawerRef, () => props.visible, () => { if (view.value !== 'menu') goBack(); else close() })
 function createTagDraft(name = '') {
   const useTitle = props.tagScope === 'process-title'
   return {
@@ -530,10 +532,10 @@ async function hideProcess() {
   try {
     const status = await getConfig()
     const rules = [...(status.tags?.rules || [])]
+    const titlePattern = exactTagTitlePattern(props.tagScope === 'process-title' ? 'history' : 'dashboard', rawWindowTitle.value, windowTitle.value)
     const exists = rules.some(rule => rule.tag === '__hidden'
-      && String(rule.process || '').toLowerCase() === processName.value.toLowerCase()
-      && !rule.titlePattern)
-    if (!exists) rules.push({ tag: '__hidden', process: processName.value, titlePattern: null, weight: 100, mode: 'Overwrite' })
+      && isExactTagTarget(rule, processName.value, titlePattern))
+    if (!exists) rules.push({ tag: '__hidden', process: processName.value, titlePattern, weight: 100, mode: 'Overwrite' })
     const r = await fetch(`${apiBase}/api/tags/save`, {
       method: 'PUT', headers: configWriteHeaders(status.tags?.lastWrite), body: JSON.stringify(rules),
     })
@@ -738,7 +740,7 @@ async function hideProcess() {
 .mode-toggle { display: grid; grid-template-columns: 1fr 1fr; min-height: 40px; border: 2px solid var(--surface-200); }
 .mode-toggle button { border: 0; background: transparent; color: var(--text-color); font-weight: 600; cursor: pointer; }
 .mode-toggle button + button { border-left: 2px solid var(--surface-200); }
-.mode-toggle button.active { background: var(--primary-color); color: white; }
+.mode-toggle button.active { background: var(--primary-color); color: var(--on-primary); }
 .title-match-toggle { justify-self: start; min-height: 32px; padding: 5px 8px; border: 1px solid var(--surface-300); background: transparent; color: var(--text-color-secondary); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .draft-matcher { display: grid; gap: 9px; padding-top: 9px; border-top: 1px solid var(--surface-200); }
 .draft-matcher-title { display: flex; align-items: center; justify-content: space-between; color: var(--text-color); font-size: .8rem; font-weight: 600; }

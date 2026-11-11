@@ -254,7 +254,7 @@ public class TagService
         }
     }
 
-    private static bool WildcardMatch(string pattern, string input)
+    public static bool WildcardMatch(string pattern, string input)
     {
         if (pattern.StartsWith("regex:", StringComparison.OrdinalIgnoreCase))
         {

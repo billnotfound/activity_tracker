@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" fill="none">
+  <title>Memphis rocking triangle — static phase zero</title>
+  <desc>Triangle centroid is (64,64). Rotate the motion group by 12*sin(2*pi*p) degrees around its centroid over 5 seconds. Position and velocity match at the loop boundary.</desc>
+  <metadata>{"version":1,"durationSeconds":5,"phaseRange":[0,1],"target":"[data-motion]","transform":"rotate(12*sin(2*pi*p) 64 64)","center":[64,64],"angleAmplitude":12,"loop":"sinusoidal-rotation","reducedMotionPhase":0}</metadata>
+  <g data-motion="rock" transform="rotate(0 64 64)">
+    <path d="M64 24 L98 84 H30 Z" stroke="var(--secondary-color, #E76F51)" stroke-width="7" stroke-linejoin="round"/>
+    <path d="M57 67 L64 53 L71 67" stroke="var(--text-color, #000000)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

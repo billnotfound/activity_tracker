@@ -18,13 +18,21 @@
               <small v-if="inlineError" class="inline-error">{{ inlineError }}</small>
             </form>
             <div v-else-if="inlineAction === 'tags'" key="tags" class="tag-quick-picker">
+              <div v-if="titleScope && processTags.length" class="tag-match-info">
+                <strong>{{ t('processActions.parentTags') }}</strong>
+                <span>{{ processTags.join(' · ') }}</span>
+              </div>
+              <div v-if="matchedTags.length" class="tag-match-info">
+                <strong>{{ t('processActions.matchedTags') }}</strong>
+                <span>{{ matchedTags.join(' · ') }}</span>
+              </div>
               <div class="tag-chip-list" :aria-busy="tagLoading">
                 <button
                   v-for="tag in availableTags"
                   :key="tag"
                   type="button"
                   class="tag-chip"
-                  :class="{ selected: selectedTags.includes(tag) }"
+                  :class="{ selected: selectedTags.includes(tag), inherited: titleScope && processTags.includes(tag) && matchedTags.includes(tag) }"
                   :title="tag"
                   @click="toggleTag(tag)"
                 >
@@ -84,6 +92,7 @@ const props = defineProps({
   processName: { type: String, default: '' },
   windowTitle: { type: String, default: '' },
   rawWindowTitle: { type: String, default: '' },
+  titleScope: { type: Boolean, default: false },
   x: { type: Number, default: 0 },
   y: { type: Number, default: 0 },
   replaceHandler: { type: Function, default: null },
@@ -104,32 +113,36 @@ const tagRulesLastWrite = ref('')
 const inlineError = ref('')
 const processHasTagRule = ref(false)
 const existingExactTags = ref([])
+const processTags = ref([])
+const matchedTags = ref([])
+let targetRevision = 0
 
 const items = computed(() => {
-  if (props.page === 'dashboard') return [
+  const overview = { action: 'overview', icon: Clock3, label: t(props.titleScope ? 'usage.titleScoped' : 'usage.title'), hint: t('usage.menuHelp') }
+  if (props.page === 'dashboard') return [overview,
       { action: 'replace', icon: Type, label: t('processActions.replace'), hint: t('processActions.replaceHelp') },
       { action: 'usage', icon: ListTree, label: t('processActions.usage'), hint: t('processActions.usageHelp') },
       { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
-      { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
+      { action: 'hide', icon: EyeOff, label: t(props.titleScope ? 'processActions.hideTitle' : 'processActions.hide'), hint: t('processActions.hideHelp') },
     ]
-  if (props.page === 'title') return [
+  if (props.page === 'title') return [overview,
     { action: 'isolate', icon: Focus, label: t('processActions.onlyProcess'), hint: t('processActions.onlyProcessHelp') },
     { action: 'normalize', icon: CaseUpper, label: t('processActions.normalize'), hint: t('processActions.normalizeHelp') },
     { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
-    { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
+    { action: 'hide', icon: EyeOff, label: t(props.titleScope ? 'processActions.hideTitle' : 'processActions.hide'), hint: t('processActions.hideHelp') },
   ]
-  return [
+  return [overview,
       { action: 'isolate', icon: Focus, label: t('processActions.onlyProcess'), hint: t('processActions.onlyProcessHelp') },
       { action: 'normalize', icon: CaseUpper, label: t('processActions.normalize'), hint: t('processActions.normalizeHelp') },
       { action: 'time', icon: Clock3, label: t('processActions.time'), hint: t('processActions.timeSelectHelp') },
       { action: 'tag', icon: Tags, label: t('processActions.addTag'), hint: t('processActions.addTagHelp') },
-      { action: 'hide', icon: EyeOff, label: t('processActions.hide'), hint: t('processActions.hideHelp') },
+      { action: 'hide', icon: EyeOff, label: t(props.titleScope ? 'processActions.hideTitle' : 'processActions.hide'), hint: t('processActions.hideHelp') },
     ]
 })
 
 const positionStyle = computed(() => {
   const width = 238
-  const height = props.page === 'history' ? 255 : 210
+  const height = items.value.length * 44 + 32
   const left = Math.max(10, Math.min(props.x + 12, window.innerWidth - width - 10))
   const top = Math.max(10, Math.min(props.y - 8, window.innerHeight - height - 10))
   return { left: `${left}px`, top: `${top}px` }
@@ -142,7 +155,7 @@ async function choose(action) {
     return
   }
   if (action === 'tag') {
-    if (props.page === 'history' && !props.rawWindowTitle && !props.windowTitle) {
+    if (props.page === 'history' && !props.titleScope) {
       emit('create-tag', [''])
       close()
       return
@@ -178,6 +191,7 @@ async function openReplacementEditor() {
   }
 }
 async function openTagPicker() {
+  const revision = targetRevision
   inlineError.value = ''
   inlineAction.value = 'tags'
   selectedTags.value = []
@@ -187,9 +201,14 @@ async function openTagPicker() {
   tagState.value = 'idle'
   tagLoading.value = true
   try {
-    const response = await fetch('/api/tags/status')
-    if (!response.ok) return
+    const query = new URLSearchParams({ process: props.processName })
+    if (props.titleScope) query.set('title', props.rawWindowTitle || props.windowTitle)
+    const response = await fetch(`/api/tags/status?${query}`)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const status = await response.json()
+    if (revision !== targetRevision || !props.visible) return
+    processTags.value = status.processTags || []
+    matchedTags.value = status.matchedTags || []
     tagRules.value = status.tags?.rules || []
     tagRulesLastWrite.value = status.tags?.lastWrite || ''
     availableTags.value = [...new Set(tagRules.value
@@ -201,8 +220,10 @@ async function openTagPicker() {
     processHasTagRule.value = tagRules.value.some(rule =>
       String(rule.process || '').toLowerCase() === props.processName.toLowerCase()
       && rule.tag && !rule.tag.startsWith('_'))
+  } catch (error) {
+    if (revision === targetRevision) inlineError.value = t('settings.operationFailed', { message: error.message })
   } finally {
-    tagLoading.value = false
+    if (revision === targetRevision) tagLoading.value = false
   }
 }
 function toggleTag(tag) {
@@ -211,7 +232,7 @@ function toggleTag(tag) {
     : [...selectedTags.value, tag]
 }
 function targetTitlePattern() {
-  return exactTagTitlePattern(props.page === 'title' ? 'history' : props.page,
+  return exactTagTitlePattern(props.titleScope ? 'history' : 'dashboard',
     props.rawWindowTitle, props.windowTitle)
 }
 function isExactTargetRule(rule) {
@@ -273,7 +294,8 @@ function handleEscape() {
   if (inlineAction.value) inlineAction.value = ''
   else close()
 }
-watch(() => props.visible, visible => {
+watch([() => props.visible, () => props.processName, () => props.rawWindowTitle, () => props.titleScope], ([visible]) => {
+  targetRevision++
   if (!visible) return
   inlineAction.value = ''
   replaceState.value = 'idle'
@@ -282,6 +304,8 @@ watch(() => props.visible, visible => {
   tagRulesLastWrite.value = ''
   inlineError.value = ''
   tagState.value = 'idle'
+  processTags.value = []
+  matchedTags.value = []
 })
 useFloatingMenuDismiss({
   rootRef: contextAnchorRef,
@@ -292,6 +316,9 @@ useFloatingMenuDismiss({
 </script>
 
 <style lang="scss" scoped>
+.tag-match-info { display: grid; gap: 3px; font-size: .72rem; line-height: 1.4; }
+.tag-match-info strong { color: var(--text-color-secondary); }
+.tag-chip.inherited:not(.selected) { border-color: var(--secondary-color); }
 .context-layer { position: fixed; inset: 0; z-index: 10000020; pointer-events: none; }
 .context-anchor { --menu-line: color-mix(in srgb, var(--text-color) 82%, transparent); position: fixed; width: 238px; pointer-events: auto; }
 .context-line { width: 100%; height: 2px; background: var(--menu-line); transform-origin: left; animation: lineGrow 130ms cubic-bezier(.2,.8,.2,1) both; }
@@ -374,7 +401,7 @@ useFloatingMenuDismiss({
 .tag-check-enter-from, .tag-check-leave-to { opacity: 0; transform: rotate(-55deg) scale(.45); width: 0; }
 .tag-picker-actions { display: grid; grid-template-columns: 36px 1fr; gap: 5px; border-top: 1px solid var(--surface-200); padding-top: 5px; }
 .new-tag-button, .apply-tags-button { min-height: 34px; border: 1px solid var(--menu-line); background: transparent; color: var(--text-color); display: grid; place-items: center; cursor: pointer; }
-.apply-tags-button { background: var(--primary-color); color: white; }
+.apply-tags-button { background: var(--primary-color); color: var(--on-primary); }
 .apply-tags-button:disabled { opacity: .45; cursor: not-allowed; }
 .spin { animation: spin 700ms linear infinite; }
 .menu-swap-enter-active, .menu-swap-leave-active { transition: opacity 120ms ease, transform 150ms ease; }

@@ -9,8 +9,10 @@
   <div class="time-anomaly-page" :class="{ embedded }">
     <h2 v-if="!embedded" class="page-title">{{ t('timeAnomaly.title') }}</h2>
 
+    <div v-if="loadError" class="ui-notice error" role="alert">{{ loadError }} <button class="p-button p-button-secondary" @click="load">{{ t('common.retry') }}</button></div>
+    <div v-else-if="!loaded" class="ui-notice">{{ t('common.loading') }}</div>
     <!-- Current status card -->
-    <section class="memphis-box status-card">
+    <section v-if="loaded" class="memphis-box status-card">
       <h3 class="section-title">{{ t('timeAnomaly.statusCard.title') }}</h3>
       <div class="current-time-state" :class="{ problem: activeTotal, unavailable: ntp.succeeded === false }">
         <TriangleAlert v-if="activeTotal" :size="24" />
@@ -44,7 +46,7 @@
     </section>
 
     <!-- Anomaly list -->
-    <section class="memphis-box list-card">
+    <section v-if="loaded" class="memphis-box list-card">
       <h3 class="section-title">{{ t('timeAnomaly.list.title') }}</h3>
       <button v-if="!activeTotal" type="button" class="empty empty-action" @click="startManualCorrection">
         <CircleCheck :size="28" />
@@ -141,6 +143,8 @@ const apiBase = inject('apiBase')
 const { t, locale } = useI18n()
 const router = useRouter()
 
+const loaded = ref(false)
+const loadError = ref('')
 const items = ref([])
 const ntp = ref({})
 const checking = ref(false)
@@ -158,12 +162,14 @@ const activeItems = computed(() => items.value.filter(item => activeStatuses.has
 const archivedItems = computed(() => items.value.filter(item => !activeStatuses.has(item.status)))
 
 async function load() {
+  loaded.value = false
+  loadError.value = ''
   try {
     const [activeResponse, archivedResponse] = await Promise.all([
       fetch(`${apiBase}/api/time-anomalies?limit=500&scope=active`),
       fetch(`${apiBase}/api/time-anomalies?limit=500&scope=archived`),
     ])
-    if (!activeResponse.ok || !archivedResponse.ok) return
+    if (!activeResponse.ok || !archivedResponse.ok) throw new Error(`HTTP ${activeResponse.status}/${archivedResponse.status}`)
     const [activeJson, archivedJson] = await Promise.all([
       activeResponse.json(), archivedResponse.json(),
     ])
@@ -173,8 +179,9 @@ async function load() {
     activeTotal.value = Number(activeJson.total ?? activeJson.activeCount ?? active.length)
     archivedTotal.value = Number(archivedJson.total ?? archivedJson.archivedCount ?? archived.length)
     ntp.value = activeJson.ntp || {}
+    loaded.value = true
   } catch (e) {
-    console.error('load anomalies:', e)
+    loadError.value = t('settings.operationFailed', { message: e.message })
   }
 }
 async function checkNtp() {
@@ -297,13 +304,7 @@ onMounted(load)
 
 .time-anomaly-page.embedded .status-card { margin-top: 0; }
 
-.page-title {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 1px;
-  margin-bottom: 24px;
-  color: var(--text-color);
-}
+
 
 .section-title {
   font-size: 1rem;

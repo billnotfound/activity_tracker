@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 80" width="160" height="80" fill="none" overflow="hidden">
+  <title>Memphis travelling wave — static phase zero</title>
+  <desc>Repeated cubic waves, wavelength 64, baseline 40, amplitude 12. Translate the motion group right by 64*p over 4 seconds. Extra waves cover both edges throughout the cycle.</desc>
+  <metadata>{"version":1,"durationSeconds":4,"phaseRange":[0,1],"target":"[data-motion]","transform":"translate(64*p 0)","wavelength":64,"baseline":40,"amplitude":12,"loop":"periodic-translation","reducedMotionPhase":0}</metadata>
+  <g data-motion="translate" transform="translate(0 0)">
+    <path d="M-128 40 c8-16 24-16 32 0 s24 16 32 0 s24-16 32 0 s24 16 32 0 s24-16 32 0 s24 16 32 0 s24-16 32 0 s24 16 32 0 s24-16 32 0 s24 16 32 0 s24-16 32 0 s24 16 32 0" stroke="var(--accent-color, #2A9D8F)" stroke-width="7" stroke-linecap="round"/>
+  </g>
+</svg>

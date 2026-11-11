@@ -46,10 +46,11 @@ export function buildDisplayMedia(media, { now = Date.now(), formatDuration, for
 }
 
 export function buildMediaRing(media, fromDate, toDate, successColor, isToday) {
-  const periodStart = new Date(`${fromDate}T00:00:00`).getTime()
+  const periodStart = fromDate instanceof Date ? fromDate.getTime() : new Date(`${fromDate}T00:00:00`).getTime()
+  const end = toDate instanceof Date ? toDate.getTime() : new Date(`${toDate}T23:59:59`).getTime()
   const periodEnd = isToday
-    ? Math.min(Date.now(), new Date(`${toDate}T23:59:59`).getTime())
-    : new Date(`${toDate}T23:59:59`).getTime()
+    ? Math.min(Date.now(), end)
+    : end
 
   const filtered = media
     .filter(item => item.playbackStatus === 'Playing' && !item.isAnomalous)

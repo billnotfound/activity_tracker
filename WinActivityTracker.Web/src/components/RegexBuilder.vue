@@ -1,10 +1,10 @@
 <template>
   <div class="regex-builder">
-    <div class="builder-mode" role="radiogroup" :aria-label="t('processActions.matcher.mode')">
+    <div class="builder-mode" role="group" :aria-label="t('processActions.matcher.mode')">
       <button
         type="button"
         class="mode-button"
-        :class="{ active: mode === 'guided' }"
+        :class="{ active: mode === 'guided' }" :aria-pressed="mode === 'guided'"
         @click="mode = 'guided'"
       >
         <WandSparkles :size="16" />
@@ -13,7 +13,7 @@
       <button
         type="button"
         class="mode-button"
-        :class="{ active: mode === 'direct' }"
+        :class="{ active: mode === 'direct' }" :aria-pressed="mode === 'direct'"
         @click="mode = 'direct'"
       >
         <Code2 :size="16" />
@@ -25,11 +25,11 @@
       <div v-for="(part, index) in parts" :key="part.id" class="match-step">
         <div class="step-number">{{ index + 1 }}</div>
         <div class="step-body">
-          <label :for="`match-${part.id}`">
+          <label :for="`${fieldId}-match-${part.id}`">
             {{ index === 0 ? t('processActions.matcher.first') : t('processActions.matcher.and') }}
           </label>
           <input
-            :id="`match-${part.id}`"
+            :id="`${fieldId}-match-${part.id}`"
             v-model="part.value"
             type="text"
             class="action-input"
@@ -56,9 +56,9 @@
       <div v-for="(part, index) in excludes" :key="part.id" class="match-step exclude-step">
         <div class="step-number"><CircleMinus :size="15" /></div>
         <div class="step-body">
-          <label :for="`exclude-${part.id}`">{{ index === 0 ? t('processActions.matcher.exclude') : t('processActions.matcher.excludeAnd') }}</label>
+          <label :for="`${fieldId}-exclude-${part.id}`">{{ index === 0 ? t('processActions.matcher.exclude') : t('processActions.matcher.excludeAnd') }}</label>
           <input
-            :id="`exclude-${part.id}`"
+            :id="`${fieldId}-exclude-${part.id}`"
             v-model="part.value"
             type="text"
             class="action-input"
@@ -81,9 +81,9 @@
     </template>
 
     <div v-else class="direct-field">
-      <label for="direct-regex">{{ t('processActions.matcher.regexLabel') }}</label>
+      <label :for="`${fieldId}-direct`">{{ t('processActions.matcher.regexLabel') }}</label>
       <input
-        id="direct-regex"
+        :id="`${fieldId}-direct`"
         v-model="directRegex"
         type="text"
         class="action-input mono"
@@ -100,7 +100,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, useId } from 'vue'
 import { CircleMinus, Code2, Plus, WandSparkles, X } from '@lucide/vue'
 import { useI18n } from '../i18n/index.js'
 
@@ -108,10 +108,12 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   initialText: { type: String, default: '' },
 })
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'validity-change'])
 const { t } = useI18n()
 
+const fieldId = useId()
 let partId = 0
+let emittedValue
 const mode = ref(props.modelValue ? 'direct' : 'guided')
 const parts = ref([{ id: ++partId, value: props.initialText || '' }])
 const excludes = ref([])
@@ -166,11 +168,14 @@ function removeExclude(index) {
 }
 
 function emitRegex() {
-  emit('update:modelValue', regexError.value ? '' : output.value)
+  emit('validity-change', !regexError.value)
+  emittedValue = regexError.value ? '' : output.value
+  emit('update:modelValue', emittedValue)
 }
 
 watch(mode, emitRegex)
 watch(() => props.modelValue, value => {
+  if (value === emittedValue) return
   if (mode.value === 'direct' && value !== directRegex.value) directRegex.value = value || ''
 })
 
@@ -202,7 +207,7 @@ emitRegex()
   font-weight: 600;
 
   & + & { border-left: 2px solid var(--surface-200); }
-  &.active { background: var(--primary-color); color: white; }
+  &.active { background: var(--primary-color); color: var(--on-primary); }
   &:focus-visible { outline: 3px solid var(--accent-color); outline-offset: -3px; }
 }
 

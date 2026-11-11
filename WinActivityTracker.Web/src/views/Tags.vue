@@ -5,6 +5,10 @@
   <div class="tags-page" :class="{ embedded }">
     <h2 v-if="!embedded" class="page-title">{{ t('tags.pageTitle') }}</h2>
 
+    <div v-if="tagsConflict || titleConflict" class="ui-notice warning" role="alert">
+      {{ t('tags.externalChange') }}
+      <button type="button" class="p-button p-button-secondary" @click="reloadRules">{{ t('tags.reload') }}</button>
+    </div>
     <!-- Alerts -->
     <div v-if="tagError" class="alert-banner error mb-3">
       <strong>{{ t('tags.tagsError') }}</strong> {{ tagError }}
@@ -91,8 +95,8 @@
         </Column>
         <Column field="mode" :header="t('tags.column.mode')" style="width: 170px">
           <template #body="{ data }">
-            <span class="table-mode-toggle" role="radiogroup">
-              <button v-for="m in modes" :key="m.v" type="button" :class="{ active: data.mode === m.v }" @click="data.mode = m.v; markDirty(data)">{{ m.label }}</button>
+            <span class="table-mode-toggle" role="group">
+              <button v-for="m in modes" :key="m.v" type="button" :class="{ active: data.mode === m.v }" :aria-pressed="data.mode === m.v" @click="data.mode = m.v; markDirty(data)">{{ m.label }}</button>
             </span>
           </template>
         </Column>
@@ -269,14 +273,16 @@ const titleSaving = ref(false)
 const titleNormalizing = ref(false)
 const titleNormalizeMsg = ref('')
 const tagsDirty = ref(false)
+const tagsConflict = ref(false)
+const titleConflict = ref(false)
 const titleDirty = ref(false)
 
 const newTitleCount = computed(() => titleRules.value.filter(r => !r._saved && r.process).length)
 
-const modes = [
+const modes = computed(() => [
   { v: 'Coexist', label: t('tags.mode.coexist') },
   { v: 'Overwrite', label: t('tags.mode.overwrite') },
-]
+])
 
 const newCount = computed(() => rules.value.filter(r => !r._saved && r.tag).length)
 
@@ -348,7 +354,9 @@ async function loadRules() {
     // ---- tags.json ----
     const tagsWrite = data.tags?.lastWrite || ''
     tagError.value = data.tags?.error || ''
-    if (tagsWrite !== lastTagsWrite.value || !tagsWrite) {
+    if ((tagsWrite !== lastTagsWrite.value || !tagsWrite) && (tagsDirty.value || rules.value.some(r => !r._saved))) {
+      tagsConflict.value = true
+    } else if (tagsWrite !== lastTagsWrite.value || !tagsWrite) {
       lastTagsWrite.value = tagsWrite
       const serverRules = (data.tags?.rules || []).map(rule => ({
         tag: rule.tag || '',
@@ -366,7 +374,9 @@ async function loadRules() {
     // ---- title_rules.json ----
     const titleWrite = data.titleRules?.lastWrite || ''
     titleRulesError.value = data.titleRules?.error || ''
-    if (titleWrite !== lastTitleWrite.value || !titleWrite) {
+    if ((titleWrite !== lastTitleWrite.value || !titleWrite) && (titleDirty.value || titleRules.value.some(r => !r._saved))) {
+      titleConflict.value = true
+    } else if (titleWrite !== lastTitleWrite.value || !titleWrite) {
       lastTitleWrite.value = titleWrite
       const serverTitleRules = (data.titleRules?.rules || []).map(rule => ({
         process: rule.process || '',
@@ -399,7 +409,7 @@ function addRule() {
 }
 
 function removeRule(index) {
-  if (rules.value[index]?._saved) tagsDirty.value = true
+  if (rules.value[index]) tagsDirty.value = true
   rules.value.splice(index, 1)
 }
 
@@ -415,7 +425,7 @@ function addTitleRule() {
 }
 
 function removeTitleRule(index) {
-  if (titleRules.value[index]?._saved) titleDirty.value = true
+  if (titleRules.value[index]) titleDirty.value = true
   titleRules.value.splice(index, 1)
 }
 
@@ -427,6 +437,14 @@ function titleRowClass(data) {
   return data._saved ? '' : 'unsaved-row'
 }
 
+async function reloadRules() {
+  if (!window.confirm(t('tags.discardConfirm'))) return
+  rules.value = []; titleRules.value = []
+  tagsDirty.value = false; titleDirty.value = false
+  tagsConflict.value = false; titleConflict.value = false
+  lastTagsWrite.value = ''; lastTitleWrite.value = ''
+  await loadRules()
+}
 async function saveRules() {
   saving.value = true
   savedMsg.value = ''
@@ -450,6 +468,8 @@ async function saveRules() {
       const data = await r.json()
       savedMsg.value = data.message || t('tags.savedCount', { count: data.saved })
       tagsDirty.value = false
+      tagsConflict.value = false
+      rules.value.forEach(r => { r._saved = true })
       lastTagsWrite.value = ''
       await loadRules()
     } else {
@@ -486,6 +506,8 @@ async function saveTitleRules() {
       const data = await r.json()
       titleSavedMsg.value = t('tags.titleRule.savedCount', { count: data.saved })
       titleDirty.value = false
+      titleConflict.value = false
+      titleRules.value.forEach(r => { r._saved = true })
       lastTitleWrite.value = ''
       await loadRules()
     } else {
@@ -528,41 +550,11 @@ async function normalizeDb() {
   width: 100%;
 }
 
-.page-title {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 1px;
-  margin-bottom: 24px;
-  color: var(--text-color);
-}
 
-.alert-banner {
-  padding: 12px 16px;
-  border: 2px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
 
-  &.success {
-    background: var(--success-color);
-    color: white;
-  }
 
-  &.error {
-    background: var(--danger-color);
-    color: white;
-  }
-}
 
-.close-btn {
-  background: transparent;
-  border: none;
-  color: white;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0 8px;
-}
+
 
 .rules-card {
   min-height: 400px;

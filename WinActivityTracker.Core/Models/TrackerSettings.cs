@@ -20,6 +20,15 @@ public class TrackerSettings
     // Firefox tabs, IDE windows, etc. won't inflate the switch count.
     public bool MergeSameProcessSwitches { get; set; } = true;
 
+    public bool NightOwlMode { get; set; }
+    public int DayStartMinutes { get; set; } = 240;
+
+    public DateTime GetActivityDayStart(DateTime localNow)
+    {
+        var start = localNow.Date.AddMinutes(NightOwlMode ? Math.Clamp(DayStartMinutes, 0, 1439) : 0);
+        return start > localNow ? start.AddDays(-1) : start;
+    }
+
     // How often WindowTracker enumerates visible windows and checks focus (seconds). Min: 1.
     public int WindowPollSeconds { get; set; } = 3;
 
