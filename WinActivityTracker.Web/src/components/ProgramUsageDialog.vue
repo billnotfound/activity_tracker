@@ -96,7 +96,7 @@ let reloadTimer
 const close = () => emit('update:visible', false)
 useModalFocus(dialog, () => props.visible, close)
 const displayName = computed(() => props.programs.find(p => p.processName === name.value)?.displayName || (props.process.processName === name.value && props.process.displayName) || name.value)
-const heading = computed(() => t(titleMode.value ? 'usage.titleScoped' : 'usage.title'))
+const heading = computed(() => t('usage.title'))
 const boundary = computed(() => `${String(Math.floor(effectiveDayStart.value/60)).padStart(2,'0')}:${String(effectiveDayStart.value%60).padStart(2,'0')}`)
 const validRange = computed(() => Number.isFinite(+new Date(from.value)) && +new Date(to.value) > +new Date(from.value))
 const customDirty = computed(() => computedRange.value !== `${from.value}|${to.value}`)

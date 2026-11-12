@@ -118,7 +118,7 @@ const matchedTags = ref([])
 let targetRevision = 0
 
 const items = computed(() => {
-  const overview = { action: 'overview', icon: Clock3, label: t(props.titleScope ? 'usage.titleScoped' : 'usage.title'), hint: t('usage.menuHelp') }
+  const overview = { action: 'overview', icon: Clock3, label: t('usage.title'), hint: t('usage.menuHelp') }
   if (props.page === 'dashboard') return [overview,
       { action: 'replace', icon: Type, label: t('processActions.replace'), hint: t('processActions.replaceHelp') },
       { action: 'usage', icon: ListTree, label: t('processActions.usage'), hint: t('processActions.usageHelp') },

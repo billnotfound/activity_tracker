@@ -53,6 +53,7 @@
             @pointerup="onTimelinePointerUp"
             @pointercancel="onTimelinePointerUp"
             @auxclick.prevent
+            @contextmenu.prevent
           >
             <div ref="timelineChartRef" class="timeline-chart"></div>
             <!-- Hover overlay: a canvas layer painted with the background color
@@ -77,7 +78,7 @@
               <div class="selection-mask mask-left" :style="selectionLeftMaskStyle"></div>
               <div class="selection-mask mask-right" :style="selectionRightMaskStyle"></div>
               <div v-if="showMovedSlice && timeSelection.animationPhase !== 'source'" class="repair-source-cutout" :style="selectedRangeStyle" aria-hidden="true"></div>
-              <div class="target-range" :style="targetRangeStyle" @pointerdown.stop="onSelectionPointerDown($event, 'target')">
+              <div class="target-range" :style="targetRangeStyle" @pointerdown="onSelectionPointerDown($event, 'target')">
                 <span>{{ t('history.time.target') }}</span>
               </div>
               <div
@@ -89,10 +90,10 @@
               >
                 <canvas ref="repairPreviewCanvasRef"></canvas>
               </div>
-              <div class="selected-range" :style="selectedRangeStyle" @pointerdown.stop="onSelectionPointerDown($event, 'move')">
-                <button class="selection-handle left" type="button" :aria-label="t('history.time.dragStart')" @pointerdown.stop="onSelectionPointerDown($event, 'start')"><ChevronLeft :size="24" /></button>
+              <div class="selected-range" :style="selectedRangeStyle" @pointerdown="onSelectionPointerDown($event, 'move')">
+                <button class="selection-handle left" type="button" :aria-label="t('history.time.dragStart')" @pointerdown="onSelectionPointerDown($event, 'start')"><ChevronLeft :size="24" /></button>
                 <span>{{ t('history.time.selected') }}</span>
-                <button class="selection-handle right" type="button" :aria-label="t('history.time.dragEnd')" @pointerdown.stop="onSelectionPointerDown($event, 'end')"><ChevronRight :size="24" /></button>
+                <button class="selection-handle right" type="button" :aria-label="t('history.time.dragEnd')" @pointerdown="onSelectionPointerDown($event, 'end')"><ChevronRight :size="24" /></button>
               </div>
             </div>
           </div>
@@ -133,13 +134,9 @@
 
           <section v-if="timeSelection.active" class="time-correction-panel">
             <header>
-              <div>
-                <span>{{ t('history.time.kicker') }}</span>
-                <h4>{{ t('history.time.title') }}</h4>
-              </div>
+              <h4>{{ t('history.time.title') }}</h4>
               <button type="button" :disabled="timeSelection.applying" @click="cancelTimeSelection"><X :size="17" /> {{ t('common.cancel') }}</button>
             </header>
-            <p>{{ t('history.time.help') }}</p>
             <div class="time-correction-summary">
               <div><span>{{ t('history.time.from') }}</span><b>{{ selectionRangeLabel }}</b></div>
               <div><span>{{ t('history.time.to') }}</span><b>{{ targetRangeLabel }}</b></div>
@@ -219,6 +216,7 @@ import { echarts } from '../utils/echartsInit.js'
 import MemphisCard from '../components/MemphisCard.vue'
 import TimeRangePicker from '../components/TimeRangePicker.vue'
 import ProcessActionDrawer from '../components/ProcessActionDrawer.vue'
+import ProgramUsageDialog from '../components/ProgramUsageDialog.vue'
 import { chartTooltip, useChartTooltipAvoidance } from '../utils/chartTooltip.js'
 import ProcessContextMenu from '../components/ProcessContextMenu.vue'
 import { Check, ChevronLeft, ChevronRight, Focus, ScanSearch, X } from '@lucide/vue'
@@ -326,16 +324,18 @@ let filterLoadTimer = null
 let repairAnimationStartTimer = null
 let repairAnimationEndTimer = null
 let repairCaptureFrame = null
+let repairSourceSnapshot = null
 
 const percentInRange = value => {
   const min = startDate.value.getTime()
   const span = Math.max(1, endDate.value.getTime() - min)
-  return Math.max(0, Math.min(100, ((value - min) / span) * 100))
+  return ((value - min) / span) * 100
 }
+const visiblePercent = value => Math.max(0, Math.min(100, value))
 const selectionLeft = computed(() => percentInRange(timeSelection.start))
 const selectionRight = computed(() => percentInRange(timeSelection.end))
-const selectionLeftMaskStyle = computed(() => ({ width: `${selectionLeft.value}%` }))
-const selectionRightMaskStyle = computed(() => ({ left: `${selectionRight.value}%`, width: `${100 - selectionRight.value}%` }))
+const selectionLeftMaskStyle = computed(() => ({ width: `${visiblePercent(selectionLeft.value)}%` }))
+const selectionRightMaskStyle = computed(() => ({ left: `${visiblePercent(selectionRight.value)}%`, width: `${100 - visiblePercent(selectionRight.value)}%` }))
 const selectedRangeStyle = computed(() => ({ left: `${selectionLeft.value}%`, width: `${selectionRight.value - selectionLeft.value}%` }))
 const targetStart = computed(() => timeSelection.start + timeSelection.shiftMinutes * 60000)
 const targetEnd = computed(() => timeSelection.end + timeSelection.shiftMinutes * 60000)
@@ -350,7 +350,7 @@ const repairPreviewStyle = computed(() => ({
   width: `${selectionRight.value - selectionLeft.value}%`,
 }))
 const repairPlotStyle = ref(null)
-const showMovedSlice = computed(() => Boolean(timeSelection.animationPhase && timeSelection.shiftMinutes && targetInRange.value))
+const showMovedSlice = computed(() => Boolean(timeSelection.animationPhase && timeSelection.shiftMinutes))
 const selectionRangeLabel = computed(() => timeSelection.active
   ? `${new Date(timeSelection.start).toLocaleString()} — ${new Date(timeSelection.end).toLocaleString()}` : '')
 const targetRangeLabel = computed(() => {
@@ -610,7 +610,7 @@ function disposeTimelineChart() {
   barGeometryDirty = true
 }
 
-function openProcessActions(data, point = null, scope = null) {
+function openProcessActions(data, point = null) {
   const processName = data?.processName || data?._bgSession?.processName || data?._processSession?.processName
   if (!processName) return
   selectedProcess.value = {
@@ -621,7 +621,7 @@ function openProcessActions(data, point = null, scope = null) {
     timestamp: data.timestamp || data._bgSession?.openTime || data._processSession?.startTime || null,
     durationSeconds: data.durationSeconds || 0,
   }
-  contextScope.value = scope || (selectedProcess.value.rawWindowTitle || selectedProcess.value.windowTitle ? 'title' : 'process')
+  contextScope.value = selectedProcess.value.rawWindowTitle || selectedProcess.value.windowTitle ? 'title' : 'process'
   selectedProcessColor.value = data.itemColor || data.itemStyle?.color || 'var(--primary-color)'
   showActionHint.value = false
   localStorage.setItem('wta-process-actions-seen', '1')
@@ -766,23 +766,37 @@ function captureRepairPreview() {
   const sliceX = plot.x + plot.width * selectionLeft.value / 100
   const sliceWidth = plot.width * (selectionRight.value - selectionLeft.value) / 100
   if (sliceWidth <= 0) return
+  const selectionKey = `${timeSelection.start}|${timeSelection.end}`
+  // Keep the complete source image when panning moves the original interval
+  // outside the viewport. Clipped chart shapes cannot reconstruct that image.
+  if (repairSourceSnapshot?.key !== selectionKey
+      || (selectionLeft.value >= 0 && selectionRight.value <= 100)) {
+    const bars = []
+    for (const item of timelineChart.getZr().storage.getDisplayList()) {
+      if (item.name !== 'repair-data-bar' || item.ignore || item.invisible) continue
+      const { x, y, width, height } = item.shape
+      const left = Math.max(x, sliceX)
+      const right = Math.min(x + width, sliceX + sliceWidth)
+      if (right <= left || !item.style?.fill) continue
+      bars.push({
+        x: (left - sliceX) / sliceWidth, y: (y - plot.y) / plot.height,
+        width: (right - left) / sliceWidth, height: height / plot.height,
+        color: item.style.fill, opacity: item.style.opacity ?? 1,
+      })
+    }
+    repairSourceSnapshot = { key: selectionKey, bars }
+  }
   const dpr = window.devicePixelRatio || 1
-  output.width = Math.max(1, Math.round(sliceWidth * dpr))
-  output.height = Math.max(1, Math.round(plot.height * dpr))
+  output.width = Math.max(1, Math.min(8192, Math.round(sliceWidth * dpr)))
+  output.height = Math.max(1, Math.min(8192, Math.round(plot.height * dpr)))
   const context = output.getContext('2d')
   if (!context) return
-  context.scale(output.width / sliceWidth, output.height / plot.height)
   // Paint the activity bars only. A screenshot of the whole plot would also
   // move its opaque background and hide the records already at the target.
-  for (const item of timelineChart.getZr().storage.getDisplayList()) {
-    if (item.name !== 'repair-data-bar' || item.ignore || item.invisible) continue
-    const { x, y, width, height } = item.shape
-    const left = Math.max(x, sliceX)
-    const right = Math.min(x + width, sliceX + sliceWidth)
-    if (right <= left || !item.style?.fill) continue
-    context.globalAlpha = item.style.opacity ?? 1
-    context.fillStyle = item.style.fill
-    context.fillRect(left - sliceX, y - plot.y, right - left, height)
+  for (const bar of repairSourceSnapshot.bars) {
+    context.globalAlpha = bar.opacity
+    context.fillStyle = bar.color
+    context.fillRect(bar.x * output.width, bar.y * output.height, bar.width * output.width, bar.height * output.height)
   }
 }
 
@@ -806,6 +820,9 @@ async function startRepairAnimation(animate) {
 }
 
 async function beginTimeSelection(item = {}) {
+  repairSourceSnapshot = null
+  hoveredProcess.value = null
+  paintDimmer()
   const rangeStart = startDate.value.getTime()
   const rangeEnd = endDate.value.getTime()
   const anomaly = item.timeAnomaly || null
@@ -849,10 +866,14 @@ function cancelTimeSelection() {
   timeSelection.animating = false
   timeSelection.animationPhase = ''
   selectionDrag = null
+  repairSourceSnapshot = null
 }
 
 function onSelectionPointerDown(event, edge) {
-  if (event.button !== 0 || timeSelection.animating || timeSelection.applying) return
+  if (event.button !== 0) return
+  event.stopPropagation()
+  if (timeSelection.animating || timeSelection.applying) return
+  event.preventDefault()
   const rect = timeSelectionLayerRef.value?.getBoundingClientRect()
   if (!rect) return
   event.currentTarget.setPointerCapture?.(event.pointerId)
@@ -893,9 +914,7 @@ function onSelectionPointerMove(event) {
       timeSelection.start = Math.max(rangeStart, timeSelection.end - minSpan)
     }
   } else if (selectionDrag.edge === 'target') {
-    const minShift = rangeStart - selectionDrag.start
-    const maxShift = rangeEnd - selectionDrag.end
-    const nextShift = Math.max(minShift, Math.min(maxShift, selectionDrag.shiftMinutes * 60000 + delta))
+    const nextShift = selectionDrag.shiftMinutes * 60000 + delta
     timeSelection.shiftMinutes = Number((nextShift / 60000).toFixed(2))
   } else if (selectionDrag.edge === 'start') {
     timeSelection.start = Math.max(rangeStart, Math.min(selectionDrag.end - minSpan, selectionDrag.start + delta))
@@ -1001,6 +1020,7 @@ function previewRange(min, max) {
   barGeometryDirty = true
   hoveredProcess.value = null
   paintDimmer()
+  scheduleRepairCapture()
 }
 
 function playRangeMotion(oldStart, oldEnd, newStart, newEnd, pointerRatio = null) {
@@ -1076,15 +1096,15 @@ function queueDragPreview(min, max) {
 }
 
 function onTimelinePointerDown(event) {
-  if (event.button !== 0 && event.button !== 1) return
-  if (timeSelection.active) return
+  if (![0, 1, 2].includes(event.button)) return
+  if (timeSelection.active && event.button === 0) return
   if (!hasRenderedTimeline.value || !timelineChart || timelineChart.isDisposed()) return
 
   // Commit any queued wheel gesture before taking the drag's range snapshot.
   if (timelineWheelTimer) clearTimeout(timelineWheelTimer)
   flushTimelineWheelZoom()
 
-  if (event.button === 1) event.preventDefault()
+  if (event.button !== 0) event.preventDefault()
   if (rangeMotionTimer) clearTimeout(rangeMotionTimer)
   rangeMotionTimer = null
   rangeMotionClass.value = ''
@@ -1098,7 +1118,7 @@ function onTimelinePointerDown(event) {
     startX: event.clientX,
     startRange: startDate.value.getTime(),
     endRange: endDate.value.getTime(),
-    plotWidth: Math.max(1, rect.width - 60),
+    plotWidth: Math.max(1, timelineChart.getModel().getComponent('grid', 0)?.coordinateSystem?.getRect().width || rect.width - 60),
     moved: false,
     rangeChanged: false,
     lastStart: startDate.value.getTime(),
@@ -2446,7 +2466,7 @@ async function renderTimeline(myLoadId) {
     timelineChart = echarts.init(timelineChartRef.value, null, { renderer: 'canvas', useDirtyRect: false })
     timelineChart.on('mouseover', onTimelineMouseOver)
     timelineChart.on('mouseout', onTimelineMouseOut)
-    const openBarMenu = (params, scope = null) => {
+    const openBarMenu = params => {
       if (params.seriesName !== 'windows' || timeSelection.active) return
       params.event?.event?.preventDefault?.()
       if (contextMenuVisible.value) return
@@ -2457,12 +2477,14 @@ async function renderTimeline(myLoadId) {
       openProcessActions(params.data, {
           x: params.event?.event?.clientX ?? window.innerWidth / 2,
           y: params.event?.event?.clientY ?? window.innerHeight / 2,
-        }, scope)
+        })
     }
     timelineChart.on('click', params => {
       if (!hoverSuppressedUntilMove) openBarMenu(params)
     })
-    timelineChart.on('contextmenu', params => openBarMenu(params, 'process'))
+    timelineChart.on('contextmenu', params => {
+      if (!hoverSuppressedUntilMove && !dragState?.moved) openBarMenu(params)
+    })
     // DOM mouseleave is the reliable way to clear hover state — ECharts'
     // series mouseout may not fire when the cursor leaves the canvas.
     timelineChartRef.value.addEventListener('mouseleave', onTimelineMouseLeave)
